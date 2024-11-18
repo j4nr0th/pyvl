@@ -25,4 +25,5 @@ add_library(cdust
 )
 target_link_directories(cdust PRIVATE m)
 
+enable_testing()
 add_subdirectory(test)

@@ -75,18 +75,23 @@ char* serialize_mesh(const mesh_t* this, const allocator_t* allocator)
         .buffer = nullptr, .allocator = allocator, .used = 0, .capacity = 0, .increment = 1 << 12,
     };
 
-    if (string_stream_write_fmt(&out_stream, u8"0\n%6u %5u %8u\n", this->n_points, this->n_lines, this->n_surfaces) < 0) goto failed;
+    if (string_stream_write_fmt(&out_stream, u8"0\n/* Points Lines Surfaces */\n   %6u %5u %8u\n/* Positions */\n", this->n_points, this->n_lines, this->n_surfaces) < 0) goto failed;
     for (unsigned ipt = 0; ipt < this->n_points; ++ipt)
     {
         const real3_t *pos = this->positions + ipt;
         if (string_stream_write_fmt(&out_stream, u8"%.15g %.15g %.15g\n", pos->v0, pos->v1, pos->v2) < 0) goto failed;
     }
+
+    if (string_stream_write_fmt(&out_stream, u8"/* Line connectivity */\n") < 0) goto failed;
     for (unsigned iln = 0; iln < this->n_lines; ++iln)
     {
         const line_t *ln = this->lines + iln;
         const int ids[2] = {unpack_id(ln->p1), unpack_id(ln->p2)};
         if (string_stream_write_fmt(&out_stream, u8"%d %d\n", abs(ids[0]), abs(ids[1])) < 0) goto failed;
     }
+
+    if (string_stream_write_fmt(&out_stream, u8"/* Surface connectivity */\n") < 0) goto failed;
+
     for (unsigned is = 0; is < this->n_surfaces; ++is)
     {
         const surface_t *s = this->surfaces[is];
@@ -113,6 +118,26 @@ static geo_id_t pack_id(const int i)
     return (geo_id_t){.orientation = i < 0, .value = abs(i) - 1};
 }
 
+static const char *skip_forward(const char *str)
+{
+    for (;;)
+    {
+        if (*str == '/')
+        {
+            if (*(str + 1) == '/') while (*str && *str != '\n') ++str;
+            else if (*(str + 1) == '*')
+            {
+                str += 2;
+                while (*str && *str != '*' && *(str + 1) != '/') ++str;
+                str += 2;
+            }
+        }
+        if (!isspace(*str)) break;
+        ++str;
+    }
+    return str;
+}
+
 
 mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
 {
@@ -127,18 +152,18 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
     //  Parse version of file
     const unsigned version = strtoul(str, &ptr, 10);
     if (ptr == str || version > 0) goto failed;
-    str = ptr;
+    str = skip_forward(ptr);
 
     //  Parse point, line, and surface counts
     this->n_points = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str) goto failed;
-    str = ptr;
+    str = skip_forward(ptr);
     this->n_lines = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str) goto failed;
-    str = ptr;
+    str = skip_forward(ptr);
     this->n_surfaces = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str) goto failed;
-    str = ptr;
+    str = skip_forward(ptr);
 
     this->positions = allocator->allocate(allocator->state, sizeof(*this->positions) * this->n_points);
     if (!this->positions) goto failed;
@@ -150,7 +175,7 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
         {
             p->data[k] = strtod(str, &ptr);
             if (str == ptr) goto failed;
-            str = ptr;
+            str = skip_forward(ptr);
         }
     }
 
@@ -162,10 +187,10 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
         line_t* ln = this->lines + iln;
         ln->p1 = pack_id((int)strtol(str, &ptr, 10));
         if (str == ptr) goto failed;
-        str = ptr;
+        str = skip_forward(ptr);
         ln->p2 = pack_id((int)strtol(str, &ptr, 10));
         if (str == ptr) goto failed;
-        str = ptr;
+        str = skip_forward(ptr);
     }
     // save place where surfaces begin
     const char* const p_begin = str;
@@ -176,13 +201,13 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
     {
         const unsigned n = strtoul(str, &ptr, 10);
         if (str == ptr) goto failed;
-        str = ptr;
+        str = skip_forward(ptr);
         total_lines += n;
         for (unsigned i = 0; i < n; ++i)
         {
             (void)strtol(str, &ptr, 10);
             if (str == ptr) goto failed;
-            str = ptr;
+            str = skip_forward(ptr);
         }
     }
     //  restore parsing state
@@ -197,13 +222,13 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
     {
         const unsigned n = strtoul(str, &ptr, 10);
         if (str == ptr) goto failed;
-        str = ptr;
+        str = skip_forward(ptr);
         *(uint32_t *)id_ptr = (uint32_t)n;
         for (unsigned i = 0; i < n; ++i)
         {
             id_ptr[i + 1] = pack_id((int)strtol(str, &ptr, 10));
             if (str == ptr) goto failed;
-            str = ptr;
+            str = skip_forward(ptr);
         }
         this->surfaces[is] = (surface_t *)id_ptr;
         id_ptr += n + 1;
