@@ -66,6 +66,13 @@ static inline real3_t real3_unit(const real3_t a)
     return (real3_t){{a.v0 * mag, a.v1 * mag, a.v2 * mag}};
 }
 
+static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)
+{
+    if (id1.value != id2.value) return 0;
+    if (id1.orientation == id2.orientation) return 1;
+    return -1;
+}
+
 typedef struct
 {
     void *(*allocate)(void *state, size_t size);

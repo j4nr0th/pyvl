@@ -4,6 +4,9 @@
 
 #include "test_common.h"
 
+#include <errno.h>
+#include <string.h>
+
 
 enum { ALLOCATOR_MAGIC_NUMBER = 0xB16B00B1E5 };
 
@@ -31,3 +34,23 @@ const allocator_t TEST_ALLOCATOR = {
     .reallocate = test_reallocate,
     .state = (void *)ALLOCATOR_MAGIC_NUMBER
 };
+
+char* read_mesh_file_to_string(const char* path, size_t chunk_size)
+{
+    FILE *f_in = fopen(path, "r");
+    TEST_ASSERT(f_in, "Could not open file %s, %s", path, strerror(errno));
+    size_t buffer_size = chunk_size;
+    char *buffer = malloc((sizeof *buffer) * buffer_size);
+    TEST_ASSERT(buffer, "Buffer not allocate");
+    size_t read_sz;
+    while ((read_sz = fread(buffer + buffer_size - chunk_size, 1, chunk_size, f_in)) == chunk_size)
+    {
+        buffer_size += chunk_size;
+        char *new_buffer = realloc(buffer, buffer_size * sizeof(*buffer));
+        TEST_ASSERT(new_buffer, "Buffer not reallocated");
+        buffer = new_buffer;
+    }
+    fclose(f_in);
+    buffer[buffer_size - chunk_size + read_sz] = 0;
+    return buffer;
+}

@@ -1,0 +1,28 @@
+/* This is a manually generated file to check the dual mesh generation. */
+0
+/* Points Lines Surfaces */
+/* These are flipped from the primal mesh */
+        3     8        6
+/* Positions */
+/* Centroids of the surfaces */
+0 -0.190687533020181 0.981650785539683
+0 0.124431280782037 0.992228227961159
+0 -0.0556176365755825 0.998452141317623
+/* Line connectivity */
+1 0 /* Primal line 1 is part of surface 1 and no other */
+1 0 /* Primal line 2 is part of surface 1 and no other */
+1 3 /* Primal line 3 is part of surface 1 and surface 3 */
+3 0 /* Primal line 4 is part of surface 3 and no other */
+3 0 /* Primal line 5 is part of surface 3 and no other */
+2 3 /* Primal line 6 is part of surface 2 and surface 3 */
+2 0 /* Primal line 6 is part of surface 2 and no other */
+1 2 /* Primal line 6 is part of surface 1 and surface 2 */
+/* Surface connectivity */
+/* Corresponds to primal points (negative means line is going towards the point) */
+3 1 7 8 /* Point 1 is a part of 3 lines: 1, 7, 8 */
+3 -5 6 -7 /* Point 2 is a part of 3 lines: 5, 6, 7 */
+3 -3 -6 -8 /* Point 3 is a part of 3 lines: 3, 6, 8 */
+2 -4 5 /* Point 4 is a part of 2 lines: 4, 5 */
+2 -1 2 /* Point 5 is a part of 2 lines: 1, 2 */
+3 -2 3 4 /* Point 6 is a part of 3 lines: 2, 3, 4 */
+

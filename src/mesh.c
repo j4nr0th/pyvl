@@ -118,7 +118,7 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
             {
                 if (s->lines[i_surf_line].value == i_line)
                 {
-                    surf_ids[cnt].value = i_line;
+                    surf_ids[cnt].value = i_surf;
                     cnt += 1;
                     break;
                 }
@@ -149,14 +149,14 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
         mem_sz += sizeof(surface_t) + cnt * sizeof(geo_id_t);
     }
 
-    /* Allocate memory for dual surface behind their pointers (which are more like offsets) */
-    dual->surfaces = allocator->allocate(allocator->state, sizeof(*dual->surfaces) * dual->n_surfaces);
 
+    /* Allocate memory for dual surface behind their pointers (which are more like offsets) */
     surface_t **const surf_ptr = allocator->allocate(allocator->state, sizeof(*dual->surfaces) * dual->n_surfaces + mem_sz);
     if (!surf_ptr)
     {
         goto failed;
     }
+    dual->surfaces = (const surface_t **)surf_ptr;
     geo_id_t *id_ptr = (geo_id_t *)(surf_ptr + dual->n_surfaces);
     for (unsigned i_pt = 0; i_pt < primal->n_points; ++i_pt)
     {
@@ -167,12 +167,12 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
             const line_t *ln = primal->lines + i_line;
             if (ln->p1.value == i_pt)
             {
-                id_ptr[cnt + 1] = (geo_id_t){.orientation = 0, .value = i_pt};
+                id_ptr[cnt + 1] = (geo_id_t){.orientation = 0, .value = i_line};
                 cnt += 1;
             }
             else if(ln->p2.value == i_pt)
             {
-                id_ptr[cnt + 1] = (geo_id_t){.orientation = 1, .value = i_pt};
+                id_ptr[cnt + 1] = (geo_id_t){.orientation = 1, .value = i_line};
                 cnt += 1;
             }
         }
