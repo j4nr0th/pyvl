@@ -219,7 +219,7 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
         return nullptr;
     }
 
-    surface_t **const surf_ptr = allocator->allocate(allocator->state,  n_elements * sizeof(*this->surfaces)+ sizeof(geo_id_t) * (n_elements + all_points));
+    surface_t ** surf_ptr = allocator->allocate(allocator->state,  n_elements * sizeof(*this->surfaces)+ sizeof(geo_id_t) * (n_elements + all_points));
     if (!surf_ptr)
     {
         allocator->deallocate(allocator->state, this->lines);
@@ -262,8 +262,10 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
             }
             left = right;
         }
-
         *(uint32_t *)id_ptr = n;
+        *surf_ptr = (surface_t *)id_ptr;
+        id_ptr += n + 1;
+        surf_ptr += 1;
         offset += n;
     }
 

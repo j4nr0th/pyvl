@@ -3,6 +3,8 @@ project(cdust C)
 
 set(CMAKE_C_STANDARD 23)
 
+find_package(OpenMP REQUIRED)
+
 list(
         APPEND CDUST_SOURCE_FILES
         src/solver_state.c
@@ -25,7 +27,7 @@ add_library(cdust
         ${CDUST_SOURCE_FILES}
         ${CDUST_HEADER_FILES}
 )
-target_link_directories(cdust PRIVATE m)
+target_link_directories(cdust PRIVATE m GOMP)
 
 enable_testing()
 add_subdirectory(test)

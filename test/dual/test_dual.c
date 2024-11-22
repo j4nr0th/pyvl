@@ -34,7 +34,7 @@ int main(int argc, char *argv[static restrict argc])
 
 
     enum {chunk_size = 1 << 12};
-    char *buffer = read_mesh_file_to_string(in_mesh_path, chunk_size);
+    char *buffer = read_file_to_string(in_mesh_path, chunk_size);
 
     mesh_t *msh = deserialize_mesh(buffer, &TEST_ALLOCATOR);
     TEST_ASSERT(msh, "Mesh not deserialized");
@@ -57,7 +57,7 @@ int main(int argc, char *argv[static restrict argc])
         free(str_out);
     }
 
-    buffer = read_mesh_file_to_string(cmp_mesh_path, chunk_size);
+    buffer = read_file_to_string(cmp_mesh_path, chunk_size);
     mesh_t *cmp = deserialize_mesh(buffer, &TEST_ALLOCATOR);
     TEST_ASSERT(cmp, "Comparison not deserialized");
     free(buffer);

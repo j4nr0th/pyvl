@@ -35,7 +35,7 @@ const allocator_t TEST_ALLOCATOR = {
     .state = (void *)ALLOCATOR_MAGIC_NUMBER
 };
 
-char* read_mesh_file_to_string(const char* path, size_t chunk_size)
+char* read_file_to_string(const char* path, size_t chunk_size)
 {
     FILE *f_in = fopen(path, "r");
     TEST_ASSERT(f_in, "Could not open file %s, %s", path, strerror(errno));
