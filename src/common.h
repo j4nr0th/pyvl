@@ -65,6 +65,9 @@ static inline real3_t real3_unit(const real3_t a)
     const real_t mag = 1.0 / real3_mag(a);
     return (real3_t){{a.v0 * mag, a.v1 * mag, a.v2 * mag}};
 }
+static inline real3_t real3_mul1(const real3_t a, real_t k) { return (real3_t){{a.v0 * k, a.v1 * k, a.v2 * k}}; }
+static inline real3_t real3_neg(const real3_t a) { return (real3_t){{-a.v0, -a.v1, -a.v2}}; }
+static inline real_t real3_max(const real3_t a) { return a.v0 > a.v1 ? (a.v0 > a.v2 ? a.v0 : a.v2) : (a.v1 > a.v2 ? a.v1 : a.v2); }
 
 static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)
 {

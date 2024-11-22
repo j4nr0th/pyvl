@@ -9,6 +9,7 @@ list(
         src/common.c
         src/mesh.c
         src/io/mesh_io.c
+        src/flow_solver.c
 )
 
 list(
@@ -17,6 +18,7 @@ list(
         src/common.h
         src/mesh.h
         src/io/mesh_io.h
+        src/flow_solver.h
 )
 
 add_library(cdust

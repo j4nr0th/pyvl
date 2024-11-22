@@ -18,3 +18,6 @@ target_link_libraries(test_dual PRIVATE cdust m)
 add_test(NAME test_dual COMMAND
         test_dual "${CMAKE_SOURCE_DIR}/test/dual/test_mesh.msh")
 
+add_executable(test_induction induction/test_induction.c ${TEST_COMMON_FILES})
+target_link_libraries(test_induction PRIVATE cdust m)
+add_test(NAME test_induction COMMAND test_induction)
