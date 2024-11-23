@@ -4,7 +4,7 @@
  */
 
 #include "../test_common.h"
-#include "../../src/flow_solver.h"
+#include "../../src/core/flow_solver.h"
 
 /*
  * Test mesh with a singe line and no surfaces.

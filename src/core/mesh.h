@@ -154,7 +154,7 @@ typedef struct
  * @param line_id ID of the line.
  * @return Vector of displacement from beginning of line to the end.
  */
-[[unsequenced]]
+// [[unsequenced]]
 real3_t line_direction(const mesh_t *mesh, geo_id_t line_id);
 
 /**
@@ -164,7 +164,7 @@ real3_t line_direction(const mesh_t *mesh, geo_id_t line_id);
  * @param surface_id ID of the surface.
  * @return Position vector of the surface center.
  */
-[[unsequenced]]
+// [[unsequenced]]
 real3_t surface_center(const mesh_t *mesh, geo_id_t surface_id);
 
 /**
@@ -175,7 +175,7 @@ real3_t surface_center(const mesh_t *mesh, geo_id_t surface_id);
  * @param surface_id ID of the surface.
  * @return Normal vector of the surface with unit length.
  */
-[[unsequenced]]
+// [[unsequenced]]
 real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id);
 
 /**

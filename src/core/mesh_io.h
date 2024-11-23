@@ -5,8 +5,8 @@
 #ifndef MESH_IO_H
 #define MESH_IO_H
 
-#include "../common.h"
-#include "../mesh.h"
+#include "common.h"
+#include "mesh.h"
 
 /*
 

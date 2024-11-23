@@ -5,7 +5,7 @@
 #ifndef TEST_COMMON_H
 #define TEST_COMMON_H
 
-#include "../src/common.h"
+#include "../src/core/common.h"
 #include <stdio.h>
 #include <stdlib.h>
 

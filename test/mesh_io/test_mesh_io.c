@@ -19,7 +19,7 @@
 #include <string.h>
 
 #include "../test_common.h"
-#include "../../src/io/mesh_io.h"
+#include "../../src/core/mesh_io.h"
 
 
 

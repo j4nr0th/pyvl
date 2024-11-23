@@ -19,7 +19,7 @@
 #include <string.h>
 
 #include "../test_common.h"
-#include "../../src/io/mesh_io.h"
+#include "../../src/core/mesh_io.h"
 
 
 static void push_buffer(unsigned value, unsigned *size, unsigned *capacity, unsigned **buffer)
@@ -108,6 +108,8 @@ int main(int argc, char *argv[static argc])
 
     mesh_t *mesh = mesh_from_elements(n_out, n_per_element, pts, &TEST_ALLOCATOR);
     TEST_ASSERT(mesh, "Failed computing the mesh");
+    free(n_per_element);
+    free(pts);
 
     TEST_ASSERT(mesh->n_lines == mesh_comparison->n_lines, "Line counts do not match: %u vs %u", mesh->n_lines, mesh_comparison->n_lines);
     TEST_ASSERT(mesh->n_surfaces == mesh_comparison->n_surfaces, "Surface counts do not match: %u vs %u", mesh->n_surfaces, mesh_comparison->n_surfaces);

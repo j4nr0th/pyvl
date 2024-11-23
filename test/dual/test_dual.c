@@ -21,14 +21,14 @@
 #include <string.h>
 
 #include "../test_common.h"
-#include "../../src/mesh.h"
-#include "../../src/io/mesh_io.h"
+#include "../../src/core/mesh.h"
+#include "../../src/core/mesh_io.h"
 
 
 
 int main(int argc, char *argv[static restrict argc])
 {
-    if (argc < 2 || argc > 4) return 1;
+    TEST_ASSERT(argc == 2 || argc == 3, "Wrong number of parameters %d", argc);
     const char *in_mesh_path = argv[1];
     const char *cmp_mesh_path = argv[2];
 

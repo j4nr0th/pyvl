@@ -75,32 +75,32 @@ char* serialize_mesh(const mesh_t* this, const allocator_t* allocator)
         .buffer = nullptr, .allocator = allocator, .used = 0, .capacity = 0, .increment = 1 << 12,
     };
 
-    if (string_stream_write_fmt(&out_stream, u8"0\n/* Points Lines Surfaces */\n   %6u %5u %8u\n/* Positions */\n", this->n_points, this->n_lines, this->n_surfaces) < 0) goto failed;
+    if (string_stream_write_fmt(&out_stream, "0\n/* Points Lines Surfaces */\n   %6u %5u %8u\n/* Positions */\n", this->n_points, this->n_lines, this->n_surfaces) < 0) goto failed;
     for (unsigned ipt = 0; ipt < this->n_points; ++ipt)
     {
         const real3_t *pos = this->positions + ipt;
-        if (string_stream_write_fmt(&out_stream, u8"%.15g %.15g %.15g\n", pos->v0, pos->v1, pos->v2) < 0) goto failed;
+        if (string_stream_write_fmt(&out_stream, "%.15g %.15g %.15g\n", pos->v0, pos->v1, pos->v2) < 0) goto failed;
     }
 
-    if (string_stream_write_fmt(&out_stream, u8"/* Line connectivity */\n") < 0) goto failed;
+    if (string_stream_write_fmt(&out_stream, "/* Line connectivity */\n") < 0) goto failed;
     for (unsigned iln = 0; iln < this->n_lines; ++iln)
     {
         const line_t *ln = this->lines + iln;
         const int ids[2] = {unpack_id(ln->p1), unpack_id(ln->p2)};
-        if (string_stream_write_fmt(&out_stream, u8"%d %d\n", abs(ids[0]), abs(ids[1])) < 0) goto failed;
+        if (string_stream_write_fmt(&out_stream, "%d %d\n", abs(ids[0]), abs(ids[1])) < 0) goto failed;
     }
 
-    if (string_stream_write_fmt(&out_stream, u8"/* Surface connectivity */\n") < 0) goto failed;
+    if (string_stream_write_fmt(&out_stream, "/* Surface connectivity */\n") < 0) goto failed;
 
     for (unsigned is = 0; is < this->n_surfaces; ++is)
     {
         const surface_t *s = this->surfaces[is];
-        if (string_stream_write_fmt(&out_stream, u8"%u", s->n_lines) < 0) goto failed;
+        if (string_stream_write_fmt(&out_stream, "%u", s->n_lines) < 0) goto failed;
         for (unsigned iln = 0; iln < s->n_lines; ++iln)
         {
-            if (string_stream_write_fmt(&out_stream, u8" %d", unpack_id(s->lines[iln])) < 0) goto failed;
+            if (string_stream_write_fmt(&out_stream, " %d", unpack_id(s->lines[iln])) < 0) goto failed;
         }
-        if (string_stream_write_fmt(&out_stream, u8"\n") < 0) goto failed;
+        if (string_stream_write_fmt(&out_stream, "\n") < 0) goto failed;
     }
 
     char *out = allocator->reallocate(allocator->state, out_stream.buffer, (out_stream.used + 1) * sizeof(*out_stream.buffer));
@@ -131,6 +131,7 @@ static const char *skip_forward(const char *str)
                 while (*str && *str != '*' && *(str + 1) != '/') ++str;
                 str += 2;
             }
+            continue;
         }
         if (!isspace(*str)) break;
         ++str;
@@ -148,8 +149,9 @@ mesh_t* deserialize_mesh(const char* str, const allocator_t* allocator)
     this->lines = nullptr;
     this->surfaces = nullptr;
 
-    char* ptr;
+    char* ptr = (char *)str;
     //  Parse version of file
+    str = skip_forward(ptr);
     const unsigned version = strtoul(str, &ptr, 10);
     if (ptr == str || version > 0) goto failed;
     str = skip_forward(ptr);

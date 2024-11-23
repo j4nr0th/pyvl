@@ -16,7 +16,7 @@
 #include <string.h>
 
 #include "../test_common.h"
-#include "../../src/io/mesh_io.h"
+#include "../../src/core/mesh_io.h"
 
 
 static void push_buffer(unsigned value, unsigned *size, unsigned *capacity, unsigned **buffer)
@@ -104,7 +104,8 @@ int main(int argc, char *argv[static argc])
                                                                                            "not match.", i);
         j += point_counts[i];
     }
-
+    free(pts);
+    free(n_per_element);
     free(flat_points);
     free(point_counts);
 
