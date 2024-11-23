@@ -192,8 +192,31 @@ real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id);
  */
 mesh_t *mesh_dual_from_primal(const mesh_t *primal, const allocator_t *allocator);
 
+/**
+ * @brief This function allows a mesh to be created by simply specifying element connectivity, which is very common with
+ * meshing tools, such as GMSH.
+ * 
+ * @param n_elements Number of elements given.
+ * @param point_counts Array which contains number of points for each element.
+ * @param flat_points Points of elements, one after another.
+ * @param allocator Allocator used to allocate memory for the mesh.
+ * @return Mesh with elements specified, but no positional information.
+ */
 mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-    const unsigned flat_points[static restrict n_elements], const allocator_t *allocator);
+                           const unsigned flat_points[restrict], const allocator_t *allocator);
+
+/**
+ * @brief Intended to be used in order to convert the mesh into a format more common with other meshers, by just
+ * specifying point counts and connectivity.
+ *
+ * @param mesh Mesh to convert.
+ * @param p_point_counts Pointer which receives a pointer to an array of point counts per element.
+ * @param p_flat_points Pointer which receives a pointer to an array of flattened element indices.
+ * @param allocator Allocator used to allocate memory for the two arrays.
+ * @return Number of elements converted, or zero on failure.
+ */
+unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigned **p_flat_points,
+                          const allocator_t *allocator);
 
 void mesh_free(mesh_t *this, const allocator_t *allocator);
 

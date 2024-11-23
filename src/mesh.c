@@ -194,7 +194,7 @@ failed:
 }
 
 mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-    const unsigned flat_points[static restrict n_elements], const allocator_t *allocator)
+    const unsigned flat_points[restrict], const allocator_t *allocator)
 {
     mesh_t *const this = allocator->allocate(allocator->state, sizeof(*this));
     if (!this)
@@ -270,5 +270,60 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
     }
 
     return this;
+}
+
+unsigned mesh_to_elements(
+    const mesh_t* mesh, unsigned** p_point_counts, unsigned** p_flat_points, const allocator_t* allocator)
+{
+    const unsigned n_surfaces = mesh->n_surfaces;
+    if (n_surfaces == 0)
+    {
+        return 0;
+    }
+    unsigned *const point_counts = allocator->allocate(allocator->state, sizeof(*point_counts) * n_surfaces);
+    if (!point_counts)
+    {
+        return 0;
+    }
+    unsigned total_points = 0;
+    for (unsigned i = 0; i < n_surfaces; ++i)
+    {
+        const unsigned n_lines = mesh->surfaces[i]->n_lines;
+        point_counts[i] = n_lines;
+        total_points += n_lines;
+    }
+
+    unsigned *const flat_points = allocator->allocate(allocator->state, sizeof(*flat_points) * total_points);
+    if (!flat_points)
+    {
+        allocator->deallocate(allocator->state, point_counts);
+        return 0;
+    }
+
+    unsigned *p = flat_points;
+    for (unsigned i = 0; i < n_surfaces; ++i)
+    {
+        const surface_t *surface = mesh->surfaces[i];
+        for (unsigned j = 0; j < surface->n_lines; ++j)
+        {
+            const geo_id_t line_id = surface->lines[j];
+            unsigned pt;
+            if (line_id.orientation)
+            {
+                pt = mesh->lines[line_id.value].p1.value;
+            }
+            else
+            {
+                pt = mesh->lines[line_id.value].p2.value;
+            }
+            *p = pt;
+            p += 1;
+        }
+    }
+
+    *p_point_counts = point_counts;
+    *p_flat_points = flat_points;
+
+    return n_surfaces;
 }
 

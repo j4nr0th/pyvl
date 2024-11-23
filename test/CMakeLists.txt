@@ -24,4 +24,10 @@ add_test(NAME test_induction COMMAND test_induction)
 
 add_executable(test_from_points from_points/test_from_points.c ${TEST_COMMON_FILES})
 target_link_libraries(test_from_points PRIVATE cdust m)
-add_test(NAME test_from_points COMMAND test_from_points "${CMAKE_SOURCE_DIR}/test/dual/test_mesh.msh" "${CMAKE_SOURCE_DIR}/test/dual/test_points.dat")
+add_test(NAME test_from_points COMMAND
+        test_from_points "${CMAKE_SOURCE_DIR}/test/dual/test_mesh.msh" "${CMAKE_SOURCE_DIR}/test/dual/test_points.dat")
+
+add_executable(test_to_points from_points/test_to_points.c ${TEST_COMMON_FILES})
+target_link_libraries(test_to_points PRIVATE cdust m)
+add_test(NAME test_to_points COMMAND
+        test_to_points "${CMAKE_SOURCE_DIR}/test/dual/test_mesh.msh" "${CMAKE_SOURCE_DIR}/test/dual/test_points.dat")
