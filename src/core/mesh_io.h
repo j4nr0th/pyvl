@@ -20,9 +20,9 @@ Mesh file format specification for version 0:
     [point 1 for line 1] [point 2 for line 2]
         ...
     [point 1 for line m] [point 2 for line m]
-    [numer of lines in surface 1] [line 1 for surface 1] ... [line l for surface 1]
+    [number of lines in surface 1] [line 1 for surface 1] ... [line l for surface 1]
         ....
-    [numer of lines in surface k] [line 1 for surface k] ... [line p for surface k]
+    [number of lines in surface k] [line 1 for surface k] ... [line p for surface k]
 
     All whitespace is ignored, with no difference between new line and space.
 */
@@ -46,4 +46,4 @@ char *serialize_mesh(const mesh_t *this, const allocator_t *allocator);
  */
 mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator);
 
-#endif //MESH_IO_H
+#endif // MESH_IO_H

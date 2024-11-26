@@ -24,16 +24,14 @@ typedef struct
     geo_id_t *trailing_edges;
 } wake_t;
 
-
 typedef struct
 {
     //  Mesh of the geometry
     mesh_t primal_mesh;
-    mesh_t dual_mesh;   //  Mesh of the geometry connectivity
+    mesh_t dual_mesh; //  Mesh of the geometry connectivity
     wake_t wake;
     solver_params_t solver_params;
     aero_table_t aero_table;
 } solver_state_t;
 
-
-#endif //SOLVER_STATE_H
+#endif // SOLVER_STATE_H

@@ -4,7 +4,7 @@
 
 #include "flow_solver.h"
 
-real3_t compute_line_induction(const real3_t control_point, const geo_id_t i_line, const mesh_t* mesh, const real_t tol)
+real3_t compute_line_induction(const real3_t control_point, const geo_id_t i_line, const mesh_t *mesh, const real_t tol)
 {
     const unsigned pt1 = mesh->lines[i_line.value].p1.value, pt2 = mesh->lines[i_line.value].p2.value;
     const real3_t r1 = mesh->positions[pt1];
@@ -38,7 +38,7 @@ real3_t compute_line_induction(const real3_t control_point, const geo_id_t i_lin
         // continue
     }
 
-    real_t vel_mag_half = 0.5 * M_1_PI / norm_dist * (atan2(tan_dist2, norm_dist)- atan2(tan_dist1, norm_dist));
+    real_t vel_mag_half = 0.5 * M_1_PI / norm_dist * (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist));
     real3_t dr_avg = real3_mul1(real3_add(dr1, dr2), 0.5);
     real3_t vel_dir = real3_mul1(real3_cross(dr_avg, direction), vel_mag_half);
 
@@ -49,7 +49,8 @@ real3_t compute_line_induction(const real3_t control_point, const geo_id_t i_lin
     return vel_dir;
 }
 
-real3_t compute_surface_induction(const real3_t control_point, const geo_id_t i_surf, const mesh_t* mesh, const real_t tol)
+real3_t compute_surface_induction(const real3_t control_point, const geo_id_t i_surf, const mesh_t *mesh,
+                                  const real_t tol)
 {
     const surface_t *s = mesh->surfaces[i_surf.value];
     real3_t total = {0};
@@ -81,4 +82,3 @@ void compute_self_matrix(const mesh_t *mesh, const real_t tol, real_t *const mtx
         }
     }
 }
-
