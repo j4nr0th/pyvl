@@ -22,17 +22,21 @@ execute_process(
 list(
         APPEND CDUST_MODULE_SOURCE_FILES
         src/module.c
+        src/allocator.c
         src/geoidobject.c
         src/lineobject.c
         src/surfaceobject.c
+        src/meshobject.c
 )
 
 list(
         APPEND CDUST_MODULE_HEADER_FILES
         src/module.h
+        src/allocator.h
         src/geoidobject.h
         src/lineobject.h
         src/surfaceobject.h
+        src/meshobject.h
 )
 
 list(

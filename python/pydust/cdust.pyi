@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
+from typing import final
 
 import numpy as np
-import pyvista as pv
 from numpy import typing as npt
 
+@final
 class GeoID:
     """Class used to refer to topological objects with orientation."""
 
@@ -30,6 +31,7 @@ class GeoID:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
+@final
 class Line:
     """Class which describes a connection between two points."""
 
@@ -45,6 +47,7 @@ class Line:
     def __repr__(self) -> str: ...
     def __eq__(self, value) -> bool: ...
 
+@final
 class Surface:
     """Surface bound by a set of lines.
 
@@ -66,27 +69,28 @@ class Surface:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
+@final
 class Mesh:
     """Object describing a discretization of a surface."""
 
     def __init__(
-        self, positions: npt.ArrayLike, lines: Sequence[Line], surfaces: Sequence[Surface]
+        self, positions: npt.ArrayLike, connectivity: Sequence[Sequence[int]]
     ) -> None: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     @property
     def n_points(self) -> int:
-        """Return the number of points in the mesh."""
+        """Number of points in the mesh."""
         ...
 
     @property
     def n_lines(self) -> int:
-        """Return the number of lines in the mesh."""
+        """Number of lines in the mesh."""
         ...
 
     @property
     def n_surfaces(self) -> int:
-        """Return the number of surfaces in the mesh."""
+        """Number of surfaces in the mesh."""
         ...
 
     @property
@@ -96,32 +100,27 @@ class Mesh:
 
     @positions.setter
     def positions(self, positions: npt.ArrayLike) -> None:
-        """Set positions of mesh points."""
+        """Positions of mesh points."""
         ...
 
-    @property
-    def lines_iterator(self) -> Iterator[Line]:  # TODO: in the future make it ValuesView
-        """Return iterator of lines objects in the mesh."""
+    def get_line(self, i: int) -> Line:
+        """Get the line from the mesh."""
         ...
 
-    @property
-    def surfaces_iterator(
+    def get_surface(self, i: int) -> Surface:
+        """Get the surface from the mesh."""
+        ...
+
+    def to_element_connectivity(
         self,
-    ) -> Iterator[Surface]:  # TODO: in the future make it ValuesView
-        """Return iterator of lines objects in the mesh."""
-        ...
-
-    @classmethod
-    def from_element_connectivity(
-        cls, positions: npt.ArrayLike, element_indices: Sequence[Sequence[int]]
-    ) -> Mesh:
-        """Create Mesh from positions and point connectivity."""
+    ) -> tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64]]:
+        """Convert mesh connectivity to arrays list of element lengths and indices."""
         ...
 
     def compute_dual(self) -> Mesh:
-        """Create dual to the current mesh."""
+        """Create dual to the mesh."""
         ...
 
-    def to_polydata(self) -> pv.PolyData: ...
-    @classmethod
-    def from_polydata(cls, pd: pv.PolyData) -> Mesh: ...
+    # def strip_invalid(self) -> Mesh:
+    #     """Return mesh without any entries with invalid ids."""
+    #     ...

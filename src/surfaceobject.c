@@ -141,14 +141,14 @@ static PyObject *pydust_surface_new(PyTypeObject *type, PyObject *args, PyObject
         const PyDust_LineObject *const v = (PyDust_LineObject *)PySequence_Fast_GET_ITEM(seq, i);
         if (v->begin != last)
         {
-            PyErr_Format(PyExc_TypeError, "Line %u begins at point %u, but previous line begins with point %u.", i, v->begin, last);
+            PyErr_Format(PyExc_ValueError, "Line %u begins at point %u, but previous line begins with point %u.", i, v->begin, last);
             goto failed;
         }
         last = v->end;
     }
     if (first != last)
     {
-        PyErr_Format(PyExc_TypeError, "First line begins at point %u, but last line ends at point %u", first, last);
+        PyErr_Format(PyExc_ValueError, "First line begins at point %u, but last line ends at point %u", first, last);
         goto failed;
     }
 
@@ -167,6 +167,60 @@ static PyObject *pydust_surface_new(PyTypeObject *type, PyObject *args, PyObject
 failed:
     Py_DECREF(seq);
     return nullptr;
+}
+
+CDUST_INTERNAL
+PyDust_SurfaceObject *pydust_surface_from_points(unsigned n_points, const unsigned points[static restrict n_points])
+{
+    PyDust_SurfaceObject *const this = (PyDust_SurfaceObject *)pydust_surface_type.tp_alloc(&pydust_surface_type, (Py_ssize_t)n_points);
+    if (!this) return nullptr;
+    this->n_lines = n_points;
+    for (unsigned i = 0; i < n_points - 1; ++i)
+    {
+        this->lines[i] =
+            (line_t){.p1 = {.orientation = 0, .value = points[i]}, .p2 = {.orientation = 0, .value = points[i + 1]}};
+    }
+    this->lines[n_points - 1] =
+        (line_t){.p1 = {.orientation = 0, .value = points[n_points - 1]}, .p2 = {.orientation = 0, .value = points[0]}};
+    return this;
+}
+
+CDUST_INTERNAL
+PyDust_SurfaceObject *pydust_surface_from_lines(unsigned n, const line_t lines[static restrict n])
+{
+    PyDust_SurfaceObject *const this = (PyDust_SurfaceObject *)pydust_surface_type.tp_alloc(&pydust_surface_type, (Py_ssize_t)n);
+    if (!this) return nullptr;
+    this->n_lines = n;
+    for (unsigned i = 0; i < n; ++i)
+    {
+        this->lines[i] = lines[i];
+    }
+    return this;
+}
+
+CDUST_INTERNAL
+PyDust_SurfaceObject *pydust_surface_from_mesh_surface(const mesh_t *msh, geo_id_t id)
+{
+    const unsigned idx = id.value;
+    const surface_t *const s = msh->surfaces[idx];
+    PyDust_SurfaceObject *const this = (PyDust_SurfaceObject *)pydust_surface_type.tp_alloc(
+        &pydust_surface_type, (Py_ssize_t)s->n_lines
+    );
+    if (!this) return nullptr;
+    this->n_lines = s->n_lines;
+    for (unsigned i = 0; i < s->n_lines; ++i)
+    {
+        const geo_id_t lid = s->lines[i];
+        if (lid.orientation^id.orientation)
+        {
+            this->lines[i] = msh->lines[lid.value];
+        }
+        else
+        {
+            this->lines[i] = (line_t){.p1 = msh->lines[lid.value].p2, .p2 = msh->lines[lid.value].p1};
+        }
+    }
+    return this;
 }
 
 static PyObject *pydust_surface_get_lines(PyObject *self, void *Py_UNUSED(closure))
@@ -206,7 +260,7 @@ PyTypeObject pydust_surface_type =
     .ob_base = PyVarObject_HEAD_INIT(nullptr, 0)
     .tp_name = "cdust.Surface",
     .tp_basicsize = sizeof(PyDust_SurfaceObject),
-    .tp_itemsize = sizeof(geo_id_t),
+    .tp_itemsize = sizeof(line_t),
     .tp_repr = pydust_surface_repr,
     .tp_str = pydust_surface_str,
     .tp_doc = pydust_surface_type_docstring,

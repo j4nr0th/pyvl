@@ -8,7 +8,7 @@ def run_tests(session: nox.Session):
     """Run tests using pytest."""
     session.install(".")
     session.install("pytest", "pytest-cov")
-    session.run("pytest", "tests")
+    session.run("pytest", "pytests")
 
 
 @nox.session
