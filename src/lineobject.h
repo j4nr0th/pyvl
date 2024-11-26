@@ -9,8 +9,7 @@
 
 typedef struct
 {
-    PyObject_HEAD
-    unsigned begin;
+    PyObject_HEAD unsigned begin;
     unsigned end;
 } PyDust_LineObject;
 
@@ -20,4 +19,4 @@ extern PyTypeObject pydust_line_type;
 CDUST_INTERNAL
 PyDust_LineObject *pydust_line_from_indices(unsigned begin, unsigned end);
 
-#endif //LINEOBJECT_H
+#endif // LINEOBJECT_H

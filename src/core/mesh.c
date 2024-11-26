@@ -4,8 +4,7 @@
 
 #include "mesh.h"
 
-
-void mesh_free(mesh_t* this, const allocator_t* allocator)
+void mesh_free(mesh_t *this, const allocator_t *allocator)
 {
     // for (unsigned i = 0; i < this->n_surfaces; ++i)
     // {
@@ -17,7 +16,71 @@ void mesh_free(mesh_t* this, const allocator_t* allocator)
     allocator->deallocate(allocator->state, this);
 }
 
-real3_t line_direction(const mesh_t* mesh, geo_id_t line_id)
+// mesh_t* mesh_copy_valid(const mesh_t* msh, const allocator_t* allocator)
+// {
+//     mesh_t *const this = allocator->allocate(allocator->state, sizeof *this);
+//     if (!this)
+//     {
+//         return nullptr;
+//     }
+//     // Count number of surfaces which must be allocated
+//     unsigned n_surfaces = 0;
+//     unsigned n_line_entries = 0;
+//     for (unsigned i = 0; i < msh->n_surfaces; ++i)
+//     {
+//         const surface_t *s = msh->surfaces[i];
+//         unsigned j;
+//         for (j = 0; j < s->n_lines; ++j)
+//         {
+//             const line_t *ln = msh->lines + s->lines[j].value;
+//             if (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID)
+//             {
+//                 break;
+//             }
+//         }
+//         // Count surface only if none of the lines have invalid indices
+//         if (j != s->n_lines)
+//         {
+//             continue;
+//         }
+//         n_surfaces += 1;
+//         n_line_entries += s->n_lines;
+//     }
+//
+//     surface_t **const surfaces = allocator->allocate(
+//         allocator->state, sizeof(*surfaces) * n_surfaces + (n_surfaces + n_line_entries) * sizeof(uint32_t)
+//         );
+//     if (!surfaces)
+//     {
+//         allocator->deallocate(allocator->state, this);
+//         return nullptr;
+//     }
+//     //  Now actually write all surfaces
+//     for (unsigned i = 0; i < msh->n_surfaces; ++i)
+//     {
+//         const surface_t *s = msh->surfaces[i];
+//         unsigned j;
+//         for (j = 0; j < s->n_lines; ++j)
+//         {
+//             const line_t *ln = msh->lines + s->lines[j].value;
+//             if (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID)
+//             {
+//                 break;
+//             }
+//         }
+//         // Count surface only if none of the lines have invalid indices
+//         if (j != s->n_lines)
+//         {
+//             continue;
+//         }
+//         n_surfaces += 1;
+//         n_line_entries += s->n_lines;
+//     }
+//
+//
+// }
+
+real3_t line_direction(const mesh_t *mesh, geo_id_t line_id)
 {
     const line_t *ln = mesh->lines + line_id.value;
     if (!line_id.orientation)
@@ -50,7 +113,7 @@ real3_t surface_center(const mesh_t *mesh, geo_id_t surface_id)
     return (real3_t){{out.v0 * div, out.v1 * div, out.v2 * div}};
 }
 
-real3_t surface_normal(const mesh_t* mesh, geo_id_t surface_id)
+real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id)
 {
     real3_t out = {};
     const surface_t *surf = mesh->surfaces[surface_id.value];
@@ -71,8 +134,7 @@ real3_t surface_normal(const mesh_t* mesh, geo_id_t surface_id)
     return (real3_t){{-out.v0, -out.v1, -out.v2}};
 }
 
-
-mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator)
+mesh_t *mesh_dual_from_primal(const mesh_t *primal, const allocator_t *allocator)
 {
     mesh_t *const dual = allocator->allocate(allocator->state, sizeof(*dual));
     if (!dual)
@@ -80,8 +142,8 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
         return nullptr;
     }
 
-    dual->n_points   = primal->n_surfaces;
-    dual->n_lines    = primal->n_lines;
+    dual->n_points = primal->n_surfaces;
+    dual->n_lines = primal->n_lines;
     dual->n_surfaces = primal->n_points;
 
     dual->surfaces = nullptr;
@@ -149,9 +211,9 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
         mem_sz += sizeof(surface_t) + cnt * sizeof(geo_id_t);
     }
 
-
     /* Allocate memory for dual surface behind their pointers (which are more like offsets) */
-    surface_t **const surf_ptr = allocator->allocate(allocator->state, sizeof(*dual->surfaces) * dual->n_surfaces + mem_sz);
+    surface_t **const surf_ptr =
+        allocator->allocate(allocator->state, sizeof(*dual->surfaces) * dual->n_surfaces + mem_sz);
     if (!surf_ptr)
     {
         goto failed;
@@ -170,7 +232,7 @@ mesh_t* mesh_dual_from_primal(const mesh_t* primal, const allocator_t* allocator
                 id_ptr[cnt + 1] = (geo_id_t){.orientation = 0, .value = i_line};
                 cnt += 1;
             }
-            else if(ln->p2.value == i_pt)
+            else if (ln->p2.value == i_pt)
             {
                 id_ptr[cnt + 1] = (geo_id_t){.orientation = 1, .value = i_line};
                 cnt += 1;
@@ -194,7 +256,7 @@ failed:
 }
 
 mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-    const unsigned flat_points[restrict], const allocator_t *allocator)
+                           const unsigned flat_points[restrict], const allocator_t *allocator)
 {
     mesh_t *const this = allocator->allocate(allocator->state, sizeof(*this));
     if (!this)
@@ -219,7 +281,8 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
         return nullptr;
     }
 
-    surface_t ** surf_ptr = allocator->allocate(allocator->state,  n_elements * sizeof(*this->surfaces)+ sizeof(geo_id_t) * (n_elements + all_points));
+    surface_t **surf_ptr = allocator->allocate(allocator->state, n_elements * sizeof(*this->surfaces) +
+                                                                     sizeof(geo_id_t) * (n_elements + all_points));
     if (!surf_ptr)
     {
         allocator->deallocate(allocator->state, this->lines);
@@ -257,7 +320,7 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
             if (i_line == this->n_lines)
             {
                 // no other line contains it yet, so make a new one
-                this->lines[this->n_lines] = (line_t){.p1 = {.value=left}, .p2 =  {.value=right}};
+                this->lines[this->n_lines] = (line_t){.p1 = {.value = left}, .p2 = {.value = right}};
                 this->n_lines += 1;
             }
             left = right;
@@ -272,8 +335,8 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
     return this;
 }
 
-unsigned mesh_to_elements(
-    const mesh_t* mesh, unsigned** p_point_counts, unsigned** p_flat_points, const allocator_t* allocator)
+unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigned **p_flat_points,
+                          const allocator_t *allocator)
 {
     const unsigned n_surfaces = mesh->n_surfaces;
     if (n_surfaces == 0)
@@ -326,4 +389,3 @@ unsigned mesh_to_elements(
 
     return n_surfaces;
 }
-

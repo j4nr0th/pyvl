@@ -13,7 +13,7 @@ PyObject *geoid_repr(PyObject *self)
 PyObject *geoid_str(PyObject *self)
 {
     const PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
-    return PyUnicode_FromFormat("%c%u", (unsigned)this->id.orientation ? '-' : '+',(unsigned)this->id.value);
+    return PyUnicode_FromFormat("%c%u", (unsigned)this->id.orientation ? '-' : '+', (unsigned)this->id.value);
 }
 
 static PyObject *geoid_get_orientation(PyObject *self, void *Py_UNUSED(closure))
@@ -52,24 +52,33 @@ static int geoid_set_index(PyObject *self, PyObject *value, void *Py_UNUSED(clos
     return 0;
 }
 
-static PyGetSetDef geoid_getset[] =
-    {
-        {.name = "orientation", .get = geoid_get_orientation, .set = geoid_set_orientation, .doc = "Orientation of the object referenced by id.", .closure = nullptr},
-        {.name = "index", .get = geoid_get_index, .set = geoid_set_index, .doc = "Index of the object referenced by id.", .closure = nullptr},
-        {}, // sentinel
-    };
+static PyGetSetDef geoid_getset[] = {
+    {.name = "orientation",
+     .get = geoid_get_orientation,
+     .set = geoid_set_orientation,
+     .doc = "Orientation of the object referenced by id.",
+     .closure = nullptr},
+    {.name = "index",
+     .get = geoid_get_index,
+     .set = geoid_set_index,
+     .doc = "Index of the object referenced by id.",
+     .closure = nullptr},
+    {}, // sentinel
+};
 
 static PyObject *geoid_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     unsigned long value;
     int orientation = 0;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "I|p", (char*[3]){"index", "orientation", nullptr}, &value, &orientation))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "I|p", (char *[3]){"index", "orientation", nullptr}, &value,
+                                     &orientation))
     {
         return nullptr;
     }
 
     PyDust_GeoIDObject *const this = (PyDust_GeoIDObject *)type->tp_alloc(type, 0);
-    if (!this) return nullptr;
+    if (!this)
+        return nullptr;
 
     this->id.orientation = orientation;
     this->id.value = value;
@@ -97,14 +106,10 @@ static PyObject *geoid_rich_compare(PyObject *self, PyObject *other, const int o
     return PyBool_FromLong(val);
 }
 
-constexpr
-PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
+constexpr PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
 
-
-PyTypeObject pydust_geoid_type =
-    {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0)
-    .tp_name = "cdust.GeoID",
+PyTypeObject pydust_geoid_type = {
+    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "cdust.GeoID",
     .tp_basicsize = sizeof(PyDust_GeoIDObject),
     .tp_itemsize = 0,
     .tp_getset = geoid_getset,
@@ -113,5 +118,5 @@ PyTypeObject pydust_geoid_type =
     .tp_doc = geoid_type_docstring,
     .tp_new = geoid_new,
     .tp_richcompare = geoid_rich_compare,
-    .tp_flags = Py_TPFLAGS_DEFAULT|Py_TPFLAGS_IMMUTABLETYPE,
-    };
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE,
+};

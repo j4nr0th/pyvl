@@ -195,7 +195,7 @@ mesh_t *mesh_dual_from_primal(const mesh_t *primal, const allocator_t *allocator
 /**
  * @brief This function allows a mesh to be created by simply specifying element connectivity, which is very common with
  * meshing tools, such as GMSH.
- * 
+ *
  * @param n_elements Number of elements given.
  * @param point_counts Array which contains number of points for each element.
  * @param flat_points Points of elements, one after another.
@@ -220,4 +220,15 @@ unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigne
 
 void mesh_free(mesh_t *this, const allocator_t *allocator);
 
-#endif //MESH_H
+/**
+ * @brief This function creates a copy of a mesh, but without any surfaces or lines which contain invalid GeoID, meaning
+ * they have geo_id_t.value set to (~0u >> 1u). If an index of a line/point is out of bounds, this isn't checked. The
+ * most likely use for this function is to make dual mesh available for display.
+ *
+ * @param msh Mesh to create a stripped copy of.
+ * @param allocator Allocator to use for the copy.
+ * @return A stripped copy of the original mesh.
+ */
+// mesh_t *mesh_copy_valid(const mesh_t *msh, const allocator_t *allocator);
+
+#endif // MESH_H
