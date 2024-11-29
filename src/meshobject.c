@@ -111,7 +111,7 @@ static PyObject *pydust_mesh_new(PyTypeObject *type, PyObject *args, PyObject *k
             const unsigned *data = PyArray_DATA(idx);
             for (unsigned k = 0; k < per_element[i]; ++k)
             {
-                const unsigned v = data[j];
+                const unsigned v = data[k];
                 if (v > n_positions)
                 {
                     PyErr_Format(PyExc_ValueError,
