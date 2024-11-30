@@ -123,6 +123,27 @@ class Mesh:
         """Create dual to the mesh."""
         ...
 
+    @property
+    def surface_normals(self) -> npt.NDArray[np.float64]:
+        """Compute normals to each surface of the mesh."""
+        ...
+
+    @property
+    def surface_centers(self) -> npt.NDArray[np.float64]:
+        """Compute centers of each surface element."""
+        ...
+
+    def induction_matrix(
+        self,
+        tol: float,
+        control_points: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        line_buffer: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute an induction matrix for the mesh."""
+        ...
+
     # def strip_invalid(self) -> Mesh:
     #     """Return mesh without any entries with invalid ids."""
     #     ...

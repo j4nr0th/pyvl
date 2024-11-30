@@ -3,6 +3,7 @@
 //
 
 #include "meshobject.h"
+#include "core/flow_solver.h"
 #include "core/mesh.h"
 
 #include <numpy/arrayobject.h>
@@ -228,6 +229,60 @@ static int pydust_mesh_set_positions(PyObject *self, PyObject *new_value, void *
     return 0;
 }
 
+static PyObject *pydust_mesh_get_surface_normals(PyObject *self, void *Py_UNUSED(closure))
+{
+    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+    const npy_intp dims[2] = {this->mesh.n_surfaces, 3};
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_FLOAT64);
+    if (!out)
+    {
+        return nullptr;
+    }
+
+    _Static_assert(sizeof(npy_float64) * 3 == sizeof(real3_t), "Binary compatibility");
+
+    real3_t *const p_out = PyArray_DATA(out);
+    if (!p_out)
+    {
+        Py_DECREF(out);
+        return nullptr;
+    }
+
+    for (unsigned i_surf = 0; i_surf < this->mesh.n_surfaces; ++i_surf)
+    {
+        p_out[i_surf] = surface_normal(&this->mesh, (geo_id_t){.orientation = 0, .value = i_surf});
+    }
+
+    return (PyObject *)out;
+}
+
+static PyObject *pydust_mesh_get_surface_centers(PyObject *self, void *Py_UNUSED(closure))
+{
+    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+    const npy_intp dims[2] = {this->mesh.n_surfaces, 3};
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_FLOAT64);
+    if (!out)
+    {
+        return nullptr;
+    }
+
+    _Static_assert(sizeof(npy_float64) * 3 == sizeof(real3_t), "Binary compatibility");
+
+    real3_t *const p_out = PyArray_DATA(out);
+    if (!p_out)
+    {
+        Py_DECREF(out);
+        return nullptr;
+    }
+
+    for (unsigned i_surf = 0; i_surf < this->mesh.n_surfaces; ++i_surf)
+    {
+        p_out[i_surf] = surface_center(&this->mesh, (geo_id_t){.orientation = 0, .value = i_surf});
+    }
+
+    return (PyObject *)out;
+}
+
 static PyGetSetDef pydust_mesh_getset[] = {
     {.name = "n_points",
      .get = pydust_mesh_get_n_points,
@@ -248,6 +303,16 @@ static PyGetSetDef pydust_mesh_getset[] = {
      .get = pydust_mesh_get_positions,
      .set = pydust_mesh_set_positions,
      .doc = "Positions of mesh points.",
+     .closure = nullptr},
+    {.name = "surface_normals",
+     .get = pydust_mesh_get_surface_normals,
+     .set = nullptr,
+     .doc = "Compute normals to each surface of the mesh.",
+     .closure = nullptr},
+    {.name = "surface_centers",
+     .get = pydust_mesh_get_surface_centers,
+     .set = nullptr,
+     .doc = "Compute centers of each surface element.",
      .closure = nullptr},
     {},
 };
@@ -401,6 +466,175 @@ static PyObject *pydust_mesh_to_element_connectivity(PyObject *self, PyObject *P
     return out;
 }
 
+static PyArrayObject *ensure_input_array(PyObject *in, npy_intp *p_ndim, const npy_intp **p_dims)
+{
+    if (!PyArray_Check(in))
+    {
+        PyErr_SetString(PyExc_TypeError, "Input argument was not an array.");
+        return nullptr;
+    }
+    PyArrayObject *const in_array = (PyArrayObject *)in;
+    if (PyArray_TYPE(in_array) != NPY_FLOAT64)
+    {
+        PyErr_SetString(PyExc_ValueError, "Input array was not an array of numpy.float64.");
+        return nullptr;
+    }
+    if (!PyArray_CHKFLAGS(in_array, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED))
+    {
+        PyErr_SetString(PyExc_ValueError, "Input array was not C-contiguous and aligned.");
+        return nullptr;
+    }
+    const npy_intp ndim = PyArray_NDIM(in_array);
+    const npy_intp *dims = PyArray_DIMS(in_array);
+    if (ndim != 2)
+    {
+        PyErr_Format(PyExc_ValueError, "Input array did not have two axis, instead it had %u.", (unsigned)ndim);
+        return nullptr;
+    }
+    if (dims[1] != 3)
+    {
+        PyErr_Format(PyExc_ValueError, "Input array did not have the shape of (N, 3), instead being (%u, %u)",
+                     (unsigned)dims[0], (unsigned)dims[1]);
+        return nullptr;
+    }
+    *p_ndim = ndim;
+    *p_dims = dims;
+    return in_array;
+}
+
+static real3_t *ensure_line_memory(PyObject *in, unsigned n_lines, unsigned n_cpts)
+{
+    if (!PyArray_Check(in))
+    {
+        PyErr_SetString(PyExc_TypeError, "Line computation buffer is not an array.");
+        return nullptr;
+    }
+    PyArrayObject *const this = (PyArrayObject *)in;
+    if (PyArray_TYPE(this) != NPY_FLOAT64)
+    {
+        PyErr_SetString(PyExc_ValueError, "Line computation buffer was not an array of numpy.float64.");
+        return nullptr;
+    }
+
+    if (!PyArray_CHKFLAGS(this, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE))
+    {
+        PyErr_SetString(PyExc_ValueError, "Line computation buffer was not writable, C-contiguous, and aligned.");
+        return nullptr;
+    }
+
+    if (PyArray_SIZE(this) < n_lines * n_cpts * 3)
+    {
+        PyErr_Format(PyExc_ValueError,
+                     "Line computation buffer did not have space for enough elements "
+                     "(required %zu, but got %zu).",
+                     (size_t)(n_lines)*n_cpts * 3, (size_t)PyArray_SIZE(this));
+        return nullptr;
+    }
+    return PyArray_DATA(this);
+}
+
+static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+    if (nargs != 4 && nargs != 3 && nargs != 2)
+    {
+        PyErr_Format(PyExc_TypeError, "Method requires 2, 3, or 4 arguments, but was called with %u.", (unsigned)nargs);
+        return nullptr;
+    }
+    const double tol = PyFloat_AsDouble(args[0]);
+    if (PyErr_Occurred())
+        return nullptr;
+    npy_intp ndim;
+    const npy_intp *dims;
+
+    PyArrayObject *const in_array = ensure_input_array(args[1], &ndim, &dims);
+    if (!in_array)
+        return nullptr;
+
+    PyArrayObject *out_array;
+    if (nargs > 2 && !Py_IsNone(args[2]))
+    {
+        // If None is second arg, treat it as if it is not present at all.
+        out_array = (PyArrayObject *)args[2];
+        if (PyArray_TYPE(out_array) != NPY_FLOAT64)
+        {
+            PyErr_SetString(PyExc_ValueError, "Second argument was not an array of numpy.float64.");
+            return nullptr;
+        }
+
+        if (!PyArray_CHKFLAGS(out_array, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE))
+        {
+            PyErr_SetString(PyExc_ValueError, "Second array was not C-contiguous and aligned.");
+            return nullptr;
+        }
+
+        if (PyArray_NDIM(out_array) != 3)
+        {
+            PyErr_Format(PyExc_ValueError, "Second array did not have three axis, instead it had %u.",
+                         (unsigned)PyArray_NDIM(out_array));
+            return nullptr;
+        }
+        const npy_intp *out_dims = PyArray_DIMS(out_array);
+        if (out_dims[0] != dims[0] || out_dims[2] != 3)
+        {
+            PyErr_Format(PyExc_ValueError,
+                         "Second array's first and third axis that of the input array's first and"
+                         " second   (in: (%u, %u), out: (%u, %i %u)).",
+                         (unsigned)dims[0], (unsigned)dims[1], (unsigned)out_dims[0], (unsigned)out_dims[1],
+                         (unsigned)out_dims[2]);
+            return nullptr;
+        }
+        if (out_dims[1] != this->mesh.n_surfaces)
+        {
+            PyErr_Format(PyExc_ValueError,
+                         "Length of the second array's second axes did not match the number of "
+                         "surfaces in the mesh (n_surfaces: %u, axes length: %u).",
+                         this->mesh.n_surfaces, (unsigned)out_dims[1]);
+            return nullptr;
+        }
+        Py_INCREF(out_array);
+    }
+    else
+    {
+        const npy_intp out_dims[3] = {dims[0], this->mesh.n_surfaces, 3};
+        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
+        if (!out_array)
+            return nullptr;
+    }
+
+    const unsigned n_cpts = dims[0];
+    bool free_mem;
+    real3_t *line_buffer;
+    if (nargs == 4 && !Py_IsNone(args[3]))
+    {
+        line_buffer = ensure_line_memory(args[3], this->mesh.n_lines, n_cpts);
+        if (!line_buffer)
+            return nullptr;
+        free_mem = false;
+    }
+    else
+    {
+        line_buffer = PyMem_Malloc(sizeof(*line_buffer) * this->mesh.n_lines * n_cpts);
+        if (!line_buffer)
+            return nullptr;
+        free_mem = true;
+    }
+
+    // Now I can be sure the arrays are well-behaved
+    const real3_t *control_pts = PyArray_DATA(in_array);
+    real3_t *out_ptr = PyArray_DATA(out_array);
+
+    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, this->mesh.positions, n_cpts,
+                           control_pts, line_buffer, tol);
+    line_induction_to_surface_induction(this->mesh.n_surfaces, this->mesh.surfaces, this->mesh.n_lines, n_cpts,
+                                        line_buffer, out_ptr);
+
+    if (free_mem)
+        PyMem_Free(line_buffer);
+
+    return (PyObject *)out_array;
+}
+
 static PyMethodDef pydust_mesh_methods[] = {
     {.ml_name = "get_line",
      .ml_meth = pydust_mesh_get_line,
@@ -418,6 +652,10 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = pydust_mesh_to_element_connectivity,
      .ml_flags = METH_NOARGS,
      .ml_doc = "Convert mesh connectivity to arrays list of element lengths and indices."},
+    {.ml_name = "induction_matrix",
+     .ml_meth = (PyCFunction)pydust_mesh_induction_matrix,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Compute an induction matrix for the mesh."},
     {},
 };
 
