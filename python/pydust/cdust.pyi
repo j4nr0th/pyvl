@@ -74,7 +74,9 @@ class Mesh:
     """Object describing a discretization of a surface."""
 
     def __init__(
-        self, positions: npt.ArrayLike, connectivity: Sequence[Sequence[int]]
+        self,
+        positions: npt.ArrayLike,
+        connectivity: Sequence[Sequence[int] | npt.ArrayLike],
     ) -> None: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
