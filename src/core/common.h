@@ -110,8 +110,8 @@ static inline real3_t real3x3_vecmul(const real3x3_t a, const real3_t b)
 {
     return (real3_t){
         .v0 = real3_dot(a.row0, b),
-        .v1 = real3_dot(a.row0, b),
-        .v2 = real3_dot(a.row1, b),
+        .v1 = real3_dot(a.row1, b),
+        .v2 = real3_dot(a.row2, b),
     };
 }
 static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
@@ -141,15 +141,15 @@ static inline real3x3_t real3x3_from_angles(const real3_t angles)
     const real_t sz = sin(angles.z);
 
     return (real3x3_t){
-        .m00 = cz * cy,
-        .m01 = sz * (cz * sx - cx),
-        .m02 = cx * cz * sy,
-        .m10 = sz * cy,
-        .m11 = sz * sz * sx + cz * cx,
-        .m12 = cx * sz * sy,
+        .m00 = cy * cz,
+        .m01 = sx * sy * cz - cx * sz,
+        .m02 = cx * sy * cz + sx * sz,
+        .m10 = cy * sz,
+        .m11 = sx * sy * sz + cx * cz,
+        .m12 = cx * sy * sz - sx * cz,
         .m20 = -sy,
         .m21 = sx * cy,
-        .m22 = cy * cx,
+        .m22 = cx * cy,
     };
 }
 static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
@@ -162,20 +162,20 @@ static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
     const real_t sz = sin(angles.z);
 
     return (real3x3_t){
-        .m00 = cz * cy,
-        .m10 = sz * (cz * sx - cx),
-        .m20 = cx * cz * sy,
-        .m01 = sz * cy,
-        .m11 = sz * sz * sx + cz * cx,
-        .m21 = cx * sz * sy,
+        .m00 = cy * cz,
+        .m10 = sx * sy * cz - cx * sz,
+        .m20 = cx * sy * cz + sx * sz,
+        .m01 = cy * sz,
+        .m11 = sx * sy * sz + cx * cz,
+        .m21 = cx * sy * sz - sx * cz,
         .m02 = -sy,
-        .m21 = sx * cy,
-        .m22 = cy * cx,
+        .m12 = sx * cy,
+        .m22 = cx * cy,
     };
 }
 static inline real3_t angles_from_real3x3(const real3x3_t a)
 {
-    return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = asin(a.m20), .v2 = atan2(a.m10, a.m00)};
+    return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = atan2(-a.m20, hypot(a.m00, a.m01)), .v2 = atan2(a.m10, a.m00)};
 }
 
 static inline real_t clamp_angle_to_range(const real_t a)

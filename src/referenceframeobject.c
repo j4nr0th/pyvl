@@ -16,6 +16,9 @@ static PyObject *pydust_reference_frame_new(PyTypeObject *type, PyObject *args, 
     {
         return nullptr;
     }
+    theta_x = clamp_angle_to_range(theta_x);
+    theta_y = clamp_angle_to_range(theta_y);
+    theta_z = clamp_angle_to_range(theta_z);
 
     PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)type->tp_alloc(type, 0);
     if (!this)
@@ -116,8 +119,8 @@ static PyObject *pydust_reference_frame_get_offset(PyObject *self, void *Py_UNUS
         return nullptr;
     }
     p_out[0] = this->transformation.offset.x;
-    p_out[1] = this->transformation.offset.x;
-    p_out[2] = this->transformation.offset.x;
+    p_out[1] = this->transformation.offset.y;
+    p_out[2] = this->transformation.offset.z;
     return (PyObject *)out;
 }
 
@@ -136,8 +139,8 @@ static PyObject *pydust_reference_frame_get_angles(PyObject *self, void *Py_UNUS
         return nullptr;
     }
     p_out[0] = this->transformation.angles.x;
-    p_out[1] = this->transformation.angles.x;
-    p_out[2] = this->transformation.angles.x;
+    p_out[1] = this->transformation.angles.y;
+    p_out[2] = this->transformation.angles.z;
     return (PyObject *)out;
 }
 
@@ -156,6 +159,28 @@ static PyObject *pydust_reference_frame_get_rotation_matrix(PyObject *self, void
         return nullptr;
     }
     const real3x3_t mat = real3x3_from_angles(this->transformation.angles);
+    for (unsigned i = 0; i < 9; ++i)
+    {
+        p_out[i] = mat.data[i];
+    }
+    return (PyObject *)out;
+}
+
+static PyObject *pydust_reference_frame_get_rotation_matrix_inverse(PyObject *self, void *Py_UNUSED(closure))
+{
+    constexpr npy_intp dims[2] = {3, 3};
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_DOUBLE);
+    if (!out)
+        return nullptr;
+    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
+    double *const p_out = PyArray_DATA(out);
+    if (!p_out)
+    {
+        // I don't think this would ever even happen.
+        Py_DECREF(out);
+        return nullptr;
+    }
+    const real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
     for (unsigned i = 0; i < 9; ++i)
     {
         p_out[i] = mat.data[i];
@@ -196,10 +221,15 @@ static PyGetSetDef pydust_reference_frame_getset[] = {
      .set = nullptr,
      .doc = "Vector determining the offset of the reference frame in parent's frame.",
      .closure = nullptr},
-    {.name = "rotation matrix",
+    {.name = "rotation_matrix",
      .get = pydust_reference_frame_get_rotation_matrix,
      .set = nullptr,
      .doc = "Matrix representing rotation of the reference frame.",
+     .closure = nullptr},
+    {.name = "rotation_matrix_intverse",
+     .get = pydust_reference_frame_get_rotation_matrix_inverse,
+     .set = nullptr,
+     .doc = "Matrix representing inverse rotation of the reference frame.",
      .closure = nullptr},
     {.name = "parents",
      .get = pydust_reference_frame_get_parents,
@@ -243,7 +273,7 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const args[st
     if (nargs == 2)
     {
         out_array = (PyArrayObject *)args[1];
-        if (PyArray_FLAGS(out_array) & NPY_ARRAY_C_CONTIGUOUS)
+        if (!(PyArray_FLAGS(out_array) & NPY_ARRAY_C_CONTIGUOUS))
         {
             PyErr_SetString(PyExc_ValueError, "Output array is not C-contiguous.");
             Py_DECREF(in_array);
@@ -409,7 +439,7 @@ static PyObject *pydust_reference_frame_rotate_x(PyObject *self, PyObject *arg)
 {
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
-    if (!PyErr_Occurred())
+    if (PyErr_Occurred())
         return nullptr;
 
     PyDust_ReferenceFrame *const new =
@@ -427,7 +457,7 @@ static PyObject *pydust_reference_frame_rotate_y(PyObject *self, PyObject *arg)
 {
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
-    if (!PyErr_Occurred())
+    if (PyErr_Occurred())
         return nullptr;
 
     PyDust_ReferenceFrame *const new =
@@ -445,7 +475,7 @@ static PyObject *pydust_reference_frame_rotate_z(PyObject *self, PyObject *arg)
 {
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
-    if (!PyErr_Occurred())
+    if (PyErr_Occurred())
         return nullptr;
 
     PyDust_ReferenceFrame *const new =
@@ -540,4 +570,5 @@ PyTypeObject pydust_reference_frame_type = {
     .tp_new = pydust_reference_frame_new,
     .tp_dealloc = pydust_reference_frame_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
+    // .tp_richcompare =
 };

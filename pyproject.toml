@@ -57,7 +57,7 @@ docs = [
 
 
 [tool.mypy]
-mypy_path = "src"
+mypy_path = "python/pydust"
 plugins = ["npt_promote", "numpy.typing.mypy_plugin"]
 ignore_missing_imports = true
 warn_unused_configs = true

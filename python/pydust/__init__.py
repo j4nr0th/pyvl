@@ -3,4 +3,5 @@
 from pydust.cdust import GeoID as GeoID
 from pydust.cdust import Line as Line
 from pydust.cdust import Mesh as Mesh
+from pydust.cdust import ReferenceFrame as ReferenceFrame
 from pydust.cdust import Surface as Surface
