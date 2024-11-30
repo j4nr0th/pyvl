@@ -45,6 +45,25 @@ typedef union {
     };
 } real3_t;
 
+typedef union {
+    struct
+    {
+        real3_t row0;
+        real3_t row1;
+        real3_t row2;
+    };
+    struct
+    {
+        real_t data[9];
+    };
+    struct
+    {
+        real_t m00, m01, m02;
+        real_t m10, m11, m12;
+        real_t m20, m21, m22;
+    };
+} real3x3_t;
+
 static inline real3_t real3_add(const real3_t a, const real3_t b)
 {
     return (real3_t){{a.v0 + b.v0, a.v1 + b.v1, a.v2 + b.v2}};
@@ -85,6 +104,86 @@ static inline real3_t real3_neg(const real3_t a)
 static inline real_t real3_max(const real3_t a)
 {
     return a.v0 > a.v1 ? (a.v0 > a.v2 ? a.v0 : a.v2) : (a.v1 > a.v2 ? a.v1 : a.v2);
+}
+
+static inline real3_t real3x3_vecmul(const real3x3_t a, const real3_t b)
+{
+    return (real3_t){
+        .v0 = real3_dot(a.row0, b),
+        .v1 = real3_dot(a.row0, b),
+        .v2 = real3_dot(a.row1, b),
+    };
+}
+static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
+{
+    const real3_t col_b0 = {{b.m00, b.m10, b.m20}};
+    const real3_t col_b1 = {{b.m01, b.m11, b.m21}};
+    const real3_t col_b2 = {{b.m02, b.m12, b.m22}};
+    return (real3x3_t){
+        .m00 = real3_dot(a.row0, col_b0),
+        .m01 = real3_dot(a.row0, col_b1),
+        .m02 = real3_dot(a.row0, col_b2),
+        .m10 = real3_dot(a.row1, col_b0),
+        .m11 = real3_dot(a.row1, col_b1),
+        .m12 = real3_dot(a.row1, col_b2),
+        .m20 = real3_dot(a.row2, col_b0),
+        .m21 = real3_dot(a.row2, col_b1),
+        .m22 = real3_dot(a.row2, col_b2),
+    };
+}
+static inline real3x3_t real3x3_from_angles(const real3_t angles)
+{
+    const real_t cx = cos(angles.x);
+    const real_t sx = sin(angles.x);
+    const real_t cy = cos(angles.y);
+    const real_t sy = sin(angles.y);
+    const real_t cz = cos(angles.z);
+    const real_t sz = sin(angles.z);
+
+    return (real3x3_t){
+        .m00 = cz * cy,
+        .m01 = sz * (cz * sx - cx),
+        .m02 = cx * cz * sy,
+        .m10 = sz * cy,
+        .m11 = sz * sz * sx + cz * cx,
+        .m12 = cx * sz * sy,
+        .m20 = -sy,
+        .m21 = sx * cy,
+        .m22 = cy * cx,
+    };
+}
+static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
+{
+    const real_t cx = cos(angles.x);
+    const real_t sx = sin(angles.x);
+    const real_t cy = cos(angles.y);
+    const real_t sy = sin(angles.y);
+    const real_t cz = cos(angles.z);
+    const real_t sz = sin(angles.z);
+
+    return (real3x3_t){
+        .m00 = cz * cy,
+        .m10 = sz * (cz * sx - cx),
+        .m20 = cx * cz * sy,
+        .m01 = sz * cy,
+        .m11 = sz * sz * sx + cz * cx,
+        .m21 = cx * sz * sy,
+        .m02 = -sy,
+        .m21 = sx * cy,
+        .m22 = cy * cx,
+    };
+}
+static inline real3_t angles_from_real3x3(const real3x3_t a)
+{
+    return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = asin(a.m20), .v2 = atan2(a.m10, a.m00)};
+}
+
+static inline real_t clamp_angle_to_range(const real_t a)
+{
+    const double rem = remainder((double)a, 2 * M_PI);
+    if (rem < 0)
+        return 2 * M_PI + rem;
+    return rem;
 }
 
 static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)

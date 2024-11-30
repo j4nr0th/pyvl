@@ -124,3 +124,82 @@ class Mesh:
     # def strip_invalid(self) -> Mesh:
     #     """Return mesh without any entries with invalid ids."""
     #     ...
+
+class ReferenceFrame:
+    """Class which is used to define position and orientation of geometry."""
+
+    def __init__(
+        self,
+        theta_x: float = 0.0,
+        theta_y: float = 0.0,
+        theta_z: float = 0.0,
+        offset_x: float = 0.0,
+        offset_y: float = 0.0,
+        offset_z: float = 0.0,
+        *,
+        parent: ReferenceFrame,
+    ) -> None: ...
+    @property
+    def rotation_matrix(self) -> npt.NDArray[np.float64]:
+        """Matrix representing rotation of the reference frame."""
+        ...
+
+    @property
+    def angles(self) -> npt.NDArray[np.float64]:
+        """Vector determining the rotations around axis in parent's frame."""
+        ...
+
+    @property
+    def offset(self) -> npt.NDArray[np.float64]:
+        """Vector determining the offset of the reference frame in parent's frame."""
+        ...
+
+    @property
+    def parent(self) -> ReferenceFrame | None:
+        """What frame it is relative to."""
+        ...
+
+    @property
+    def parents(self) -> tuple[ReferenceFrame, ...]:
+        """Tuple of all parents of this reference frame."""
+        ...
+
+    def from_parent_with_offset(
+        self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None
+    ) -> npt.NDArray[np.float64]:
+        """Apply transformation to the reference frame from parent with offset."""
+        ...
+
+    def from_parent_without_offset(
+        self, x: npt.ArrayLike, y: npt.ArrayLike, z: npt.ArrayLike
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Apply transformation to the reference frame from parent without offset."""
+        ...
+
+    def to_parent_with_offset(
+        self, x: npt.ArrayLike, y: npt.ArrayLike, z: npt.ArrayLike
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Reverse transformation from the reference frame to parent with offset."""
+        ...
+
+    def to_parent_without_offset(
+        self, x: npt.ArrayLike, y: npt.ArrayLike, z: npt.ArrayLike
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Reverse transformation from the reference frame to parent without offset."""
+        ...
+
+    def rotate_x(self, theta: float) -> ReferenceFrame:
+        """Create a copy of the frame rotated around the x-axis."""
+        ...
+
+    def rotate_y(self, theta: float) -> ReferenceFrame:
+        """Create a copy of the frame rotated around the y-axis."""
+        ...
+
+    def rotate_z(self, theta: float) -> ReferenceFrame:
+        """Create a copy of the frame rotated around the z-axis."""
+        ...
+
+    def with_offset(self, theta: float) -> ReferenceFrame:
+        """Create a copy of the frame with different offset value."""
+        ...

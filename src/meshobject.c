@@ -155,6 +155,17 @@ end:
     return (PyObject *)this;
 }
 
+static void pydust_mesh_dealloc(PyObject *self)
+{
+    PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+
+    CDUST_OBJ_ALLOCATOR.deallocate(CDUST_OBJ_ALLOCATOR.state, this->mesh.positions);
+    CDUST_OBJ_ALLOCATOR.deallocate(CDUST_OBJ_ALLOCATOR.state, this->mesh.lines);
+    CDUST_OBJ_ALLOCATOR.deallocate(CDUST_OBJ_ALLOCATOR.state, this->mesh.surfaces);
+
+    Py_TYPE(this)->tp_free(this);
+}
+
 static PyObject *pydust_mesh_get_n_points(PyObject *self, void *Py_UNUSED(closure))
 {
     const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
@@ -421,4 +432,5 @@ PyTypeObject pydust_mesh_type = {
     .tp_methods = pydust_mesh_methods,
     .tp_getset = pydust_mesh_getset,
     .tp_new = pydust_mesh_new,
+    .tp_dealloc = pydust_mesh_dealloc,
 };

@@ -27,6 +27,7 @@ list(
         src/lineobject.c
         src/surfaceobject.c
         src/meshobject.c
+        src/referenceframeobject.c
 )
 
 list(
@@ -37,6 +38,7 @@ list(
         src/lineobject.h
         src/surfaceobject.h
         src/meshobject.h
+        src/referenceframeobject.h
 )
 
 list(
@@ -46,6 +48,7 @@ list(
         src/core/mesh.c
         src/core/mesh_io.c
         src/core/flow_solver.c
+        src/core/transformation.c
 )
 
 list(
@@ -55,6 +58,7 @@ list(
         src/core/mesh.h
         src/core/mesh_io.h
         src/core/flow_solver.h
+        src/core/transformation.h
 )
 
 add_library(static_cdust

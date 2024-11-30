@@ -3,6 +3,7 @@
 #include "geoidobject.h"
 #include "lineobject.h"
 #include "meshobject.h"
+#include "referenceframeobject.h"
 #include "surfaceobject.h"
 
 #include <numpy/arrayobject.h>
@@ -36,6 +37,8 @@ PyMODINIT_FUNC PyInit_cdust(void)
     if (PyModule_AddType(mod, &pydust_surface_type))
         goto failed;
     if (PyModule_AddType(mod, &pydust_mesh_type))
+        goto failed;
+    if (PyModule_AddType(mod, &pydust_reference_frame_type))
         goto failed;
 
     return mod;
