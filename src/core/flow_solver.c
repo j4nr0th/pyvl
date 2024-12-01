@@ -156,14 +156,14 @@ void line_induction_to_surface_induction(unsigned n_surfaces, const surface_t *s
                 const geo_id_t ln_id = s->lines[i_ln];
                 if (ln_id.orientation)
                 {
-                    res = real3_sub(res, line_inductions[ln_id.value]);
+                    res = real3_sub(res, line_inductions[i_cp * n_lines + ln_id.value]);
                 }
                 else
                 {
-                    res = real3_add(res, line_inductions[ln_id.value]);
+                    res = real3_add(res, line_inductions[i_cp * n_lines + ln_id.value]);
                 }
             }
-            out[i_cp * n_cpts + i_surf] = res;
+            out[i_cp * n_surfaces + i_surf] = res;
         }
     }
 }
