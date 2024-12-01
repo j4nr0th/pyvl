@@ -80,7 +80,7 @@ static inline real3_t real3_cross(const real3_t a, const real3_t b)
 {
     return (real3_t){{
         a.v1 * b.v2 - a.v2 * b.v1,
-        a.v2 * b.v0 - a.v0 + b.v2,
+        a.v2 * b.v0 - a.v0 * b.v2,
         a.v0 * b.v1 - a.v1 * b.v0,
     }};
 }

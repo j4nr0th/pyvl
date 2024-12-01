@@ -1,16 +1,79 @@
 """Tests related to the Mesh object."""
 
 import numpy as np
+import pytest
 from pydust import Mesh
 
 
 def test_mesh_construction():
     """Check that constructor and getters/setters works as intended."""
     positions = np.array(
-        [[0, 2, 0.5], [0.4, 2, 0.4], [4, 0.1, 0.2], [3, -0.1, 0.2], [2, 1, 0.2]]
+        [
+            [0, 2, 0.5],
+            [0.4, 2, 0.4],
+            [4, 0.1, 0.2],
+            [3, -0.1, 0.2],
+            [2, 1, 0.2],
+            [2, -1, 3],
+        ]
     )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
     msh = Mesh(positions, elements)
+    flat_elements = np.array(sum(elements, start=[]))
     assert np.all(msh.positions == positions)
-    element_count, _ = msh.to_element_connectivity()
+    element_count, connectivity = msh.to_element_connectivity()
     assert np.all(element_count == [len(e) for e in elements])
+    assert all(connectivity == flat_elements)
+
+
+def test_mesh_surface_normals():
+    """Check that surface normals are all really unit normals."""
+    positions = np.array(
+        [
+            [0, 2, 0.5],
+            [0.4, 2, 0.4],
+            [4, 0.1, 0.2],
+            [3, -0.1, 0.2],
+            [2, 1, 0.2],
+            [2, -1, 3],
+        ]
+    )
+    elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
+    msh = Mesh(positions, elements)
+    normals = msh.surface_normals
+    # Unit length
+    assert 1 == pytest.approx(np.linalg.norm(normals, axis=1))
+    # For triangle elements, these should be perpendicular to all lines
+    # other elements are more ticky, since if they're not planar, the normal
+    # will be computed as weighted average.
+    for n, e in zip(normals, elements):
+        if len(e) != 3:
+            continue
+        r0 = positions[e[0], :] - positions[e[2], :]
+        r1 = positions[e[1], :] - positions[e[0], :]
+        r2 = positions[e[2], :] - positions[e[1], :]
+
+        assert 0 == pytest.approx(np.dot(r1, n))
+        assert 0 == pytest.approx(np.dot(r2, n))
+        assert 0 == pytest.approx(np.dot(r0, n))
+
+
+def test_mesh_surface_centers():
+    """Check that surface centers are all correct."""
+    positions = np.array(
+        [
+            [0, 2, 0.5],
+            [0.4, 2, 0.4],
+            [4, 0.1, 0.2],
+            [3, -0.1, 0.2],
+            [2, 1, 0.2],
+            [2, -1, 3],
+        ]
+    )
+    elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
+    msh = Mesh(positions, elements)
+    centers = msh.surface_centers
+    for c, e in zip(centers, elements):
+        v = np.mean(positions[e, :], axis=0)
+
+        assert v == pytest.approx(c)
