@@ -229,3 +229,20 @@ class ReferenceFrame:
     def with_offset(self, new_offset: npt.ArrayLike) -> ReferenceFrame:
         """Create a copy of the frame with different offset value."""
         ...
+
+    def at_time(self, t: float) -> ReferenceFrame:
+        """Compute reference frame at the given time.
+
+        This is useful when the reference frame is moving or rotating in space.
+
+        Parameters
+        ----------
+        t : float
+            Time at which the reference frame is needed.
+
+        Returns
+        -------
+        ReferenceFrame
+            New reference frame.
+        """
+        ...

@@ -40,8 +40,8 @@ real3_t compute_mesh_line_induction(const real3_t control_point, const geo_id_t 
     }
 
     real_t vel_mag_half = 0.5 * M_1_PI / norm_dist * (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist));
-    real3_t dr_avg = real3_mul1(real3_add(dr1, dr2), 0.5);
-    real3_t vel_dir = real3_mul1(real3_cross(dr_avg, direction), vel_mag_half);
+    // real3_t dr_avg = real3_mul1(real3_add(dr1, dr2), 0.5);
+    real3_t vel_dir = real3_mul1(real3_cross(control_point, direction), vel_mag_half);
 
     if (i_line.orientation)
     {
@@ -102,12 +102,10 @@ void compute_line_induction(const unsigned n_lines, const line_t lines[static re
         direction.v0 /= len;
         direction.v1 /= len;
         direction.v2 /= len;
+
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
             const real3_t control_point = cpts[icp];
-            const real3_t dr1 = real3_sub(control_point, r1);
-            const real3_t dr2 = real3_sub(control_point, r2);
-
             if (len < tol)
             {
                 //  Filament is too short
@@ -115,13 +113,16 @@ void compute_line_induction(const unsigned n_lines, const line_t lines[static re
                 continue;
             }
 
+            const real3_t dr1 = real3_sub(control_point, r1);
+            const real3_t dr2 = real3_sub(control_point, r2);
+
             const real_t tan_dist1 = real3_dot(direction, dr1);
             const real_t tan_dist2 = real3_dot(direction, dr2);
 
-            const real_t norm_dist1 = sqrt(real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1));
-            const real_t norm_dist2 = sqrt(real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2));
+            const real_t norm_dist1 = (real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1));
+            const real_t norm_dist2 = (real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2));
 
-            const real_t norm_dist = (norm_dist1 + norm_dist2) / 2.0;
+            const real_t norm_dist = sqrt((norm_dist1 + norm_dist2) / 2.0);
 
             if (norm_dist < tol)
             {
@@ -130,10 +131,9 @@ void compute_line_induction(const unsigned n_lines, const line_t lines[static re
                 continue;
             }
 
-            const real_t vel_mag_half =
-                0.5 * M_1_PI / norm_dist * (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist));
-            const real3_t dr_avg = real3_mul1(real3_add(dr1, dr2), 0.5);
-            const real3_t vel_dir = real3_mul1(real3_cross(dr_avg, direction), vel_mag_half);
+            const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
+            // const real3_t dr_avg = (real3_mul1(real3_add(dr1, dr2), 0.5));
+            const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
             out[icp * n_lines + iln] = vel_dir;
         }
     }
@@ -163,6 +163,7 @@ void line_induction_to_surface_induction(unsigned n_surfaces, const surface_t *s
                     res = real3_add(res, line_inductions[i_cp * n_lines + ln_id.value]);
                 }
             }
+            // printf("Surface %u at CP %u has induction (%g, %g, %g)\n", i_surf, i_cp, res.x, res.y, res.z);
             out[i_cp * n_surfaces + i_surf] = res;
         }
     }

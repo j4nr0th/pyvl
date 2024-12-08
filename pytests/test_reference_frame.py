@@ -152,3 +152,18 @@ def test_transformation_output():
     # Must be possible to call inplace
     rf.to_parent_with_offset(x_in, x_in)
     assert np.all(res_out == x_in)
+
+
+def test_simple_transformations():
+    """Manually check some basic transformations."""
+    eye = np.eye(3)
+    rf1 = ReferenceFrame(np.pi / 2, offset_y=1.0)
+    eye2 = rf1.from_parent_with_offset(eye)
+    assert pytest.approx(eye2) == [[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [0.0, 0.0, 0.0]]
+    eye2 = rf1.from_parent_without_offset(eye)
+    assert pytest.approx(eye2) == [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]
+    rf1 = ReferenceFrame(theta_z=np.pi / 2)
+    eye2 = rf1.from_parent_with_offset(eye, eye2)
+    assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    eye2 = rf1.from_parent_without_offset(eye, eye2)
+    assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]

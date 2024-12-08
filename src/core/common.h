@@ -66,11 +66,11 @@ typedef union {
 
 static inline real3_t real3_add(const real3_t a, const real3_t b)
 {
-    return (real3_t){{a.v0 + b.v0, a.v1 + b.v1, a.v2 + b.v2}};
+    return (real3_t){.v0 = a.v0 + b.v0, .v1 = a.v1 + b.v1, .v2 = a.v2 + b.v2};
 }
 static inline real3_t real3_sub(const real3_t a, const real3_t b)
 {
-    return (real3_t){{a.v0 - b.v0, a.v1 - b.v1, a.v2 - b.v2}};
+    return (real3_t){.v0 = a.v0 - b.v0, .v1 = a.v1 - b.v1, .v2 = a.v2 - b.v2};
 }
 static inline real_t real3_dot(const real3_t a, const real3_t b)
 {
@@ -78,11 +78,11 @@ static inline real_t real3_dot(const real3_t a, const real3_t b)
 }
 static inline real3_t real3_cross(const real3_t a, const real3_t b)
 {
-    return (real3_t){{
-        a.v1 * b.v2 - a.v2 * b.v1,
-        a.v2 * b.v0 - a.v0 * b.v2,
-        a.v0 * b.v1 - a.v1 * b.v0,
-    }};
+    return (real3_t){
+        .v0 = a.v1 * b.v2 - a.v2 * b.v1,
+        .v1 = a.v2 * b.v0 - a.v0 * b.v2,
+        .v2 = a.v0 * b.v1 - a.v1 * b.v0,
+    };
 }
 static inline real_t real3_mag(const real3_t a)
 {
@@ -91,15 +91,15 @@ static inline real_t real3_mag(const real3_t a)
 static inline real3_t real3_unit(const real3_t a)
 {
     const real_t mag = 1.0 / real3_mag(a);
-    return (real3_t){{a.v0 * mag, a.v1 * mag, a.v2 * mag}};
+    return (real3_t){.v0 = a.v0 * mag, .v1 = a.v1 * mag, .v2 = a.v2 * mag};
 }
-static inline real3_t real3_mul1(const real3_t a, real_t k)
+static inline real3_t real3_mul1(const real3_t a, const real_t k)
 {
-    return (real3_t){{a.v0 * k, a.v1 * k, a.v2 * k}};
+    return (real3_t){.v0 = a.v0 * k, .v1 = a.v1 * k, .v2 = a.v2 * k};
 }
 static inline real3_t real3_neg(const real3_t a)
 {
-    return (real3_t){{-a.v0, -a.v1, -a.v2}};
+    return (real3_t){.v0 = -a.v0, .v1 = -a.v1, .v2 = -a.v2};
 }
 static inline real_t real3_max(const real3_t a)
 {

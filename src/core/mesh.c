@@ -122,12 +122,12 @@ real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id)
     for (unsigned i_line = 1; i_line < surf->n_lines; ++i_line)
     {
         const real3_t d2 = line_direction(mesh, surf->lines[i_line]);
-        const real3_t normal = real3_cross(d1, d2);
+        const real3_t normal = real3_cross(d2, d1);
         out = real3_add(out, normal);
         d1 = d2;
     }
     //  Add the last one
-    const real3_t normal = real3_cross(d1, dr0);
+    const real3_t normal = real3_cross(dr0, d1);
     out = real3_unit(real3_add(out, normal));
     if (!surface_id.orientation)
         return out;

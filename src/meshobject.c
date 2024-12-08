@@ -550,6 +550,7 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
     PyArrayObject *const in_array = ensure_input_array(args[1], &ndim, &dims);
     if (!in_array)
         return nullptr;
+    const unsigned n_cpts = dims[0];
 
     PyArrayObject *out_array;
     if (nargs > 2 && !Py_IsNone(args[2]))
@@ -596,27 +597,32 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
     }
     else
     {
-        const npy_intp out_dims[3] = {dims[0], this->mesh.n_surfaces, 3};
+        const npy_intp out_dims[3] = {n_cpts, this->mesh.n_surfaces, 3};
         out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
         if (!out_array)
             return nullptr;
     }
 
-    const unsigned n_cpts = dims[0];
     bool free_mem;
     real3_t *line_buffer;
     if (nargs == 4 && !Py_IsNone(args[3]))
     {
         line_buffer = ensure_line_memory(args[3], this->mesh.n_lines, n_cpts);
         if (!line_buffer)
+        {
+            Py_DECREF(out_array);
             return nullptr;
+        }
         free_mem = false;
     }
     else
     {
         line_buffer = PyMem_Malloc(sizeof(*line_buffer) * this->mesh.n_lines * n_cpts);
         if (!line_buffer)
+        {
+            Py_DECREF(out_array);
             return nullptr;
+        }
         free_mem = true;
     }
 
@@ -631,6 +637,44 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
 
     if (free_mem)
         PyMem_Free(line_buffer);
+
+    return (PyObject *)out_array;
+}
+
+static PyObject *pydust_mesh_induction_matrix2(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+    if (nargs != 2)
+    {
+        PyErr_Format(PyExc_TypeError, "Method requires 2 arguments, but was called with %u.", (unsigned)nargs);
+        return nullptr;
+    }
+    const double tol = PyFloat_AsDouble(args[0]);
+    if (PyErr_Occurred())
+        return nullptr;
+    npy_intp ndim;
+    const npy_intp *dims;
+
+    PyArrayObject *const in_array = ensure_input_array(args[1], &ndim, &dims);
+    if (!in_array)
+        return nullptr;
+    const unsigned n_cpts = dims[0];
+
+    PyArrayObject *out_array;
+
+    const npy_intp out_dims[3] = {n_cpts, this->mesh.n_surfaces, 3};
+    out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
+    if (!out_array)
+        return nullptr;
+
+    // Now I can be sure the arrays are well-behaved
+    const real3_t *control_pts = PyArray_DATA(in_array);
+    real3_t *out_ptr = PyArray_DATA(out_array);
+
+    for (unsigned s = 0; s < this->mesh.n_surfaces; ++s)
+        for (unsigned c = 0; c < n_cpts; ++c)
+            out_ptr[c * this->mesh.n_surfaces + s] =
+                compute_mesh_surface_induction(control_pts[c], (geo_id_t){.value = s}, &this->mesh, tol);
 
     return (PyObject *)out_array;
 }
@@ -656,6 +700,10 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (PyCFunction)pydust_mesh_induction_matrix,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute an induction matrix for the mesh."},
+    {.ml_name = "induction_matrix2",
+     .ml_meth = (PyCFunction)pydust_mesh_induction_matrix2,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Compute an induction matrix for the mesh, but less cool."},
     {},
 };
 

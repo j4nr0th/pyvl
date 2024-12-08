@@ -518,6 +518,21 @@ static PyObject *pydust_reference_frame_with_offset(PyObject *self, PyObject *ar
     return (PyObject *)new;
 }
 
+static PyObject *pydust_reference_frame_at_time(PyObject *self, PyObject *arg)
+{
+    const double time = PyLong_AsDouble(arg);
+    (void)time;
+    PyDust_ReferenceFrame *const new =
+        (PyDust_ReferenceFrame *)pydust_reference_frame_type.tp_alloc(&pydust_reference_frame_type, 0);
+    if (!new)
+        return nullptr;
+    const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
+    new->transformation = this->transformation;
+    new->parent = this->parent;
+    Py_INCREF(this->parent);
+    return (PyObject *)new;
+}
+
 static PyMethodDef pydust_reference_frame_methods[] = {
     {.ml_name = "from_parent_with_offset",
      .ml_meth = (PyCFunction)pydust_reference_frame_from_parent_with_offset,
@@ -551,6 +566,22 @@ static PyMethodDef pydust_reference_frame_methods[] = {
      .ml_meth = pydust_reference_frame_with_offset,
      .ml_flags = METH_O,
      .ml_doc = "Create a copy of the frame with different offset value."},
+    {.ml_name = "at_time",
+     .ml_meth = pydust_reference_frame_at_time,
+     .ml_flags = METH_O,
+     .ml_doc = "Compute reference frame at the given time.\n"
+               "\n"
+               "This is useful when the reference frame is moving or rotating in space.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "t : float\n"
+               "    Time at which the reference frame is needed.\n"
+               "\n"
+               "Returns\n"
+               "-------\n"
+               "ReferenceFrame\n"
+               "    New reference frame."},
     {},
 };
 
