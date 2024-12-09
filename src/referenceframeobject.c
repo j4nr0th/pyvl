@@ -520,7 +520,9 @@ static PyObject *pydust_reference_frame_with_offset(PyObject *self, PyObject *ar
 
 static PyObject *pydust_reference_frame_at_time(PyObject *self, PyObject *arg)
 {
-    const double time = PyLong_AsDouble(arg);
+    const double time = PyFloat_AsDouble(arg);
+    if (PyErr_Occurred())
+        return nullptr;
     (void)time;
     PyDust_ReferenceFrame *const new =
         (PyDust_ReferenceFrame *)pydust_reference_frame_type.tp_alloc(&pydust_reference_frame_type, 0);
@@ -529,7 +531,7 @@ static PyObject *pydust_reference_frame_at_time(PyObject *self, PyObject *arg)
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
     new->transformation = this->transformation;
     new->parent = this->parent;
-    Py_INCREF(this->parent);
+    Py_XINCREF(this->parent);
     return (PyObject *)new;
 }
 

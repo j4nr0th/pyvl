@@ -6,5 +6,6 @@ from pydust.cdust import Mesh as Mesh
 from pydust.cdust import ReferenceFrame as ReferenceFrame
 from pydust.cdust import Surface as Surface
 from pydust.geometry import Geometry as Geometry
+from pydust.geometry import SimulationGeometry as SimulationGeometry
 from pydust.geometry import geometry_show_pyvista as geometry_show_pyvista
 from pydust.geometry import mesh_from_mesh_io as mesh_from_mesh_io

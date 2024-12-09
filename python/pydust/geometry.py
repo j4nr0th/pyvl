@@ -146,7 +146,7 @@ class SimulationGeometry:
     _normals: npt.NDArray[np.float64]
     _cpts: npt.NDArray[np.float64]
 
-    def __init__(self, geo: Mapping[str, Geometry], /, **kwargs: Geometry) -> None:
+    def __init__(self, geo: Mapping[str, Geometry] = {}, /, **kwargs: Geometry) -> None:
         for kw in kwargs:
             if kw in geo:
                 raise ValueError(
@@ -157,6 +157,7 @@ class SimulationGeometry:
         indices: list[npt.NDArray[np.uint64]] = []
         n_pts = 0
         info_list: list[_GeoInfo] = []
+        geo = {**geo, **kwargs}
         for geo_name in geo:
             g = geo[geo_name]
             nelm, conn = g.primal.to_element_connectivity()
@@ -175,8 +176,8 @@ class SimulationGeometry:
         self.msh = joined_mesh
         self.info = tuple(info_list)
         self._time = 0.0
-        self._normals = np.empty(joined_mesh.n_points, np.float64)
-        self._cpts = np.empty(joined_mesh.n_points, np.float64)
+        self._normals = np.empty((joined_mesh.n_surfaces, 3), np.float64)
+        self._cpts = np.empty((joined_mesh.n_surfaces, 3), np.float64)
         self.time = 0.0
 
     @property
@@ -192,14 +193,16 @@ class SimulationGeometry:
         for info in self.info:
             rf = info.rf.at_time(t)
             i_begin = info.offset
-            i_end = i_begin + info.msh.n_points
+            i_end = i_begin + info.msh.n_surfaces
             # Transform in place
             rf.to_parent_with_offset(
-                info.msh.positions, self.msh.positions[i_begin:i_end]
+                info.msh.positions, self.msh.positions[i_begin:i_end, :]
             )
-            rf.to_parent_with_offset(info.msh.surface_centers, self._cpts[i_begin:i_end])
+            rf.to_parent_with_offset(
+                info.msh.surface_centers, self._cpts[i_begin:i_end, :]
+            )
             rf.to_parent_without_offset(
-                info.msh.surface_normals, self._normals[i_begin:i_end]
+                info.msh.surface_normals, self._normals[i_begin:i_end, :]
             )
 
     @property
@@ -220,9 +223,18 @@ class SimulationGeometry:
         tol: float = 1e-6,
     ) -> npt.NDArray[np.float64]:
         """Compute circulation resulting from given velocity function."""
-        v = velocity_function(self.msh.positions, self._time)
+        v = velocity_function(self._cpts, self._time)
         rhs = np.sum(self._normals * v, axis=1)
         lhs = np.sum(
-            self._normals[:, None, :] * self.msh.induction_matrix(tol, self._cpts), axis=1
+            self._normals[:, None, :] * self.msh.induction_matrix(tol, self._cpts), axis=2
         )
         return np.linalg.solve(lhs, rhs)
+
+    def as_polydata(self) -> pv.PolyData:
+        """Convert SimulationGeometry into PyVista's PolyData."""
+        positions = self.msh.positions
+        nper_elem, indices = self.msh.to_element_connectivity()
+        offsets = np.pad(np.cumsum(nper_elem), (1, 0))
+        faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
+        pd = pv.PolyData.from_irregular_faces(positions, faces)
+        return pd
