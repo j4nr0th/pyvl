@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import final
+from typing import Self, final
 
 import numpy as np
 from numpy import typing as npt
+
+from pydust._typing import VecLike3
 
 @final
 class GeoID:
     """Class used to refer to topological objects with orientation."""
 
-    def __init__(self, index: int, orientation: object = False) -> None: ...
+    def __new__(cls, index: int, orientation: object = False) -> Self: ...
     @property
     def orientation(self) -> bool:
         """True if orientation of object is reversed."""
@@ -35,7 +37,7 @@ class GeoID:
 class Line:
     """Class which describes a connection between two points."""
 
-    def __init__(self, begin: int | GeoID, end: int | GeoID) -> None: ...
+    def __new__(cls, begin: int | GeoID, end: int | GeoID) -> Self: ...
 
     begin: int
     """Start point of the line."""
@@ -55,7 +57,7 @@ class Surface:
     ``i + 1``, a :class:`ValueError` will be raised.
     """
 
-    def __init__(self, lines: Sequence[Line]) -> None: ...
+    def __new__(cls, lines: Sequence[Line]) -> Self: ...
     @property
     def n_lines(self) -> int:
         """Return the number of lines that make up the surface."""
@@ -73,11 +75,11 @@ class Surface:
 class Mesh:
     """Object describing a discretization of a surface."""
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         positions: npt.ArrayLike,
         connectivity: Sequence[Sequence[int] | npt.ArrayLike],
-    ) -> None: ...
+    ) -> Self: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     @property
@@ -151,16 +153,12 @@ class Mesh:
 class ReferenceFrame:
     """Class which is used to define position and orientation of geometry."""
 
-    def __init__(
-        self,
-        theta_x: float = 0.0,
-        theta_y: float = 0.0,
-        theta_z: float = 0.0,
-        offset_x: float = 0.0,
-        offset_y: float = 0.0,
-        offset_z: float = 0.0,
+    def __new__(
+        cls,
+        offset: VecLike3 = (0, 0, 0),
+        theta: VecLike3 = (0, 0, 0),
         parent: ReferenceFrame | None = None,
-    ) -> None: ...
+    ) -> Self: ...
     @property
     def rotation_matrix(self) -> npt.NDArray[np.float64]:
         """Matrix representing rotation of the reference frame."""
@@ -245,4 +243,9 @@ class ReferenceFrame:
         ReferenceFrame
             New reference frame.
         """
+        ...
+
+    @staticmethod
+    def angles_from_rotation(rotation_matrix: npt.ArrayLike) -> npt.NDArray[np.double]:
+        """Compute rotation angles from a transformation matrix."""
         ...

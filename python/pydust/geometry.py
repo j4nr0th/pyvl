@@ -20,7 +20,7 @@ def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
         if c.dim != 2:
             warn(
                 f"The mesh contains a cell block of type {c.type}, which has "
-                "topological dimesion not equal to 2, so it will be ignored."
+                "topological dimension not equal to 2, so it will be ignored."
             )
             continue
         for element in c.data:

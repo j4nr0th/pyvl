@@ -8,13 +8,26 @@ static PyObject *pydust_reference_frame_new(PyTypeObject *type, PyObject *args, 
 {
     double theta_x = 0, theta_y = 0, theta_z = 0;
     double offset_x = 0, offset_y = 0, offset_z = 0;
-    PyDust_ReferenceFrame *parent = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(
-            args, kwargs, "|ddddddO!",
-            (char *[8]){"theta_x", "theta_y", "theta_z", "offset_x", "offset_y", "offset_z", "parent", nullptr},
-            &theta_x, &theta_y, &theta_z, &offset_x, &offset_y, &offset_z, type, &parent))
+    PyDust_ReferenceFrame *parent;
+    PyObject *p = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|(ddd)(ddd)O", (char *[4]){"offset", "theta", "parent", nullptr},
+                                     &offset_x, &offset_y, &offset_z, &theta_x, &theta_y, &theta_z, &p))
     {
         return nullptr;
+    }
+    if (p == nullptr || Py_IsNone(p))
+    {
+        parent = nullptr;
+    }
+    else if (!PyObject_TypeCheck(p, &pydust_reference_frame_type))
+    {
+        PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R",
+                     PyObject_Type(p));
+        return nullptr;
+    }
+    else
+    {
+        parent = (PyDust_ReferenceFrame *)p;
     }
     theta_x = clamp_angle_to_range(theta_x);
     theta_y = clamp_angle_to_range(theta_y);
@@ -435,6 +448,144 @@ static PyObject *pydust_reference_frame_to_parent_without_offset(PyObject *self,
     return (PyObject *)out_array;
 }
 
+static PyObject *pydust_reference_frame_from_global_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    PyArrayObject *in_array, *out_array;
+    npy_intp dim_in;
+    const npy_intp *dims_in;
+    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    {
+        return nullptr;
+    }
+
+    const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
+    real3x3_t mat = real3x3_from_angles(this->transformation.angles);
+    real3_t off = this->transformation.offset;
+    for (const PyDust_ReferenceFrame *p = this; p->parent; p = p->parent)
+    {
+        merge_transformations(real3x3_from_angles(p->transformation.angles), p->transformation.offset, mat, off, &mat,
+                              &off);
+    }
+
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
+    size_t n_entries = 1;
+    for (unsigned i = 0; i < dim_in - 1; ++i)
+        n_entries *= dims_in[i];
+
+    const real3_t *const p_in = PyArray_DATA(in_array);
+    real3_t *const p_out = PyArray_DATA(out_array);
+    for (size_t i = 0; i < n_entries; ++i)
+    {
+        p_out[i] = real3_add(real3x3_vecmul(mat, p_in[i]), off);
+    }
+
+    Py_DECREF(in_array);
+    return (PyObject *)out_array;
+}
+
+static PyObject *pydust_reference_frame_from_global_without_offset(PyObject *self, PyObject *const *args,
+                                                                   Py_ssize_t nargs)
+{
+    PyArrayObject *in_array, *out_array;
+    npy_intp dim_in;
+    const npy_intp *dims_in;
+    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    {
+        return nullptr;
+    }
+
+    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
+    real3x3_t mat = real3x3_from_angles(this->transformation.angles);
+    for (const PyDust_ReferenceFrame *p = this; p->parent; p = p->parent)
+    {
+        mat = real3x3_matmul(real3x3_from_angles(p->transformation.angles), mat);
+    }
+
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
+    size_t n_entries = 1;
+    for (unsigned i = 0; i < dim_in - 1; ++i)
+        n_entries *= dims_in[i];
+
+    const real3_t *const p_in = PyArray_DATA(in_array);
+    real3_t *const p_out = PyArray_DATA(out_array);
+    for (size_t i = 0; i < n_entries; ++i)
+    {
+        p_out[i] = real3x3_vecmul(mat, p_in[i]);
+    }
+
+    Py_DECREF(in_array);
+    return (PyObject *)out_array;
+}
+
+static PyObject *pydust_reference_frame_to_global_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    PyArrayObject *in_array, *out_array;
+    npy_intp dim_in;
+    const npy_intp *dims_in;
+    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    {
+        return nullptr;
+    }
+
+    const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
+    real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
+    real3_t off = this->transformation.offset;
+    for (const PyDust_ReferenceFrame *p = this; p->parent; p = p->parent)
+    {
+        merge_transformations_reverse(real3x3_inverse_from_angles(p->transformation.angles), p->transformation.offset,
+                                      mat, off, &mat, &off);
+    }
+
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
+    size_t n_entries = 1;
+    for (unsigned i = 0; i < dim_in - 1; ++i)
+        n_entries *= dims_in[i];
+
+    const real3_t *const p_in = PyArray_DATA(in_array);
+    real3_t *const p_out = PyArray_DATA(out_array);
+    for (size_t i = 0; i < n_entries; ++i)
+    {
+        p_out[i] = real3_sub(real3x3_vecmul(mat, p_in[i]), off);
+    }
+
+    Py_DECREF(in_array);
+    return (PyObject *)out_array;
+}
+
+static PyObject *pydust_reference_frame_to_global_without_offset(PyObject *self, PyObject *const *args,
+                                                                 Py_ssize_t nargs)
+{
+    PyArrayObject *in_array, *out_array;
+    npy_intp dim_in;
+    const npy_intp *dims_in;
+    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    {
+        return nullptr;
+    }
+
+    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
+    real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
+    for (const PyDust_ReferenceFrame *p = this; p->parent; p = p->parent)
+    {
+        mat = real3x3_matmul(mat, real3x3_inverse_from_angles(p->transformation.angles));
+    }
+
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
+    size_t n_entries = 1;
+    for (unsigned i = 0; i < dim_in - 1; ++i)
+        n_entries *= dims_in[i];
+
+    const real3_t *const p_in = PyArray_DATA(in_array);
+    real3_t *const p_out = PyArray_DATA(out_array);
+    for (size_t i = 0; i < n_entries; ++i)
+    {
+        p_out[i] = real3x3_vecmul(mat, p_in[i]);
+    }
+
+    Py_DECREF(in_array);
+    return (PyObject *)out_array;
+}
+
 static PyObject *pydust_reference_frame_rotate_x(PyObject *self, PyObject *arg)
 {
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
@@ -530,9 +681,57 @@ static PyObject *pydust_reference_frame_at_time(PyObject *self, PyObject *arg)
         return nullptr;
     const PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)self;
     new->transformation = this->transformation;
-    new->parent = this->parent;
-    Py_XINCREF(this->parent);
+    if (this->parent)
+    {
+        //  Evolve the parent.
+        new->parent = (PyDust_ReferenceFrame *)pydust_reference_frame_at_time((PyObject *)this->parent, arg);
+    }
+    else
+    {
+        new->parent = nullptr;
+    }
     return (PyObject *)new;
+}
+
+static PyObject *pydust_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *arg)
+{
+    PyArrayObject *const array = (PyArrayObject *)PyArray_FROMANY(arg, NPY_DOUBLE, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
+    if (!array)
+        return nullptr;
+    const npy_intp *const dims = PyArray_DIMS(array);
+    if (dims[0] != 3 || dims[1] != 3)
+    {
+        PyErr_Format(PyExc_ValueError, "Array was not a (3, 3) array, instead it was (%u, %u).", (unsigned)dims[0],
+                     (unsigned)dims[1]);
+        return nullptr;
+    }
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(1, (const npy_intp[1]){3}, NPY_DOUBLE);
+    if (!out)
+    {
+        Py_DECREF(array);
+        return nullptr;
+    }
+    const double *restrict mat = PyArray_DATA(array);
+    double *const restrict angles = PyArray_DATA(out);
+
+    const real3x3_t matrix = {
+        .m00 = mat[0],
+        .m01 = mat[1],
+        .m02 = mat[2],
+        .m10 = mat[3],
+        .m11 = mat[4],
+        .m12 = mat[5],
+        .m20 = mat[6],
+        .m21 = mat[7],
+        .m22 = mat[8],
+    };
+    const real3_t a = angles_from_real3x3(matrix);
+    angles[0] = a.x;
+    angles[1] = a.y;
+    angles[2] = a.z;
+
+    Py_DECREF(array);
+    return (PyObject *)out;
 }
 
 static PyMethodDef pydust_reference_frame_methods[] = {
@@ -552,6 +751,22 @@ static PyMethodDef pydust_reference_frame_methods[] = {
      .ml_meth = (PyCFunction)pydust_reference_frame_to_parent_without_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation from the reference frame to parent without offset."},
+    {.ml_name = "from_global_with_offset",
+     .ml_meth = (PyCFunction)pydust_reference_frame_from_global_with_offset,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Apply transformation to the reference frame from global with offset."},
+    {.ml_name = "from_global_without_offset",
+     .ml_meth = (PyCFunction)pydust_reference_frame_from_global_without_offset,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Apply transformation to the reference frame from global without offset."},
+    {.ml_name = "to_global_with_offset",
+     .ml_meth = (PyCFunction)pydust_reference_frame_to_global_with_offset,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Apply transformation from the reference frame to global with offset."},
+    {.ml_name = "to_global_without_offset",
+     .ml_meth = (PyCFunction)pydust_reference_frame_to_global_without_offset,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Apply transformation from the reference frame to global without offset."},
     {.ml_name = "rotate_x",
      .ml_meth = pydust_reference_frame_rotate_x,
      .ml_flags = METH_O,
@@ -584,6 +799,10 @@ static PyMethodDef pydust_reference_frame_methods[] = {
                "-------\n"
                "ReferenceFrame\n"
                "    New reference frame."},
+    {.ml_name = "angles_from_rotation",
+     .ml_meth = pydust_matrix_to_angles,
+     .ml_flags = METH_O | METH_STATIC,
+     .ml_doc = "Compute rotation angles from a transformation matrix."},
     {},
 };
 
