@@ -10,6 +10,19 @@ from numpy import typing as npt
 
 from pydust._typing import VecLike3
 
+INVALID_ID: int = ...
+"""Value of ID indicating an invalid object.
+
+A line with a point with this ID does not have that end.
+This occurs in dual meshes of open surfaces, where not all
+lines are contained in two surfaces, thus their duals will
+have only one valid dual point id in them.
+
+Similarly, a line with this ID being in a surface indicates that
+it is missing.
+
+"""
+
 @final
 class GeoID:
     """Class used to refer to topological objects with orientation."""

@@ -1,6 +1,6 @@
 """Implementation of Geometry related operations."""
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from warnings import warn
 
@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
-from pydust.cdust import Mesh, ReferenceFrame
+from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
@@ -34,7 +34,7 @@ class Geometry:
 
     label: str
     reference_frame: ReferenceFrame
-    primal: Mesh
+    msh: Mesh
 
     def __init__(
         self, label: str, reference_frame: ReferenceFrame, mesh: mio.Mesh | Mesh
@@ -58,12 +58,12 @@ class Geometry:
 
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "reference_frame", reference_frame)
-        object.__setattr__(self, "primal", mesh)
+        object.__setattr__(self, "msh", mesh)
 
     def as_polydata(self) -> pv.PolyData:
         """Convert geometry into PyVista's PolyData."""
-        positions = self.reference_frame.from_parent_with_offset(self.primal.positions)
-        nper_elem, indices = self.primal.to_element_connectivity()
+        positions = self.reference_frame.from_parent_with_offset(self.msh.positions)
+        nper_elem, indices = self.msh.to_element_connectivity()
         offsets = np.pad(np.cumsum(nper_elem), (1, 0))
         faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
         pd = pv.PolyData.from_irregular_faces(positions, faces)
@@ -71,14 +71,14 @@ class Geometry:
 
     @property
     def normals(self) -> npt.NDArray[np.float64]:
-        """Compute normals to primal mesh surfaces."""
-        n = self.primal.surface_normals
+        """Compute normals to mesh surfaces."""
+        n = self.msh.surface_normals
         return self.reference_frame.from_parent_without_offset(n, n)
 
     @property
     def centers(self) -> npt.NDArray[np.float64]:
-        """Compute centers of primal mesh sufraces."""
-        n = self.primal.surface_centers
+        """Compute centers of mesh sufraces."""
+        n = self.msh.surface_centers
         return self.reference_frame.from_parent_with_offset(n, n)
 
     # def induction_matrix(
@@ -129,12 +129,14 @@ def geometry_show_pyvista(
         plt.show()
 
 
-@dataclass(frozen=True)
+@dataclass
 class _GeoInfo:
     name: str
     offset: np.uint32
     msh: Mesh
     rf: ReferenceFrame
+    closed: bool
+    updated: bool
 
 
 class SimulationGeometry:
@@ -160,15 +162,24 @@ class SimulationGeometry:
         geo = {**geo, **kwargs}
         for geo_name in geo:
             g = geo[geo_name]
-            nelm, conn = g.primal.to_element_connectivity()
+            nelm, conn = g.msh.to_element_connectivity()
             conn += n_pts
             offsets = np.pad(np.cumsum(nelm), (1, 0))
             faces = [conn[offsets[i] : offsets[i + 1]] for i in range(nelm.size)]
-            pos = g.primal.positions
+            pos = g.msh.positions
             position_list.append(pos)
             element_counts.append(nelm)
             indices.extend(faces)
-            info = _GeoInfo(geo_name, np.uint32(n_pts), g.primal, g.reference_frame)
+            dual = g.msh.compute_dual()
+            closed = True
+            for il in range(dual.n_lines):
+                ln = dual.get_line(il)
+                if ln.begin == INVALID_ID or ln.end == INVALID_ID:
+                    closed = False
+                    break
+            info = _GeoInfo(
+                geo_name, np.uint32(n_pts), g.msh, g.reference_frame, closed, False
+            )
             info_list.append(info)
             n_pts += pos.shape[0]
 
@@ -192,6 +203,12 @@ class SimulationGeometry:
         self._time = t
         for info in self.info:
             rf = info.rf.at_time(t)
+            if rf == info.rf:
+                info.updated = False
+                break
+            else:
+                info.updated = True
+                info.rf = rf
             i_begin = info.offset
             i_end = i_begin + info.msh.n_surfaces
             # Transform in place
@@ -215,20 +232,30 @@ class SimulationGeometry:
         """Control points for each surface."""
         return self._cpts
 
-    def compute_circulation(
-        self,
-        velocity_function: Callable[
-            [npt.NDArray[np.float64], float], npt.NDArray[np.float64]
-        ],
-        tol: float = 1e-6,
-    ) -> npt.NDArray[np.float64]:
-        """Compute circulation resulting from given velocity function."""
-        v = velocity_function(self._cpts, self._time)
-        rhs = np.sum(self._normals * v, axis=1)
-        lhs = np.sum(
-            self._normals[:, None, :] * self.msh.induction_matrix(tol, self._cpts), axis=2
-        )
-        return np.linalg.solve(lhs, rhs)
+    # def compute_circulation(
+    #     self,
+    #     velocity_function: Callable[
+    #         [npt.NDArray[np.float64], float], npt.NDArray[np.float64]
+    #     ],
+    #     tol: float = 1e-6,
+    # ) -> npt.NDArray[np.float64]:
+    #     """Compute circulation resulting from given velocity function."""
+    #     v = velocity_function(self._cpts, self._time)
+    #     rhs = np.sum(self._normals * v, axis=1)
+    #     lhs = np.sum(
+    #         self._normals[:, None, :] * self.msh.induction_matrix(tol, self._cpts),
+    #         axis=2
+    #     )
+    #     return np.linalg.solve(lhs, rhs)
+
+    def adjust_circulations(self, circulations: npt.NDArray[np.float64]) -> None:
+        """Adjust circulation of closed surfaces in the mesh."""
+        for info in self.info:
+            if not info.updated or not info.closed:
+                continue
+            i_begin = info.offset
+            i_end = i_begin + info.msh.n_surfaces
+            circulations[i_begin:i_end] -= np.mean(circulations[i_begin:i_end])
 
     def as_polydata(self) -> pv.PolyData:
         """Convert SimulationGeometry into PyVista's PolyData."""

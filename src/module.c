@@ -40,6 +40,8 @@ PyMODINIT_FUNC PyInit_cdust(void)
         goto failed;
     if (PyModule_AddType(mod, &pydust_reference_frame_type))
         goto failed;
+    if (PyModule_AddIntConstant(mod, "INVALID_ID", INVALID_ID))
+        goto failed;
 
     return mod;
 failed:
