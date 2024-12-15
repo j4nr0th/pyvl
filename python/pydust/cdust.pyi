@@ -159,6 +159,36 @@ class Mesh:
         """Compute an induction matrix for the mesh."""
         ...
 
+    def induction_matrix3(
+        self,
+        tol: float,
+        control_points: npt.NDArray[np.float64],
+        normals: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        line_buffer: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute an induction matrix with normals included."""
+        ...
+
+    def line_velocities_from_point_velocities(
+        self,
+        point_velocities: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64],
+    ) -> None:
+        """Compute line velocities by averaging velocities at its end nodes."""
+        ...
+
+    @staticmethod
+    def line_velocity_to_force(
+        primal_mesh: Mesh,
+        dual_mesh: Mesh,
+        surface_circulation: npt.NDArray[np.float64],
+        line_velocity_force: npt.NDArray[np.float64],
+    ) -> None:
+        """Compute line forces due to average velocity along it inplace."""
+        ...
+
     # def strip_invalid(self) -> Mesh:
     #     """Return mesh without any entries with invalid ids."""
     #     ...

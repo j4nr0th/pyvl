@@ -89,8 +89,8 @@ void compute_line_induction(const unsigned n_lines, const line_t lines[static re
                             const unsigned n_cpts, const real3_t cpts[static restrict n_cpts],
                             real3_t out[restrict n_lines * n_cpts], const real_t tol)
 {
-    // #pragma omp parallel for collapse(2) schedule(static) default(none) shared(n_lines, n_cpts, lines, positions,
-    // cpts, out, tol)
+#pragma omp parallel for collapse(2) schedule(static) default(none)                                                    \
+    shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
     for (unsigned iln = 0; iln < n_lines; ++iln)
     {
         const line_t line = lines[iln];
@@ -144,7 +144,7 @@ void line_induction_to_surface_induction(unsigned n_surfaces, const surface_t *s
                                          const real3_t line_inductions[static restrict n_lines * n_cpts],
                                          real3_t out[restrict n_surfaces * n_cpts])
 {
-    // #pragma omp parallel for default(none) shared(n_surfaces, surfaces, n_lines, n_cpts, line_inductions, out)
+#pragma omp parallel for default(none) shared(n_surfaces, surfaces, n_lines, n_cpts, line_inductions, out)
     for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
         const surface_t *s = surfaces[i_surf];
@@ -166,5 +166,62 @@ void line_induction_to_surface_induction(unsigned n_surfaces, const surface_t *s
             // printf("Surface %u at CP %u has induction (%g, %g, %g)\n", i_surf, i_cp, res.x, res.y, res.z);
             out[i_cp * n_surfaces + i_surf] = res;
         }
+    }
+}
+
+void line_induction_to_normal_surface_induction(unsigned n_surfaces,
+                                                const surface_t *surfaces[static restrict n_surfaces], unsigned n_lines,
+                                                unsigned n_cpts, const real3_t normal_vectors[static restrict n_cpts],
+                                                const real3_t line_inductions[static restrict n_lines * n_cpts],
+                                                real_t out[restrict n_surfaces * n_cpts])
+{
+#pragma omp parallel for default(none)                                                                                 \
+    shared(n_surfaces, surfaces, n_lines, n_cpts, line_inductions, normal_vectors, out)
+    for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
+    {
+        const surface_t *s = surfaces[i_surf];
+        for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
+        {
+            real3_t res = {};
+            for (unsigned i_ln = 0; i_ln < s->n_lines; ++i_ln)
+            {
+                const geo_id_t ln_id = s->lines[i_ln];
+                if (ln_id.orientation)
+                {
+                    res = real3_sub(res, line_inductions[i_cp * n_lines + ln_id.value]);
+                }
+                else
+                {
+                    res = real3_add(res, line_inductions[i_cp * n_lines + ln_id.value]);
+                }
+            }
+            // printf("Surface %u at CP %u has induction (%g, %g, %g)\n", i_surf, i_cp, res.x, res.y, res.z);
+            out[i_cp * n_surfaces + i_surf] = real3_dot(res, normal_vectors[i_cp]);
+        }
+    }
+}
+
+void line_forces_from_surface_circulation(const mesh_t *primal, const mesh_t *dual,
+                                          const real_t surface_circulations[restrict], real3_t line_forces[restrict])
+{
+#pragma omp parallel for default(none) shared(primal, dual, surface_circulation, line_forces, line_velocities)
+    for (unsigned i_line = 0; i_line < primal->n_lines; ++i_line)
+    {
+        const line_t *const pln = primal->lines + i_line;
+        const line_t *const dln = dual->lines + i_line;
+
+        real_t circulation = 0;
+        if (dln->p1.value != INVALID_ID)
+        {
+            circulation += surface_circulations[dln->p1.value];
+        }
+        if (dln->p2.value != INVALID_ID)
+        {
+            circulation -= surface_circulations[dln->p2.value];
+        }
+
+        const real3_t direction_vector = real3_sub(primal->positions[pln->p2.value], primal->positions[pln->p1.value]);
+        const real3_t force = real3_mul1(real3_cross(direction_vector, line_forces[i_line]), circulation);
+        line_forces[i_line] = force;
     }
 }

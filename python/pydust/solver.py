@@ -5,7 +5,6 @@ from time import perf_counter
 
 import numpy as np
 import numpy.typing as npt
-import pyvista as pv
 import scipy.linalg as la
 
 from pydust.cdust import Mesh
@@ -15,7 +14,7 @@ from pydust.settings import ModelSettings, SolverSettings
 
 def run_solver(
     geometries: Mapping[str, Geometry], settings: SolverSettings
-) -> tuple[pv.PolyData, Mesh, list[npt.NDArray[np.float64]]]:
+) -> tuple[SimulationGeometry, list[npt.NDArray[np.float64]]]:
     """Run the flow solver to obtain specified circulations."""
     out_list: list[npt.NDArray[np.float64]] = []
     geometry = SimulationGeometry(geometries)
@@ -56,8 +55,11 @@ def run_solver(
         system_matrix = np.vecdot(
             induction_matrix, normals[:, None, :], system_matrix, axis=2
         )  # type: ignore
+        # Decompose the system matrix to allow for solving multiple times
+        decomp = la.lu_factor(system_matrix, overwrite_a=True)
         # Solve the linear system
-        circulation = la.solve(system_matrix, rhs, overwrite_a=True, overwrite_b=True)
+        # circulation = la.solve(system_matrix, rhs, overwrite_a=True, overwrite_b=True)
+        circulation = la.lu_solve(decomp, rhs, overwrite_b=True)
         # Adjust circulations
         geometry.adjust_circulations(circulation)
         iteration_end_time = perf_counter()
@@ -74,9 +76,7 @@ def run_solver(
 
     del induction_matrix, system_matrix, line_buffer, velocity, rhs
 
-    pd = geometry.as_polydata()
-
-    return (pd, geometry.msh, out_list)
+    return (geometry, out_list)
 
 
 def compute_induced_velocities(

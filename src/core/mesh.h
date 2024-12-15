@@ -184,7 +184,9 @@ real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id);
  * represents lines connected to points on primal mesh.
  *
  * If surfaces S1 and S2 are separated by line L1 on the primal mesh, the dual mesh will have line L1 connecting dual
- * points S1 and S2 (which correspond to primal surfaces S1 and S2).
+ * points S1 and S2 (which correspond to primal surfaces S1 and S2). Note that a surface that contains L1 in its
+ * positive orientation will appear as the first point of the dual line and the surface which contains it in its
+ * negative orientation will appear as the last point of the dual line.
  *
  * @param primal Primal mesh, to which the dual mesh is associated.
  * @param allocator Allocator callbacks used to allocate/deallocate memory for the mesh.

@@ -39,6 +39,7 @@ list(
         src/surfaceobject.h
         src/meshobject.h
         src/referenceframeobject.h
+        src/common.h
 )
 
 list(
@@ -76,7 +77,9 @@ target_compile_definitions(cdust PRIVATE CDUST_ASSERTS)
 if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
     message( FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
-target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
+target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS} ${OPENMP_INCUDE_DIRS})
+
+target_compile_options(cdust PRIVATE ${OpenMP_C_FLAGS})
 
 if (CMAKE_C_COMPILER_ID EQUAL "GNU")
     target_link_directories(cdust PRIVATE m GOMP)

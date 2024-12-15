@@ -180,7 +180,7 @@ mesh_t *mesh_dual_from_primal(const mesh_t *primal, const allocator_t *allocator
             {
                 if (s->lines[i_surf_line].value == i_line)
                 {
-                    surf_ids[cnt].value = i_surf;
+                    surf_ids[s->lines[i_surf_line].orientation].value = i_surf;
                     cnt += 1;
                     break;
                 }
