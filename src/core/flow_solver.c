@@ -204,7 +204,7 @@ void line_induction_to_normal_surface_induction(unsigned n_surfaces,
 void line_forces_from_surface_circulation(const mesh_t *primal, const mesh_t *dual,
                                           const real_t surface_circulations[restrict], real3_t line_forces[restrict])
 {
-#pragma omp parallel for default(none) shared(primal, dual, surface_circulation, line_forces, line_velocities)
+#pragma omp parallel for default(none) shared(primal, dual, surface_circulations, line_forces)
     for (unsigned i_line = 0; i_line < primal->n_lines; ++i_line)
     {
         const line_t *const pln = primal->lines + i_line;

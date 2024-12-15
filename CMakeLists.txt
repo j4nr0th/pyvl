@@ -80,6 +80,7 @@ endif ()
 target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS} ${OPENMP_INCUDE_DIRS})
 
 target_compile_options(cdust PRIVATE ${OpenMP_C_FLAGS})
+target_link_libraries(cdust PRIVATE ${OpenMP_C_LIBRARIES})
 
 if (CMAKE_C_COMPILER_ID EQUAL "GNU")
     target_link_directories(cdust PRIVATE m GOMP)

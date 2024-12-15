@@ -27,7 +27,6 @@ def run_solver(
 
     n_elements = geometry.msh.n_surfaces
     n_lines = geometry.msh.n_lines
-    induction_matrix = np.empty((n_elements, n_elements, 3))
     system_matrix = np.empty((n_elements, n_elements))
     line_buffer = np.empty((n_elements, n_lines, 3))
     velocity = np.empty((n_elements, 3))
@@ -44,21 +43,18 @@ def run_solver(
         velocity = settings.flow_conditions.get_velocity(time, control_points, velocity)
         # Compute flow penetration at control points
         rhs = np.vecdot(normals, -velocity, rhs, axis=1)  # type: ignore
-        # Compute line induction of the mesh
-        induction_matrix = geometry.msh.induction_matrix(
+        # Compute normal induction
+        system_matrix = geometry.msh.induction_matrix3(
             settings.model_settings.vortex_limit,
             control_points,
-            induction_matrix,
+            normals,
+            system_matrix,
             line_buffer,
         )
-        # Compute normal induction
-        system_matrix = np.vecdot(
-            induction_matrix, normals[:, None, :], system_matrix, axis=2
-        )  # type: ignore
         # Decompose the system matrix to allow for solving multiple times
         decomp = la.lu_factor(system_matrix, overwrite_a=True)
         # Solve the linear system
-        # circulation = la.solve(system_matrix, rhs, overwrite_a=True, overwrite_b=True)
+        # By setting overwrite_b=True, rhs is where the output is written to
         circulation = la.lu_solve(decomp, rhs, overwrite_b=True)
         # Adjust circulations
         geometry.adjust_circulations(circulation)
@@ -68,13 +64,13 @@ def run_solver(
             or (settings.time_settings.output_interval is None)
             or (iteration % settings.time_settings.output_interval == 0)
         ):
-            out_list.append(circulation)
+            out_list.append(np.array(circulation))  # Make sure to create a copy
         print(
             f"Finished iteration {iteration} out of {len(times)} in "
             f"{iteration_end_time - iteration_begin_time:g} seconds."
         )
 
-    del induction_matrix, system_matrix, line_buffer, velocity, rhs
+    del system_matrix, line_buffer, velocity, rhs
 
     return (geometry, out_list)
 

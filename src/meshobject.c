@@ -727,7 +727,7 @@ static PyObject *pydust_line_velocities_from_point_velocities(PyObject *self, Py
     real3_t const *restrict velocities_in = PyArray_DATA(point_velocities);
     real3_t *restrict velocities_out = PyArray_DATA(line_buffer);
 
-#pragma omp parallel for default(none) shared(primal, velocities_in, velocites_in)
+#pragma omp parallel for default(none) shared(primal, velocities_in, velocities_out)
     for (unsigned i = 0; i < primal->mesh.n_lines; ++i)
     {
         const line_t *ln = primal->mesh.lines + i;
