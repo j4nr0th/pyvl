@@ -1,6 +1,6 @@
 """Implementation of Geometry related operations."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from warnings import warn
 
@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
-from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
+from pydust.cdust import Mesh, ReferenceFrame
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
@@ -127,141 +127,3 @@ def geometry_show_pyvista(
 
     if show:
         plt.show()
-
-
-@dataclass
-class _GeoInfo:
-    name: str
-    offset: np.uint32
-    msh: Mesh
-    rf: ReferenceFrame
-    closed: bool
-    updated: bool
-
-
-class SimulationGeometry:
-    """Simulation geometry containing several geometries in different reference frames."""
-
-    msh: Mesh
-    info: tuple[_GeoInfo, ...]
-    _time: float
-    _normals: npt.NDArray[np.float64]
-    _cpts: npt.NDArray[np.float64]
-
-    def __init__(self, geo: Mapping[str, Geometry] = {}, /, **kwargs: Geometry) -> None:
-        for kw in kwargs:
-            if kw in geo:
-                raise ValueError(
-                    f"Geometry with name {kw} given as both the kwarg and in the mapping."
-                )
-        position_list: list[npt.NDArray[np.float64]] = []
-        element_counts: list[npt.NDArray[np.uint64]] = []
-        indices: list[npt.NDArray[np.uint64]] = []
-        n_pts = 0
-        info_list: list[_GeoInfo] = []
-        geo = {**geo, **kwargs}
-        for geo_name in geo:
-            g = geo[geo_name]
-            nelm, conn = g.msh.to_element_connectivity()
-            conn += n_pts
-            offsets = np.pad(np.cumsum(nelm), (1, 0))
-            faces = [conn[offsets[i] : offsets[i + 1]] for i in range(nelm.size)]
-            pos = g.msh.positions
-            position_list.append(pos)
-            element_counts.append(nelm)
-            indices.extend(faces)
-            dual = g.msh.compute_dual()
-            closed = True
-            for il in range(dual.n_lines):
-                ln = dual.get_line(il)
-                if ln.begin == INVALID_ID or ln.end == INVALID_ID:
-                    closed = False
-                    break
-            info = _GeoInfo(
-                geo_name, np.uint32(n_pts), g.msh, g.reference_frame, closed, False
-            )
-            info_list.append(info)
-            n_pts += pos.shape[0]
-
-        joined_mesh = Mesh(np.concatenate(position_list), indices)
-        self.msh = joined_mesh
-        self.info = tuple(info_list)
-        self._time = 0.0
-        self._normals = np.empty((joined_mesh.n_surfaces, 3), np.float64)
-        self._cpts = np.empty((joined_mesh.n_surfaces, 3), np.float64)
-        self.time = 0.0
-
-    @property
-    def time(self) -> float:
-        """Time at which the geometry is."""
-        return self._time
-
-    @time.setter
-    def time(self, t: float) -> None:
-        if not isinstance(t, float):
-            raise TypeError(f"Time is not a float but is instead {type(t)}.")
-        self._time = t
-        for info in self.info:
-            rf = info.rf.at_time(t)
-            if rf == info.rf:
-                info.updated = False
-                break
-            else:
-                info.updated = True
-                info.rf = rf
-            i_begin = info.offset
-            i_end = i_begin + info.msh.n_surfaces
-            # Transform in place
-            rf.to_parent_with_offset(
-                info.msh.positions, self.msh.positions[i_begin:i_end, :]
-            )
-            rf.to_parent_with_offset(
-                info.msh.surface_centers, self._cpts[i_begin:i_end, :]
-            )
-            rf.to_parent_without_offset(
-                info.msh.surface_normals, self._normals[i_begin:i_end, :]
-            )
-
-    @property
-    def normals(self) -> npt.NDArray[np.float64]:
-        """Normal unit vectors for each surface."""
-        return self._normals
-
-    @property
-    def control_points(self) -> npt.NDArray[np.float64]:
-        """Control points for each surface."""
-        return self._cpts
-
-    # def compute_circulation(
-    #     self,
-    #     velocity_function: Callable[
-    #         [npt.NDArray[np.float64], float], npt.NDArray[np.float64]
-    #     ],
-    #     tol: float = 1e-6,
-    # ) -> npt.NDArray[np.float64]:
-    #     """Compute circulation resulting from given velocity function."""
-    #     v = velocity_function(self._cpts, self._time)
-    #     rhs = np.sum(self._normals * v, axis=1)
-    #     lhs = np.sum(
-    #         self._normals[:, None, :] * self.msh.induction_matrix(tol, self._cpts),
-    #         axis=2
-    #     )
-    #     return np.linalg.solve(lhs, rhs)
-
-    def adjust_circulations(self, circulations: npt.NDArray[np.float64]) -> None:
-        """Adjust circulation of closed surfaces in the mesh."""
-        for info in self.info:
-            if not info.updated or not info.closed:
-                continue
-            i_begin = info.offset
-            i_end = i_begin + info.msh.n_surfaces
-            circulations[i_begin:i_end] -= np.mean(circulations[i_begin:i_end])
-
-    def as_polydata(self) -> pv.PolyData:
-        """Convert SimulationGeometry into PyVista's PolyData."""
-        positions = self.msh.positions
-        nper_elem, indices = self.msh.to_element_connectivity()
-        offsets = np.pad(np.cumsum(nper_elem), (1, 0))
-        faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
-        pd = pv.PolyData.from_irregular_faces(positions, faces)
-        return pd

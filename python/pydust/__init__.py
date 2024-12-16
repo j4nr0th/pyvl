@@ -21,5 +21,6 @@ from pydust.settings import SolverSettings as SolverSettings
 from pydust.settings import TimeSettings as TimeSettings
 
 # Solver
+from pydust.solver import SolverResults as SolverResults
 from pydust.solver import compute_induced_velocities as compute_induced_velocities
 from pydust.solver import run_solver as run_solver
