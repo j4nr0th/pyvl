@@ -20,17 +20,18 @@ class SolverResults:
 
     circulations: npt.NDArray[np.float64]
     times: npt.NDArray[np.float64]
-    part_mapping: dict[str, slice]
+    point_mapping: dict[str, slice]
+    line_mapping: dict[str, slice]
+    surface_mapping: dict[str, slice]
 
     def get_part_solution(self, name: str) -> npt.NDArray[np.float64]:
         """Get part of the solution corresponding to the solution of a part."""
-        return self.circulations[:, self.part_mapping[name]]
+        return self.circulations[:, self.surface_mapping[name]]
 
 
 @dataclass
 class _GeoInfo:
     name: str
-    offset: np.uint32
     msh: Mesh
     rf: ReferenceFrame
     closed: bool
@@ -40,28 +41,21 @@ class _GeoInfo:
 class _SimulationGeometryState:
     """Simulation geometry containing several geometries in different reference frames."""
 
-    msh: Mesh
     info: tuple[_GeoInfo, ...]
-    _time: float
-    _normals: npt.NDArray[np.float64]
-    _cpts: npt.NDArray[np.float64]
+    msh: Mesh
+    time: float
+    normals: npt.NDArray[np.float64]
+    cpts: npt.NDArray[np.float64]
+    positions: npt.NDArray[np.float64]
 
     def __init__(self, geo: Iterable[Geometry] = {}, /, *args: Geometry) -> None:
-        position_list: list[npt.NDArray[np.float64]] = []
-        element_counts: list[npt.NDArray[np.uint64]] = []
-        indices: list[npt.NDArray[np.uint64]] = []
-        n_pts = 0
         info_list: list[_GeoInfo] = []
+        meshes: list[Mesh] = []
         all_geos = (*geo, *args)
+        n_surfaces = 0
+        n_pts = 0
         for g in all_geos:
-            nelm, conn = g.msh.to_element_connectivity()
-            conn += n_pts
-            offsets = np.pad(np.cumsum(nelm), (1, 0))
-            faces = [conn[offsets[i] : offsets[i + 1]] for i in range(nelm.size)]
-            pos = g.msh.positions
-            position_list.append(pos)
-            element_counts.append(nelm)
-            indices.extend(faces)
+            meshes.append(g.msh)
             dual = g.msh.compute_dual()
             closed = True
             for il in range(dual.n_lines):
@@ -69,30 +63,26 @@ class _SimulationGeometryState:
                 if ln.begin == INVALID_ID or ln.end == INVALID_ID:
                     closed = False
                     break
-            info = _GeoInfo(
-                g.label, np.uint32(n_pts), g.msh, g.reference_frame, closed, False
-            )
+            info = _GeoInfo(g.label, g.msh, g.reference_frame, closed, False)
+            n_surfaces += g.msh.n_surfaces
+            n_pts += g.msh.n_points
             info_list.append(info)
-            n_pts += pos.shape[0]
 
-        joined_mesh = Mesh(np.concatenate(position_list), indices)
-        self.msh = joined_mesh
         self.info = tuple(info_list)
-        self._time = 0.0
-        self._normals = np.empty((joined_mesh.n_surfaces, 3), np.float64)
-        self._cpts = np.empty((joined_mesh.n_surfaces, 3), np.float64)
+        self.time = 0.0
+        self.normals = np.empty((n_surfaces, 3), np.float64)
+        self.cpts = np.empty((n_surfaces, 3), np.float64)
+        self.positions = np.empty((n_pts, 3), np.float64)
+        self.msh = Mesh.merge_meshes(*meshes)
         self.time = 0.0
 
-    @property
-    def time(self) -> float:
-        """Time at which the geometry is."""
-        return self._time
-
-    @time.setter
-    def time(self, t: float) -> None:
+    def set_time(self, t: float) -> None:
         if not isinstance(t, float):
             raise TypeError(f"Time is not a float but is instead {type(t)}.")
-        self._time = t
+        self.time = t
+        point_mapping = self.point_slices
+        surface_mapping = self.surface_slices
+        update_cnt = 0
         for info in self.info:
             rf = info.rf.at_time(t)
             if rf == info.rf:
@@ -101,37 +91,32 @@ class _SimulationGeometryState:
             else:
                 info.updated = True
                 info.rf = rf
-            i_begin = info.offset
-            i_end = i_begin + info.msh.n_surfaces
+            update_cnt += 1
             # Transform in place
             rf.to_parent_with_offset(
-                info.msh.positions, self.msh.positions[i_begin:i_end, :]
+                info.msh.positions, self.positions[point_mapping[info.name], :]
             )
             rf.to_parent_with_offset(
-                info.msh.surface_centers, self._cpts[i_begin:i_end, :]
+                info.msh.surface_centers, self.cpts[surface_mapping[info.name], :]
             )
             rf.to_parent_without_offset(
-                info.msh.surface_normals, self._normals[i_begin:i_end, :]
+                info.msh.surface_normals, self.normals[surface_mapping[info.name], :]
             )
-
-    @property
-    def normals(self) -> npt.NDArray[np.float64]:
-        """Normal unit vectors for each surface."""
-        return self._normals
-
-    @property
-    def control_points(self) -> npt.NDArray[np.float64]:
-        """Control points for each surface."""
-        return self._cpts
+        if update_cnt != 0:
+            self.msh.positions = self.positions
 
     def adjust_circulations(self, circulations: npt.NDArray[np.float64]) -> None:
         """Adjust circulation of closed surfaces in the mesh."""
+        offset = 0
+        n_surf = 0
         for info in self.info:
+            offset += n_surf
+            n_surf = info.msh.n_surfaces
             if not info.updated or not info.closed:
                 continue
-            i_begin = info.offset
-            i_end = i_begin + info.msh.n_surfaces
-            circulations[i_begin:i_end] -= np.mean(circulations[i_begin:i_end])
+            circulations[offset : offset + n_surf] -= np.mean(
+                circulations[offset : offset + n_surf]
+            )
 
     def as_polydata(self) -> pv.PolyData:
         """Convert SimulationGeometry into PyVista's PolyData."""
@@ -141,6 +126,39 @@ class _SimulationGeometryState:
         faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
+
+    @property
+    def surface_slices(self) -> dict[str, slice]:
+        """Return slices which can be used to index into arrays of surfaces."""
+        n_surf = 0
+        out: dict[str, slice] = dict()
+        for i in self.info:
+            ns = i.msh.n_surfaces
+            out[i.name] = slice(n_surf, n_surf + ns)
+            n_surf += ns
+        return out
+
+    @property
+    def line_slices(self) -> dict[str, slice]:
+        """Return slices which can be used to index into arrays of lines."""
+        n_line = 0
+        out: dict[str, slice] = dict()
+        for i in self.info:
+            nl = i.msh.n_lines
+            out[i.name] = slice(n_line, n_line + nl)
+            n_line += nl
+        return out
+
+    @property
+    def point_slices(self) -> dict[str, slice]:
+        """Return slices which can be used to index into arrays of point."""
+        n_point = 0
+        out: dict[str, slice] = dict()
+        for i in self.info:
+            np = i.msh.n_points
+            out[i.name] = slice(n_point, n_point + np)
+            n_point += np
+        return out
 
 
 def run_solver(geometries: Iterable[Geometry], settings: SolverSettings) -> SolverResults:
@@ -164,10 +182,10 @@ def run_solver(geometries: Iterable[Geometry], settings: SolverSettings) -> Solv
     for iteration, time in enumerate(times):
         iteration_begin_time = perf_counter()
         # Update the mesh
-        geometry.time = time
+        geometry.set_time(time)
         # Get mesh properties
-        control_points = geometry._cpts
-        normals = geometry._normals
+        control_points = geometry.cpts
+        normals = geometry.normals
         # Compute flow velocity (if necessary)
         velocity = settings.flow_conditions.get_velocity(time, control_points, velocity)
         # Compute flow penetration at control points
@@ -200,11 +218,13 @@ def run_solver(geometries: Iterable[Geometry], settings: SolverSettings) -> Solv
         )
 
     del system_matrix, line_buffer, velocity, rhs
-    result_mapping = {
-        g.name: slice(g.offset, np.uint32(g.offset + g.msh.n_surfaces))
-        for g in geometry.info
-    }
-    return SolverResults(out_array, times, result_mapping)
+    return SolverResults(
+        out_array,
+        times,
+        geometry.point_slices,
+        geometry.line_slices,
+        geometry.surface_slices,
+    )
 
 
 def compute_induced_velocities(
