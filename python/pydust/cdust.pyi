@@ -189,9 +189,10 @@ class Mesh:
         """Compute line forces due to average velocity along it inplace."""
         ...
 
-    # def strip_invalid(self) -> Mesh:
-    #     """Return mesh without any entries with invalid ids."""
-    #     ...
+    @classmethod
+    def merge_meshes(cls, *meshes: Mesh) -> Self:
+        """Merge multiple meshes into a single mesh."""
+        ...
 
 class ReferenceFrame:
     """Class which is used to define position and orientation of geometry."""

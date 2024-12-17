@@ -786,6 +786,103 @@ static PyObject *pydust_line_forces(PyObject *Py_UNUSED(module), PyObject *const
     Py_RETURN_NONE;
 }
 
+static PyObject *pydust_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize_t nargs)
+{
+    unsigned n_surfaces = 0, n_lines = 0, n_points = 0, n_surface_entries = 0;
+
+    for (unsigned i = 0; i < nargs; ++i)
+    {
+        PyObject *const o = args[i];
+        if (!PyObject_TypeCheck(o, &pydust_mesh_type))
+        {
+            PyErr_Format(PyExc_TypeError, "Element %u in the input sequence was not a Mesh, but was instead %R", i,
+                         PyObject_Type(o));
+            return nullptr;
+        }
+        const PyDust_MeshObject *const this = (PyDust_MeshObject *)o;
+        n_surfaces += this->mesh.n_surfaces;
+        n_lines += this->mesh.n_lines;
+        n_points += this->mesh.n_points;
+        for (unsigned i_s = 0; i_s < this->mesh.n_surfaces; ++i_s)
+        {
+            const surface_t *const ps = this->mesh.surfaces[i_s];
+            n_surface_entries += ps->n_lines;
+        }
+    }
+
+    PyDust_MeshObject *const this = (PyDust_MeshObject *)((PyTypeObject *)type)->tp_alloc((PyTypeObject *)type, 0);
+    if (!this)
+    {
+        return nullptr;
+    }
+
+    real3_t *const positions = PyObject_Malloc(sizeof *positions * n_points);
+    line_t *const lines = PyObject_Malloc(sizeof *lines * n_lines);
+    const surface_t **const surfaces =
+        PyObject_Malloc(sizeof *surfaces * n_surfaces + (n_surfaces + n_surface_entries) * sizeof(geo_id_t));
+
+    if (!positions || !lines || !surfaces)
+    {
+        PyObject_Free(surfaces);
+        PyObject_Free(lines);
+        PyObject_Free(positions);
+        return nullptr;
+    }
+
+    unsigned cnt_pts = 0, cnt_lns = 0, cnt_surf = 0;
+    real3_t *p = positions;
+    line_t *l = lines;
+    surface_t **s = (surface_t **)surfaces;
+    geo_id_t *v = (geo_id_t *)(surfaces + n_surfaces);
+    for (unsigned i = 0; i < nargs; ++i)
+    {
+        const PyDust_MeshObject *const m = (PyDust_MeshObject *)args[i];
+        // Positions we copy
+        memcpy(p, m->mesh.positions, sizeof(*p) * m->mesh.n_points);
+        p += m->mesh.n_points;
+        // Lines are copied, but incremented
+        for (unsigned il = 0; il < m->mesh.n_lines; ++il)
+        {
+            const line_t *p_line = m->mesh.lines + il;
+            *l = (line_t){
+                .p1 = (geo_id_t){.orientation = p_line->p1.orientation, p_line->p1.value + cnt_pts},
+                .p2 = (geo_id_t){.orientation = p_line->p2.orientation, p_line->p2.value + cnt_pts},
+            };
+            l += 1;
+        }
+        // Surfaces are a bit more involved
+        for (unsigned is = 0; is < m->mesh.n_surfaces; ++is)
+        {
+            const surface_t *p_surf = m->mesh.surfaces[is];
+            *(uint32_t *)v = p_surf->n_lines;
+            for (unsigned il = 0; il < p_surf->n_lines; ++il)
+            {
+                v[1 + il] = (geo_id_t){
+                    .orientation = p_surf->lines[il].orientation,
+                    .value = p_surf->lines[il].value + cnt_lns,
+                };
+            }
+            *s = (surface_t *)v;
+            s += 1;
+            v += (1 + p_surf->n_lines);
+        }
+        cnt_pts += m->mesh.n_points;
+        cnt_lns += m->mesh.n_lines;
+        cnt_surf += m->mesh.n_surfaces;
+    }
+
+    this->mesh = (mesh_t){
+        .n_points = cnt_pts,
+        .positions = positions,
+        .n_lines = cnt_lns,
+        .lines = lines,
+        .n_surfaces = cnt_surf,
+        .surfaces = surfaces,
+    };
+
+    return (PyObject *)this;
+}
+
 static PyMethodDef pydust_mesh_methods[] = {
     {.ml_name = "get_line",
      .ml_meth = pydust_mesh_get_line,
@@ -823,6 +920,10 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (PyCFunction)pydust_line_forces,
      .ml_flags = METH_FASTCALL | METH_STATIC,
      .ml_doc = "Compute line forces due to average velocity along it inplace."},
+    {.ml_name = "merge_meshes",
+     .ml_meth = (PyCFunction)pydust_mesh_merge,
+     .ml_flags = METH_CLASS | METH_FASTCALL,
+     .ml_doc = "Merge sequence of meshes together into a single mesh."},
     {},
 };
 
