@@ -965,7 +965,7 @@ static PyObject *pydust_mesh_copy(PyObject *self, PyObject *const *args, Py_ssiz
         const surface_t *p_surf = origin->mesh.surfaces[is];
         *s = (surface_t *)v;
         const unsigned n_units = (1 + p_surf->n_lines);
-        memcpy(s, p_surf, sizeof(uint32_t) * n_units);
+        memcpy(v, p_surf, sizeof(uint32_t) * n_units);
         s += 1;
         v += n_units;
     }
