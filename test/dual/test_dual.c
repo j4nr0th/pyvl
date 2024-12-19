@@ -20,34 +20,45 @@
 #include <errno.h>
 #include <string.h>
 
-#include "../test_common.h"
 #include "../../src/core/mesh.h"
 #include "../../src/core/mesh_io.h"
-
-
+#include "../test_common.h"
 
 int main(int argc, char *argv[static restrict argc])
 {
-    TEST_ASSERT(argc == 2 || argc == 3, "Wrong number of parameters %d", argc);
+    TEST_ASSERT(argc == 3 || argc == 4, "Wrong number of parameters %d", argc);
     const char *in_mesh_path = argv[1];
     const char *cmp_mesh_path = argv[2];
 
-
-    enum {chunk_size = 1 << 12};
+    enum
+    {
+        chunk_size = 1 << 12
+    };
     char *buffer = read_file_to_string(in_mesh_path, chunk_size);
+    int stat;
 
-    mesh_t *msh = deserialize_mesh(buffer, &TEST_ALLOCATOR);
-    TEST_ASSERT(msh, "Mesh not deserialized");
+    mesh_t msh;
+    real3_t *positions;
+    stat = deserialize_mesh(&msh, &positions, buffer, &TEST_ALLOCATOR);
+    TEST_ASSERT(stat == 0, "Mesh not deserialized");
     free(buffer);
 
-    mesh_t *dual = mesh_dual_from_primal(msh, &TEST_ALLOCATOR);
-    TEST_ASSERT(msh, "Dual failed");
-    mesh_free(msh, &TEST_ALLOCATOR);
+    mesh_t dual;
+    stat = mesh_dual_from_primal(&dual, &msh, &TEST_ALLOCATOR);
+    TEST_ASSERT(stat == 0, "Dual failed");
+    real3_t *surface_centers = malloc(sizeof *surface_centers * msh.n_surfaces);
+    TEST_ASSERT(surface_centers, "Failed to allocate center buffer");
+    for (unsigned i = 0; i < msh.n_surfaces; ++i)
+    {
+        surface_centers[i] = surface_center(positions, &msh, (geo_id_t){.value = i});
+    }
 
+    mesh_free(&msh, &TEST_ALLOCATOR);
+    free(positions);
 
     if (argc == 4)
     {
-        char *const str_out = serialize_mesh(dual, &TEST_ALLOCATOR);
+        char *const str_out = serialize_mesh(&dual, surface_centers, &TEST_ALLOCATOR);
         TEST_ASSERT(str_out, "Mesh not serialized");
         const size_t len = strlen(str_out);
         FILE *const f_out = fopen(argv[3], "w");
@@ -58,27 +69,29 @@ int main(int argc, char *argv[static restrict argc])
     }
 
     buffer = read_file_to_string(cmp_mesh_path, chunk_size);
-    mesh_t *cmp = deserialize_mesh(buffer, &TEST_ALLOCATOR);
-    TEST_ASSERT(cmp, "Comparison not deserialized");
+    mesh_t cmp;
+    stat = deserialize_mesh(&cmp, &positions, buffer, &TEST_ALLOCATOR);
+    TEST_ASSERT(stat == 0, "Comparison not deserialized");
     free(buffer);
 
+    TEST_ASSERT(cmp.n_points == dual.n_points, "Point counts do not match: %u vs %u", cmp.n_points, dual.n_points);
+    TEST_ASSERT(cmp.n_lines == dual.n_lines, "Line counts do not match: %u vs %u", cmp.n_lines, dual.n_lines);
+    TEST_ASSERT(cmp.n_surfaces == dual.n_surfaces, "Surface counts do not match: %u vs %u", cmp.n_surfaces,
+                dual.n_surfaces);
 
-    TEST_ASSERT(cmp->n_points == dual->n_points, "Point counts do not match: %u vs %u", cmp->n_points, dual->n_points);
-    TEST_ASSERT(cmp->n_lines == dual->n_lines, "Line counts do not match: %u vs %u", cmp->n_lines, dual->n_lines);
-    TEST_ASSERT(cmp->n_surfaces == dual->n_surfaces, "Surface counts do not match: %u vs %u", cmp->n_surfaces, dual->n_surfaces);
+    TEST_ASSERT(memcmp(cmp.lines, dual.lines, sizeof(*cmp.lines) * cmp.n_lines) == 0,
+                "Comparison of line arrays failed.");
+    TEST_ASSERT(
+        memcmp(cmp.surface_offsets, dual.surface_offsets, sizeof(*cmp.surface_offsets) * (cmp.n_surfaces + 1)) == 0,
+        "Comparison of surfaces.");
+    TEST_ASSERT(memcmp(cmp.surface_lines, dual.surface_lines,
+                       sizeof(*cmp.surface_lines) * cmp.surface_offsets[cmp.n_surfaces]) == 0,
+                "Comparison of surfaces.");
 
-    TEST_ASSERT(memcmp(cmp->lines, dual->lines, sizeof(*cmp->lines) * cmp->n_lines) == 0, "Comparison of line arrays failed.");
-    for (unsigned i = 0; i < cmp->n_surfaces; ++i)
-    {
-        const surface_t *s1 = cmp->surfaces[i], *s2 = dual->surfaces[i];
-        TEST_ASSERT(memcmp(s1, s2, sizeof(uint32_t) * s1->n_lines) == 0, "Comparison of surfaces.");
-    }
-
-
-    mesh_free(cmp, &TEST_ALLOCATOR);
-    mesh_free(dual, &TEST_ALLOCATOR);
-
-
+    mesh_free(&cmp, &TEST_ALLOCATOR);
+    mesh_free(&dual, &TEST_ALLOCATOR);
+    free(surface_centers);
+    free(positions);
 
     return 0;
 }

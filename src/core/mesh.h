@@ -13,14 +13,7 @@ typedef struct
     geo_id_t p2;
 } line_t;
 
-typedef struct
-{
-    uint32_t n_lines;
-    geo_id_t lines[];
-} surface_t;
-
 _Static_assert(sizeof(geo_id_t) == sizeof(uint32_t));
-_Static_assert(sizeof(surface_t) == sizeof(uint32_t));
 
 /**
  *  Struct containing either primary or dual mesh.
@@ -139,44 +132,48 @@ _Static_assert(sizeof(surface_t) == sizeof(uint32_t));
 typedef struct
 {
     unsigned n_points;
-    real3_t *positions; //  for sake of vectorization, this could be split into 3 arrays
     unsigned n_lines;
     line_t *lines;
     unsigned n_surfaces;
-    const surface_t **surfaces; // Pointers to surfaces, directly by surfaces themselves.
+    // length of (n_surfaces + 1), with surface_offsets[i] being offset of surface i into surface_lines array
+    unsigned *surface_offsets;
+    geo_id_t *surface_lines;
 } mesh_t;
 
 /**
  * @brief Compute displacement from beginning of the line to the end. By setting the `line_id.orientation != 0`, the
  * direction can be reversed.
  *
+ * @param positions Positions of the mesh points.
  * @param mesh Mesh which contains the geometry.
  * @param line_id ID of the line.
  * @return Vector of displacement from beginning of line to the end.
  */
 // [[unsequenced]]
-real3_t line_direction(const mesh_t *mesh, geo_id_t line_id);
+real3_t line_direction(const real3_t *restrict positions, const mesh_t *mesh, geo_id_t line_id);
 
 /**
  * @brief Compute center of the surface element.
  *
+ * @param positions Positions of the mesh points.
  * @param mesh Mesh which contains the geometry.
  * @param surface_id ID of the surface.
  * @return Position vector of the surface center.
  */
 // [[unsequenced]]
-real3_t surface_center(const mesh_t *mesh, geo_id_t surface_id);
+real3_t surface_center(const real3_t *restrict positions, const mesh_t *mesh, geo_id_t surface_id);
 
 /**
  * @brief Compute unit normal vector of the surface. By setting `surface_id.orientation != 0`, the direction of the
  * normal will be flipped.
  *
+ * @param positions Positions of the mesh points.
  * @param mesh Mesh which contains the geometry.
  * @param surface_id ID of the surface.
  * @return Normal vector of the surface with unit length.
  */
 // [[unsequenced]]
-real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id);
+real3_t surface_normal(const real3_t *restrict positions, const mesh_t *mesh, geo_id_t surface_id);
 
 /**
  * @brief Create dual mesh, which describes connectivity of the primal mesh. On a dual mesh, each position represents a
@@ -188,24 +185,26 @@ real3_t surface_normal(const mesh_t *mesh, geo_id_t surface_id);
  * positive orientation will appear as the first point of the dual line and the surface which contains it in its
  * negative orientation will appear as the last point of the dual line.
  *
+ * @param p_out Pointer which receives the resulting mesh.
  * @param primal Primal mesh, to which the dual mesh is associated.
  * @param allocator Allocator callbacks used to allocate/deallocate memory for the mesh.
- * @return Dual mesh, which contains information about connectivity of primal mesh.
+ * @return -1 on failure, 0 on success.
  */
-mesh_t *mesh_dual_from_primal(const mesh_t *primal, const allocator_t *allocator);
+int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t *allocator);
 
 /**
  * @brief This function allows a mesh to be created by simply specifying element connectivity, which is very common with
  * meshing tools, such as GMSH.
  *
+ * @param p_out Pointer which receives the resulting mesh.
  * @param n_elements Number of elements given.
  * @param point_counts Array which contains number of points for each element.
  * @param flat_points Points of elements, one after another.
  * @param allocator Allocator used to allocate memory for the mesh.
- * @return Mesh with elements specified, but no positional information.
+ * @return -1 on failure, 0 on success.
  */
-mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-                           const unsigned flat_points[restrict], const allocator_t *allocator);
+int mesh_from_elements(mesh_t *p_out, unsigned n_elements, const unsigned point_counts[static restrict n_elements],
+                       const unsigned flat_points[restrict], const allocator_t *allocator);
 
 /**
  * @brief Intended to be used in order to convert the mesh into a format more common with other meshers, by just
@@ -220,17 +219,12 @@ mesh_t *mesh_from_elements(unsigned n_elements, const unsigned point_counts[stat
 unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigned **p_flat_points,
                           const allocator_t *allocator);
 
-void mesh_free(mesh_t *this, const allocator_t *allocator);
-
 /**
- * @brief This function creates a copy of a mesh, but without any surfaces or lines which contain invalid GeoID, meaning
- * they have geo_id_t.value set to (~0u >> 1u). If an index of a line/point is out of bounds, this isn't checked. The
- * most likely use for this function is to make dual mesh available for display.
+ * Release memory associated with the mesh.
  *
- * @param msh Mesh to create a stripped copy of.
- * @param allocator Allocator to use for the copy.
- * @return A stripped copy of the original mesh.
+ * @param this Mesh to deallocate memory of.
+ * @param allocator Allocator which was used for the mesh.
  */
-// mesh_t *mesh_copy_valid(const mesh_t *msh, const allocator_t *allocator);
+void mesh_free(mesh_t *this, const allocator_t *allocator);
 
 #endif // MESH_H

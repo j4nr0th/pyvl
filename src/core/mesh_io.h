@@ -31,19 +31,22 @@ Mesh file format specification for version 0:
  * @brief Convert mesh into a string, which can then be converted back into the original mesh.
  *
  * @param this Mesh to serialize into a UTF-8 string.
+ * @param positions Positions of mesh points.
  * @param allocator Allocator to use for allocating/reallocating the string. Can be a stack allocator.
  * @return Null-terminated string which can be converted into a mesh by calling `deserialize_mesh`.
  */
-char *serialize_mesh(const mesh_t *this, const allocator_t *allocator);
+char *serialize_mesh(const mesh_t *this, const real3_t *positions, const allocator_t *allocator);
 
 /**
  * @brief Convert a serialized mesh into a mesh object. If conversion fails, value returned through `current_line`
  * parameter can be used to find where the error with the mesh was.
  *
+ * @param p_out Pointer which receives the deserialized mesh.
+ * @param p_positions Pointer which receives positions of mesh points.
  * @param str String which will be converted into a mesh.
  * @param allocator Allocator which should be used to allocate memory for the mesh object.
- * @return Mesh created from the string. If an error occurred, nullptr is returned instead.
+ * @return On failure -1, on success 0.
  */
-mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator);
+int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, const allocator_t *allocator);
 
 #endif // MESH_IO_H

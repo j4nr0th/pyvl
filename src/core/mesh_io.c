@@ -70,7 +70,7 @@ static int unpack_id(const geo_id_t id)
     return v;
 }
 
-char *serialize_mesh(const mesh_t *this, const allocator_t *allocator)
+char *serialize_mesh(const mesh_t *this, const real3_t *positions, const allocator_t *allocator)
 {
     string_stream out_stream = {
         .buffer = nullptr,
@@ -85,7 +85,7 @@ char *serialize_mesh(const mesh_t *this, const allocator_t *allocator)
         goto failed;
     for (unsigned ipt = 0; ipt < this->n_points; ++ipt)
     {
-        const real3_t *pos = this->positions + ipt;
+        const real3_t *pos = positions + ipt;
         if (string_stream_write_fmt(&out_stream, "%.15g %.15g %.15g\n", pos->v0, pos->v1, pos->v2) < 0)
             goto failed;
     }
@@ -105,12 +105,11 @@ char *serialize_mesh(const mesh_t *this, const allocator_t *allocator)
 
     for (unsigned is = 0; is < this->n_surfaces; ++is)
     {
-        const surface_t *s = this->surfaces[is];
-        if (string_stream_write_fmt(&out_stream, "%u", s->n_lines) < 0)
+        if (string_stream_write_fmt(&out_stream, "%u", this->surface_offsets[is + 1] - this->surface_offsets[is]) < 0)
             goto failed;
-        for (unsigned iln = 0; iln < s->n_lines; ++iln)
+        for (unsigned iln = this->surface_offsets[is]; iln < this->surface_offsets[is + 1]; ++iln)
         {
-            if (string_stream_write_fmt(&out_stream, " %d", unpack_id(s->lines[iln])) < 0)
+            if (string_stream_write_fmt(&out_stream, " %d", unpack_id(this->surface_lines[iln])) < 0)
                 goto failed;
         }
         if (string_stream_write_fmt(&out_stream, "\n") < 0)
@@ -159,15 +158,12 @@ static const char *skip_forward(const char *str)
     return str;
 }
 
-mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator)
+int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, const allocator_t *allocator)
 {
-    mesh_t *this = allocator->allocate(allocator->state, sizeof(*this));
-    if (!this)
-        return nullptr;
-
-    this->positions = nullptr;
-    this->lines = nullptr;
-    this->surfaces = nullptr;
+    mesh_t this;
+    this.lines = nullptr;
+    this.surface_offsets = nullptr;
+    this.surface_lines = nullptr;
 
     char *ptr = (char *)str;
     //  Parse version of file
@@ -178,26 +174,26 @@ mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator)
     str = skip_forward(ptr);
 
     //  Parse point, line, and surface counts
-    this->n_points = (unsigned)strtoul(str, &ptr, 10);
+    this.n_points = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str)
         goto failed;
     str = skip_forward(ptr);
-    this->n_lines = (unsigned)strtoul(str, &ptr, 10);
+    this.n_lines = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str)
         goto failed;
     str = skip_forward(ptr);
-    this->n_surfaces = (unsigned)strtoul(str, &ptr, 10);
+    this.n_surfaces = (unsigned)strtoul(str, &ptr, 10);
     if (ptr == str)
         goto failed;
     str = skip_forward(ptr);
 
-    this->positions = allocator->allocate(allocator->state, sizeof(*this->positions) * this->n_points);
-    if (!this->positions)
+    real3_t *const positions = allocator->allocate(allocator->state, sizeof(*positions) * this.n_points);
+    if (!positions)
         goto failed;
     //  Parse positions
-    for (unsigned ipos = 0; ipos < this->n_points; ++ipos)
+    for (unsigned ipos = 0; ipos < this.n_points; ++ipos)
     {
-        real3_t *p = this->positions + ipos;
+        real3_t *p = positions + ipos;
         for (unsigned k = 0; k < 3; ++k)
         {
             p->data[k] = strtod(str, &ptr);
@@ -206,20 +202,23 @@ mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator)
             str = skip_forward(ptr);
         }
     }
-
-    this->lines = allocator->allocate(allocator->state, sizeof(*this->lines) * this->n_lines);
-    if (!this->lines)
+    this.lines = allocator->allocate(allocator->state, sizeof(*this.lines) * this.n_lines);
+    if (!this.lines)
         goto failed;
     //  Parse lines
-    for (unsigned iln = 0; iln < this->n_lines; ++iln)
+    for (unsigned iln = 0; iln < this.n_lines; ++iln)
     {
-        line_t *ln = this->lines + iln;
+        line_t *ln = this.lines + iln;
         ln->p1 = pack_id((int)strtol(str, &ptr, 10));
         if (str == ptr)
+            goto failed;
+        if (ln->p1.value != INVALID_ID && ln->p1.value > this.n_points)
             goto failed;
         str = skip_forward(ptr);
         ln->p2 = pack_id((int)strtol(str, &ptr, 10));
         if (str == ptr)
+            goto failed;
+        if (ln->p2.value != INVALID_ID && ln->p2.value > this.n_points)
             goto failed;
         str = skip_forward(ptr);
     }
@@ -227,8 +226,12 @@ mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator)
     const char *const p_begin = str;
 
     // read surface data, but only focus on getting number of surfaces themselves
+    this.surface_offsets = allocator->allocate(allocator->state, sizeof *this.surface_offsets * (this.n_surfaces + 1));
+    if (!this.surface_offsets)
+        goto failed;
+    this.surface_offsets[0] = 0;
     unsigned total_lines = 0;
-    for (unsigned is = 0; is < this->n_surfaces; ++is)
+    for (unsigned is = 0; is < this.n_surfaces; ++is)
     {
         const unsigned n = strtoul(str, &ptr, 10);
         if (str == ptr)
@@ -242,42 +245,38 @@ mesh_t *deserialize_mesh(const char *str, const allocator_t *allocator)
                 goto failed;
             str = skip_forward(ptr);
         }
+        this.surface_offsets[is + 1] = total_lines;
     }
     //  restore parsing state
     str = p_begin;
 
-    this->surfaces = allocator->allocate(allocator->state, sizeof(*this->surfaces) * this->n_surfaces +
-                                                               (total_lines * sizeof(geo_id_t)) +
-                                                               (this->n_surfaces * sizeof(surface_t)));
-    if (!this->surfaces)
+    this.surface_lines = allocator->allocate(allocator->state, sizeof(*this.surface_lines) * total_lines);
+    if (!this.surface_lines)
         goto failed;
 
-    geo_id_t *id_ptr = (geo_id_t *)(this->surfaces + this->n_surfaces);
-
-    for (unsigned is = 0; is < this->n_surfaces; ++is)
+    for (unsigned is = 0; is < this.n_surfaces; ++is)
     {
-        const unsigned n = strtoul(str, &ptr, 10);
+        // Have to skip it, so just parse whatever is there
+        (void)strtoul(str, &ptr, 10);
         if (str == ptr)
             goto failed;
         str = skip_forward(ptr);
-        *(uint32_t *)id_ptr = (uint32_t)n;
-        for (unsigned i = 0; i < n; ++i)
+        for (unsigned i = this.surface_offsets[is]; i < this.surface_offsets[is + 1]; ++i)
         {
-            id_ptr[i + 1] = pack_id((int)strtol(str, &ptr, 10));
+            this.surface_lines[i] = pack_id((int)strtol(str, &ptr, 10));
             if (str == ptr)
                 goto failed;
             str = skip_forward(ptr);
         }
-        this->surfaces[is] = (surface_t *)id_ptr;
-        id_ptr += n + 1;
     }
-
-    return this;
+    *p_positions = positions;
+    *p_out = this;
+    return 0;
 
 failed:
-    allocator->deallocate(allocator->state, this->surfaces);
-    allocator->deallocate(allocator->state, this->lines);
-    allocator->deallocate(allocator->state, this->positions);
-    allocator->deallocate(allocator->state, this);
-    return nullptr;
+    allocator->deallocate(allocator->state, this.surface_offsets);
+    allocator->deallocate(allocator->state, this.surface_lines);
+    allocator->deallocate(allocator->state, this.lines);
+    allocator->deallocate(allocator->state, positions);
+    return -1;
 }

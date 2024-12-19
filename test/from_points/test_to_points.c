@@ -15,9 +15,8 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "../test_common.h"
 #include "../../src/core/mesh_io.h"
-
+#include "../test_common.h"
 
 static void push_buffer(unsigned value, unsigned *size, unsigned *capacity, unsigned **buffer)
 {
@@ -84,24 +83,28 @@ int main(int argc, char *argv[static argc])
     unsigned n_out, *n_per_element, *pts;
     load_points(path_points, &n_out, &n_per_element, &pts);
 
-
     char *read_mesh = read_file_to_string(path_mesh, 4096);
     TEST_ASSERT(read_mesh, "Could not read mesh to buffer");
-    mesh_t *mesh_comparison = deserialize_mesh(read_mesh, &TEST_ALLOCATOR);
+    mesh_t mesh_comparison;
+    real3_t *positions;
+    int stat = deserialize_mesh(&mesh_comparison, &positions, read_mesh, &TEST_ALLOCATOR);
     free(read_mesh);
-    TEST_ASSERT(mesh_comparison, "Could not load comparison mesh");
+    free(positions);
+    TEST_ASSERT(stat == 0, "Could not load comparison mesh");
 
-    unsigned* flat_points;
-    unsigned* point_counts;
-    const unsigned n_elements = mesh_to_elements(mesh_comparison, &point_counts, &flat_points, &TEST_ALLOCATOR);
-    TEST_ASSERT(n_elements == mesh_comparison->n_surfaces, "Mesh conversion to elements failed.");
+    unsigned *flat_points;
+    unsigned *point_counts;
+    const unsigned n_elements = mesh_to_elements(&mesh_comparison, &point_counts, &flat_points, &TEST_ALLOCATOR);
+    TEST_ASSERT(n_elements == mesh_comparison.n_surfaces, "Mesh conversion to elements failed.");
     TEST_ASSERT(n_elements == n_out, "Element count did not match.");
     TEST_ASSERT(memcmp(point_counts, n_per_element, sizeof(*point_counts) * n_elements) == 0, "Element point"
                                                                                               " counts did not match.");
     for (unsigned i = 0, j = 0; i < n_elements; ++i)
     {
-        TEST_ASSERT(memcmp(flat_points + j, pts + j, sizeof(*pts) * point_counts[i]) == 0, "Element %u did "
-                                                                                           "not match.", i);
+        TEST_ASSERT(memcmp(flat_points + j, pts + j, sizeof(*pts) * point_counts[i]) == 0,
+                    "Element %u did "
+                    "not match.",
+                    i);
         j += point_counts[i];
     }
     free(pts);
@@ -109,7 +112,7 @@ int main(int argc, char *argv[static argc])
     free(flat_points);
     free(point_counts);
 
-    mesh_free(mesh_comparison, &TEST_ALLOCATOR);
+    mesh_free(&mesh_comparison, &TEST_ALLOCATOR);
 
     return 0;
 }

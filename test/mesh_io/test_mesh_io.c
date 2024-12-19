@@ -18,21 +18,23 @@
 #include <errno.h>
 #include <string.h>
 
-#include "../test_common.h"
 #include "../../src/core/mesh_io.h"
-
-
+#include "../test_common.h"
 
 int main(int argc, char *argv[static restrict argc])
 {
-    if (argc < 2 || argc > 3) return 1;
+    if (argc < 2 || argc > 3)
+        return 1;
     const char *in_mesh_path = argv[1];
     const char *out_mesh_path = argc == 3 ? argv[2] : nullptr;
 
     FILE *f_in = fopen(in_mesh_path, "r");
     TEST_ASSERT(f_in, "Failed opening file %s, error %s", in_mesh_path, strerror(errno));
 
-    enum {chunk_size = 1 << 12};
+    enum
+    {
+        chunk_size = 1 << 12
+    };
     size_t buffer_size = chunk_size;
     char *buffer = malloc((sizeof *buffer) * buffer_size);
     TEST_ASSERT(buffer, "Buffer not allocate");
@@ -47,12 +49,15 @@ int main(int argc, char *argv[static restrict argc])
     fclose(f_in);
     buffer[buffer_size - chunk_size + read_sz] = 0;
 
-    mesh_t *msh = deserialize_mesh(buffer, &TEST_ALLOCATOR);
-    TEST_ASSERT(msh, "Mesh not deserialized");
+    mesh_t msh;
+    real3_t *positions;
+    int stat = deserialize_mesh(&msh, &positions, buffer, &TEST_ALLOCATOR);
+    TEST_ASSERT(stat == 0, "Mesh not deserialized");
 
-    char *const str_out = serialize_mesh(msh, &TEST_ALLOCATOR);
+    char *const str_out = serialize_mesh(&msh, positions, &TEST_ALLOCATOR);
     TEST_ASSERT(str_out, "Mesh not serialized");
-    mesh_free(msh, &TEST_ALLOCATOR);
+    mesh_free(&msh, &TEST_ALLOCATOR);
+    TEST_ALLOCATOR.deallocate(TEST_ALLOCATOR.state, positions);
 
     const size_t len = strlen(str_out);
     if (out_mesh_path)
