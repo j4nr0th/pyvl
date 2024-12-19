@@ -194,6 +194,26 @@ class Mesh:
         """Merge multiple meshes into a single mesh."""
         ...
 
+    def line_gradient(
+        self,
+        point_array: npt.NDArray[np.float64],
+        line_array: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute line gradient from point values."""
+        ...
+
+    def induced_velocity(
+        self,
+        tol: float,
+        line_circulations: npt.NDArray[np.float64],
+        positions: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute induced velocity from line circulations."""
+        ...
+
     def copy(self, new_positions: npt.ArrayLike | None = None, /) -> Mesh:
         """Create a copy of the mesh with optionally new positions."""
         ...

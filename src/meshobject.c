@@ -933,6 +933,64 @@ static PyObject *pydust_mesh_copy(PyObject *self, PyObject *const *args, Py_ssiz
     return (PyObject *)this;
 }
 
+static PyObject *pydust_mesh_line_gradient(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    // Arguments:
+    // self - mesh
+    // 0 - point value array
+    // 1 - output line array (optional)
+    if (nargs < 1 || nargs > 2)
+    {
+        PyErr_Format(PyExc_TypeError, "Function takes 1 to 2 arguments, but %u were given.", (unsigned)nargs);
+        return nullptr;
+    }
+    const PyDust_MeshObject *const this = (PyDust_MeshObject *)self;
+    PyArrayObject *const point_values =
+        pydust_ensure_array(args[1], 1, (const npy_intp[1]){this->mesh.n_points},
+                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Point value array");
+    if (!point_values)
+        return nullptr;
+
+    PyArrayObject *line_values = nullptr;
+    if (nargs == 2 || Py_IsNone(args[1]))
+    {
+        line_values = pydust_ensure_array(args[2], 1, (const npy_intp[1]){this->mesh.n_lines},
+                                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, NPY_FLOAT64,
+                                          "Line circulation array");
+        Py_XINCREF(line_values);
+    }
+    else
+    {
+        const npy_intp nl = this->mesh.n_lines;
+        line_values = (PyArrayObject *)PyArray_SimpleNew(1, &nl, NPY_FLOAT64);
+    }
+    if (!line_values)
+        return nullptr;
+
+    const unsigned n_lns = this->mesh.n_lines;
+    const line_t *const restrict lines = this->mesh.lines;
+    const real_t *const restrict v_in = PyArray_DATA(point_values);
+    real_t *const restrict v_out = PyArray_DATA(point_values);
+
+#pragma omp parallel for default(none) shared(lines, v_in, v_out, n_lns)
+    for (unsigned i = 0; i < n_lns; ++i)
+    {
+        real_t x = 0;
+        const line_t ln = lines[i];
+        if (ln.p1.value != INVALID_ID)
+        {
+            x -= v_in[ln.p1.value];
+        }
+        if (ln.p2.value != INVALID_ID)
+        {
+            x += v_in[ln.p2.value];
+        }
+        v_out[i] = x;
+    }
+
+    return (PyObject *)line_values;
+}
+
 static PyObject *pydust_mesh_induced_velocity(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
 {
     // Arguments:
@@ -947,11 +1005,6 @@ static PyObject *pydust_mesh_induced_velocity(PyObject *self, PyObject *const *a
         return nullptr;
     }
 
-    if (!PyObject_TypeCheck(args[0], &pydust_mesh_type))
-    {
-        PyErr_Format(PyExc_TypeError, "First argument must be a mesh, but it was %R instead.", PyObject_Type(args[0]));
-        return nullptr;
-    }
     const PyDust_MeshObject *primal = (PyDust_MeshObject *)self;
 
     const double tol = PyFloat_AsDouble(args[0]);
@@ -1097,6 +1150,10 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (void *)pydust_mesh_copy,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Create a copy of the mesh, with optionally changed positions."},
+    {.ml_name = "line_gradient",
+     .ml_meth = (void *)pydust_mesh_line_gradient,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Compute line gradient from point values."},
     {.ml_name = "induced_velocity",
      .ml_meth = (void *)pydust_mesh_induced_velocity,
      .ml_flags = METH_FASTCALL,

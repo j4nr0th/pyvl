@@ -7,7 +7,7 @@ import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
-from pydust.cdust import Mesh
+from pydust.cdust import Mesh, ReferenceFrame
 from pydust.geometry import SimulationGeometry
 from pydust.settings import ModelSettings, SolverSettings
 
@@ -32,35 +32,47 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
 
     out_circulaiton_array = np.empty((len(times), geometry.n_surfaces), np.float64)
 
+    mesh_cache: dict[str, tuple[ReferenceFrame | None, Mesh]] = {
+        name: (None, geometry[name].msh) for name in geometry
+    }
+    merged = None
+
     for iteration, time in enumerate(times):
         iteration_begin_time = perf_counter()
         # Update the mesh
         # TODO: cache these updates.
-        meshes: list[Mesh] = []
+        updated = 0
         for geo_name in geometry:
             info = geometry[geo_name]
             new_rf = info.rf.at_time(time)
+            if new_rf == mesh_cache[geo_name][0]:
+                continue
+            updated += 1
             new_pos = new_rf.to_global_with_offset(info.msh.positions)
-            meshes.append(info.msh.copy(new_pos))
+            new_msh = info.msh.copy(new_pos)
+            mesh_cache[geo_name] = (new_rf, new_msh)
 
-        merged = Mesh.merge_meshes(*meshes)
+        if merged is None or updated != 0:
+            merged = Mesh.merge_meshes(*(mesh_cache[name][1] for name in mesh_cache))
 
-        # Get mesh properties
-        control_points = merged.surface_centers
-        normals = merged.surface_normals
-        # point_positions = merged.positions
-        # Compute flow velocity (if necessary)
+            # Get mesh properties
+            control_points = merged.surface_centers
+            normals = merged.surface_normals
+            # point_positions = merged.positions
+            # Compute normal induction
+            system_matrix = merged.induction_matrix3(
+                settings.model_settings.vortex_limit,
+                control_points,
+                normals,
+            )
+            # Decompose the system matrix to allow for solving multiple times
+            decomp = la.lu_factor(system_matrix, overwrite_a=True)
+
+        # Compute flow velocity
         element_velocity = settings.flow_conditions.get_velocity(time, control_points)
         # Compute flow penetration at control points
         rhs = np.vecdot(normals, -element_velocity, axis=1)  # type: ignore
-        # Compute normal induction
-        system_matrix = merged.induction_matrix3(
-            settings.model_settings.vortex_limit,
-            control_points,
-            normals,
-        )
-        # Decompose the system matrix to allow for solving multiple times
-        decomp = la.lu_factor(system_matrix, overwrite_a=True)
+
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
         circulation = la.lu_solve(decomp, rhs, overwrite_b=True)
