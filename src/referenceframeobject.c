@@ -66,20 +66,25 @@ static PyObject *pydust_reference_frame_repr(PyObject *self)
 
     const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
     PyObject *out;
+    unsigned len = snprintf(nullptr, 0, "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
+                            this->transformation.angles.y, this->transformation.angles.z, this->transformation.offset.x,
+                            this->transformation.offset.y, this->transformation.offset.z);
+    char *buffer = PyMem_Malloc((len + 1) * sizeof *buffer);
+    if (!buffer)
+        return nullptr;
+    (void)snprintf(buffer, (len + 1) * sizeof(*buffer), "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
+                   this->transformation.angles.y, this->transformation.angles.z, this->transformation.offset.x,
+                   this->transformation.offset.y, this->transformation.offset.z);
+
     if (this->parent)
     {
-        out = PyUnicode_FromFormat("ReferenceFrame(%d, %d, %d, %d, %d, %d, parent=%R)", this->transformation.angles.x,
-                                   this->transformation.angles.y, this->transformation.angles.z,
-                                   this->transformation.offset.x, this->transformation.offset.y,
-                                   this->transformation.offset.z, (PyObject *)this->parent);
+        out = PyUnicode_FromFormat("ReferenceFrame(%s, parent=%R)", buffer, (PyObject *)this->parent);
     }
     else
     {
-        out = PyUnicode_FromFormat("ReferenceFrame(%d, %d, %d, %d, %d, %d)", this->transformation.angles.x,
-                                   this->transformation.angles.y, this->transformation.angles.z,
-                                   this->transformation.offset.x, this->transformation.offset.y,
-                                   this->transformation.offset.z);
+        out = PyUnicode_FromFormat("ReferenceFrame(%s)", buffer);
     }
+    PyMem_Free(buffer);
     // Py_ReprLeave(self);
     return out;
 }
