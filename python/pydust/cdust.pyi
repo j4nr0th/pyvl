@@ -260,6 +260,30 @@ class ReferenceFrame:
         """Reverse transformation from the reference frame to parent without offset."""
         ...
 
+    def from_global_with_offset(
+        self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Apply transformation to the reference frame from global with offset."""
+        ...
+
+    def from_global_without_offset(
+        self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Apply transformation to the reference frame from global without offset."""
+        ...
+
+    def to_global_with_offset(
+        self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Reverse transformation from the reference frame to global with offset."""
+        ...
+
+    def to_global_without_offset(
+        self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Reverse transformation from the reference frame to global without offset."""
+        ...
+
     def rotate_x(self, theta: float) -> ReferenceFrame:
         """Create a copy of the frame rotated around the x-axis."""
         ...
