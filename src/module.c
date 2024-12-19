@@ -22,6 +22,7 @@ static PyModuleDef cdust_module = {
 
 PyMODINIT_FUNC PyInit_cdust(void)
 {
+    // TODO: as a low priority, maybe add Perf maps for each subfile.
     import_array();
     if (PyArray_ImportNumPyAPI() < 0)
         return nullptr;
