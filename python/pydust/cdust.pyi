@@ -194,6 +194,10 @@ class Mesh:
         """Merge multiple meshes into a single mesh."""
         ...
 
+    def copy(self, new_positions: npt.ArrayLike | None = None, /) -> Mesh:
+        """Create a copy of the mesh with optionally new positions."""
+        ...
+
 class ReferenceFrame:
     """Class which is used to define position and orientation of geometry."""
 

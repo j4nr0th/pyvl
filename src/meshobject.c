@@ -883,6 +883,96 @@ static PyObject *pydust_mesh_merge(PyObject *type, PyObject *const *args, Py_ssi
     return (PyObject *)this;
 }
 
+static PyObject *pydust_mesh_copy(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    const PyDust_MeshObject *const origin = (PyDust_MeshObject *)self;
+    if (nargs > 1)
+    {
+        PyErr_Format(PyExc_TypeError, "Method takes either one or no arguments, but %u were given.", (unsigned)nargs);
+        return nullptr;
+    }
+
+    PyArrayObject *pos_array = nullptr;
+    if (nargs == 1 && !Py_IsNone(args[0]))
+    {
+        pos_array = (PyArrayObject *)PyArray_FromAny(args[0], PyArray_DescrFromType(NPY_FLOAT64), 2, 2,
+                                                     NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, nullptr);
+        if (!pos_array)
+            return nullptr;
+        const npy_intp *const dims = PyArray_DIMS(pos_array);
+        if (dims[0] != origin->mesh.n_points || dims[1] != 3)
+        {
+            PyErr_Format(PyExc_ValueError,
+                         "Input array did not have the same shape as the positions of the mesh"
+                         " (got (%u, %u) when expecting (%u, 3)).",
+                         (unsigned)dims[0], (unsigned)dims[1], origin->mesh.n_points);
+            Py_DECREF(pos_array);
+            return nullptr;
+        }
+    }
+
+    PyDust_MeshObject *const this = (PyDust_MeshObject *)pydust_mesh_type.tp_alloc(&pydust_mesh_type, 0);
+    if (!this)
+    {
+        Py_XDECREF(pos_array);
+        return nullptr;
+    }
+
+    this->mesh.n_points = origin->mesh.n_points;
+    this->mesh.n_lines = origin->mesh.n_lines;
+    this->mesh.n_surfaces = origin->mesh.n_surfaces;
+
+    unsigned lines_in_surfaces = 0;
+    for (unsigned i = 0; i < origin->mesh.n_surfaces; ++i)
+    {
+        const surface_t *s = origin->mesh.surfaces[i];
+        lines_in_surfaces += s->n_lines;
+    }
+
+    this->mesh.positions = PyObject_Malloc(sizeof(*this->mesh.positions) * this->mesh.n_points);
+    this->mesh.lines = PyObject_Malloc(sizeof(*this->mesh.lines) * this->mesh.n_lines);
+    this->mesh.surfaces = PyObject_Malloc(sizeof(*this->mesh.surfaces) * this->mesh.n_surfaces +
+                                          sizeof(uint32_t) * (this->mesh.n_surfaces + lines_in_surfaces));
+    if (!this->mesh.positions || !this->mesh.lines || !this->mesh.surfaces)
+    {
+        PyObject_Free(this->mesh.surfaces);
+        PyObject_Free(this->mesh.lines);
+        PyObject_Free(this->mesh.positions);
+        Py_XDECREF(pos_array);
+        return nullptr;
+    }
+
+    if (pos_array)
+    {
+        const npy_float64 *pos_in = PyArray_DATA(pos_array);
+        _Static_assert(3 * sizeof(*pos_in) == sizeof(*this->mesh.positions));
+        memcpy(this->mesh.positions, pos_in, sizeof(*this->mesh.positions) * this->mesh.n_points);
+        Py_DECREF(pos_array);
+        pos_array = nullptr;
+    }
+    else
+    {
+        memcpy(this->mesh.positions, origin->mesh.positions, sizeof(*this->mesh.positions) * this->mesh.n_points);
+    }
+
+    memcpy(this->mesh.lines, origin->mesh.lines, sizeof(*this->mesh.lines) * this->mesh.n_lines);
+
+    surface_t **s = (surface_t **)this->mesh.surfaces;
+    geo_id_t *v = (geo_id_t *)(this->mesh.surfaces + this->mesh.n_surfaces);
+
+    for (unsigned is = 0; is < origin->mesh.n_surfaces; ++is)
+    {
+        const surface_t *p_surf = origin->mesh.surfaces[is];
+        *s = (surface_t *)v;
+        const unsigned n_units = (1 + p_surf->n_lines);
+        memcpy(s, p_surf, sizeof(uint32_t) * n_units);
+        s += 1;
+        v += n_units;
+    }
+
+    return (PyObject *)this;
+}
+
 static PyMethodDef pydust_mesh_methods[] = {
     {.ml_name = "get_line",
      .ml_meth = pydust_mesh_get_line,
@@ -924,6 +1014,10 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (PyCFunction)pydust_mesh_merge,
      .ml_flags = METH_CLASS | METH_FASTCALL,
      .ml_doc = "Merge sequence of meshes together into a single mesh."},
+    {.ml_name = "copy",
+     .ml_meth = (PyCFunction)pydust_mesh_copy,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Create a copy of the mesh, with optionally changed positions."},
     {},
 };
 
