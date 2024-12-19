@@ -17,7 +17,7 @@ static inline PyArrayObject *pydust_ensure_array(PyObject *arr, unsigned n_dims,
     PyArrayObject *const this = (PyArrayObject *)arr;
     if (n_dims != 0)
     {
-        if (PyArray_NDIM(this) != n_dims)
+        if (PyArray_NDIM(this) != (int)n_dims)
         {
             PyErr_Format(PyExc_ValueError, "%s did not have the expected number of axis (%u required, %u found).",
                          array_name, n_dims, (unsigned)PyArray_NDIM(this));

@@ -98,14 +98,18 @@ static Py_hash_t pydust_reference_frame_hash(PyObject *self)
 {
     const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
     Py_hash_t h = 0;
+    union type_pun_union {
+        int64_t ival;
+        real_t rval;
+    };
     while (this)
     {
-        h ^= rotate(*(int64_t *)&this->transformation.angles.v0, 0);
-        h ^= rotate(*(int64_t *)&this->transformation.angles.v1, 4);
-        h ^= rotate(*(int64_t *)&this->transformation.angles.v2, 8);
-        h ^= rotate(*(int64_t *)&this->transformation.offset.v0, 12);
-        h ^= rotate(*(int64_t *)&this->transformation.offset.v1, 16);
-        h ^= rotate(*(int64_t *)&this->transformation.offset.v2, 24);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v0}.ival, 0);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v1}.ival, 4);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v2}.ival, 8);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v0}.ival, 12);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v1}.ival, 16);
+        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v2}.ival, 24);
         this = this->parent;
     }
     return h;
@@ -741,35 +745,35 @@ static PyObject *pydust_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *
 
 static PyMethodDef pydust_reference_frame_methods[] = {
     {.ml_name = "from_parent_with_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_from_parent_with_offset,
+     .ml_meth = (void *)pydust_reference_frame_from_parent_with_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation to the reference frame from parent with offset."},
     {.ml_name = "from_parent_without_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_from_parent_without_offset,
+     .ml_meth = (void *)pydust_reference_frame_from_parent_without_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation to the reference frame from parent without offset."},
     {.ml_name = "to_parent_with_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_to_parent_with_offset,
+     .ml_meth = (void *)pydust_reference_frame_to_parent_with_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation from the reference frame to parent with offset."},
     {.ml_name = "to_parent_without_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_to_parent_without_offset,
+     .ml_meth = (void *)pydust_reference_frame_to_parent_without_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation from the reference frame to parent without offset."},
     {.ml_name = "from_global_with_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_from_global_with_offset,
+     .ml_meth = (void *)pydust_reference_frame_from_global_with_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation to the reference frame from global with offset."},
     {.ml_name = "from_global_without_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_from_global_without_offset,
+     .ml_meth = (void *)pydust_reference_frame_from_global_without_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation to the reference frame from global without offset."},
     {.ml_name = "to_global_with_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_to_global_with_offset,
+     .ml_meth = (void *)pydust_reference_frame_to_global_with_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation from the reference frame to global with offset."},
     {.ml_name = "to_global_without_offset",
-     .ml_meth = (PyCFunction)pydust_reference_frame_to_global_without_offset,
+     .ml_meth = (void *)pydust_reference_frame_to_global_without_offset,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Apply transformation from the reference frame to global without offset."},
     {.ml_name = "rotate_x",

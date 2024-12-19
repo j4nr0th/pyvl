@@ -367,7 +367,7 @@ static PyObject *pydust_mesh_get_surface(PyObject *self, PyObject *arg)
         i = (unsigned)idx;
     }
 
-    return (PyObject *)pydust_surface_from_mesh_surface(&this->mesh, (geo_id_t){.orientation = 0, .value = idx});
+    return (PyObject *)pydust_surface_from_mesh_surface(&this->mesh, (geo_id_t){.orientation = 0, .value = i});
 }
 
 static PyObject *pydust_mesh_compute_dual(PyObject *self, PyObject *Py_UNUSED(arg))
@@ -657,46 +657,6 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
     return (PyObject *)out_array;
 }
 
-static PyObject *pydust_mesh_induction_matrix2(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
-{
-    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
-    if (nargs != 2)
-    {
-        PyErr_Format(PyExc_TypeError, "Method requires 2 arguments, but was called with %u.", (unsigned)nargs);
-        return nullptr;
-    }
-    const double tol = PyFloat_AsDouble(args[0]);
-    if (PyErr_Occurred())
-        return nullptr;
-
-    PyArrayObject *const in_array =
-        pydust_ensure_array(args[1], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
-                            NPY_FLOAT64, "Control point array");
-    if (!in_array)
-        return nullptr;
-    const npy_intp *dims = PyArray_DIMS(in_array);
-    const unsigned n_cpts = dims[0];
-
-    PyArrayObject *out_array;
-
-    const npy_intp out_dims[3] = {n_cpts, this->mesh.n_surfaces, 3};
-    out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
-    if (!out_array)
-        return nullptr;
-    Py_INCREF(out_array);
-
-    // Now I can be sure the arrays are well-behaved
-    const real3_t *control_pts = PyArray_DATA(in_array);
-    real3_t *out_ptr = PyArray_DATA(out_array);
-
-    for (unsigned s = 0; s < this->mesh.n_surfaces; ++s)
-        for (unsigned c = 0; c < n_cpts; ++c)
-            out_ptr[c * this->mesh.n_surfaces + s] =
-                compute_mesh_surface_induction(control_pts[c], (geo_id_t){.value = s}, &this->mesh, tol);
-
-    return (PyObject *)out_array;
-}
-
 static PyObject *pydust_line_velocities_from_point_velocities(PyObject *self, PyObject *const *args,
                                                               const Py_ssize_t nargs)
 {
@@ -973,6 +933,129 @@ static PyObject *pydust_mesh_copy(PyObject *self, PyObject *const *args, Py_ssiz
     return (PyObject *)this;
 }
 
+static PyObject *pydust_mesh_induced_velocity(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    // Arguments:
+    // self - primal mesh
+    // 0 - tolerance for vortices
+    // 1 - line circulations
+    // 2 - control points
+    // 3 - output array (optional)
+    if (nargs < 3 || nargs > 4)
+    {
+        PyErr_Format(PyExc_TypeError, "Function takes 3 to 4 arguments, but %u were given.", (unsigned)nargs);
+        return nullptr;
+    }
+
+    if (!PyObject_TypeCheck(args[0], &pydust_mesh_type))
+    {
+        PyErr_Format(PyExc_TypeError, "First argument must be a mesh, but it was %R instead.", PyObject_Type(args[0]));
+        return nullptr;
+    }
+    const PyDust_MeshObject *primal = (PyDust_MeshObject *)self;
+
+    const double tol = PyFloat_AsDouble(args[0]);
+    if (PyErr_Occurred())
+        return nullptr;
+    const unsigned n_lines = primal->mesh.n_lines;
+    PyArrayObject *const line_circulations =
+        pydust_ensure_array(args[1], 1, (const npy_intp[1]){n_lines}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
+                            NPY_FLOAT64, "Line circulation array");
+    if (!line_circulations)
+        return nullptr;
+
+    PyArrayObject *const pos_array =
+        pydust_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
+                            NPY_FLOAT64, "Input positions");
+    if (!pos_array)
+        return nullptr;
+
+    const real3_t *restrict cpts = PyArray_DATA(pos_array);
+    _Static_assert(sizeof(npy_float64) * 3 == sizeof(*cpts));
+    const unsigned n_cpts = PyArray_DIM(pos_array, 0);
+
+    PyArrayObject *out_array;
+    if (nargs == 3 && !Py_IsNone(args[3]))
+    {
+        // If None is second arg, treat it as if it is not present at all.
+        out_array = pydust_ensure_array(args[5], 2, (const npy_intp[3]){n_cpts, 3},
+                                        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE | NPY_ARRAY_ALIGNED, NPY_FLOAT64,
+                                        "Output array");
+        Py_INCREF(out_array);
+    }
+    else
+    {
+        const npy_intp out_dims[2] = {n_cpts, 3};
+        out_array = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_FLOAT64);
+        if (!out_array)
+            return nullptr;
+    }
+
+    real3_t *const restrict out = PyArray_DATA(out_array);
+    memset(out, 0, sizeof *out * n_lines);
+    const real_t *const restrict circulations = PyArray_DATA(line_circulations);
+
+    const line_t *const restrict lines = primal->mesh.lines;
+    const real3_t *const restrict positions = primal->mesh.positions;
+
+#pragma omp parallel for schedule(dynamic) default(none)                                                               \
+    shared(out, circulations, lines, positions, n_lines, n_cpts, tol, cpts)
+    for (unsigned iln = 0; iln < n_lines; ++iln)
+    {
+        const line_t line = lines[iln];
+        const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
+        const real3_t r1 = positions[pt1];
+        const real3_t r2 = positions[pt2];
+        real3_t direction = real3_sub(r2, r1);
+        const real_t len = real3_mag(direction);
+        direction.v0 /= len;
+        direction.v1 /= len;
+        direction.v2 /= len;
+        if (len < tol)
+        {
+            //  Filament is too short
+            continue;
+        }
+        const real_t c = circulations[iln];
+
+        for (unsigned icp = 0; icp < n_cpts; ++icp)
+        {
+            const real3_t control_point = cpts[icp];
+
+            const real3_t dr1 = real3_sub(control_point, r1);
+            const real3_t dr2 = real3_sub(control_point, r2);
+
+            const real_t tan_dist1 = real3_dot(direction, dr1);
+            const real_t tan_dist2 = real3_dot(direction, dr2);
+
+            const real_t norm_dist1 = (real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1));
+            const real_t norm_dist2 = (real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2));
+
+            const real_t norm_dist = sqrt((norm_dist1 + norm_dist2) / 2.0);
+
+            if (norm_dist < tol)
+            {
+                //  Filament is too close
+                continue;
+            }
+
+            const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist * c;
+            // const real3_t dr_avg = (real3_mul1(real3_add(dr1, dr2), 0.5));
+            const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
+
+#pragma omp atomic update
+            out[icp].x += vel_dir.x;
+
+#pragma omp atomic update
+            out[icp].y += vel_dir.y;
+
+#pragma omp atomic update
+            out[icp].z += vel_dir.z;
+        }
+    }
+    return (PyObject *)out_array;
+}
+
 static PyMethodDef pydust_mesh_methods[] = {
     {.ml_name = "get_line",
      .ml_meth = pydust_mesh_get_line,
@@ -991,33 +1074,33 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_flags = METH_NOARGS,
      .ml_doc = "Convert mesh connectivity to arrays list of element lengths and indices."},
     {.ml_name = "induction_matrix",
-     .ml_meth = (PyCFunction)pydust_mesh_induction_matrix,
+     .ml_meth = (void *)pydust_mesh_induction_matrix,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute an induction matrix for the mesh."},
-    {.ml_name = "induction_matrix2",
-     .ml_meth = (PyCFunction)pydust_mesh_induction_matrix2,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "Compute an induction matrix for the mesh, but less cool."},
     {.ml_name = "induction_matrix3",
-     .ml_meth = (PyCFunction)pydust_mesh_induction_matrix3,
+     .ml_meth = (void *)pydust_mesh_induction_matrix3,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute an induction matrix with normals included."},
     {.ml_name = "line_velocities_from_point_velocities",
-     .ml_meth = (PyCFunction)pydust_line_velocities_from_point_velocities,
+     .ml_meth = (void *)pydust_line_velocities_from_point_velocities,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute line velocities by averaging velocities at its end nodes."},
     {.ml_name = "line_velocity_to_force",
-     .ml_meth = (PyCFunction)pydust_line_forces,
+     .ml_meth = (void *)pydust_line_forces,
      .ml_flags = METH_FASTCALL | METH_STATIC,
      .ml_doc = "Compute line forces due to average velocity along it inplace."},
     {.ml_name = "merge_meshes",
-     .ml_meth = (PyCFunction)pydust_mesh_merge,
+     .ml_meth = (void *)pydust_mesh_merge,
      .ml_flags = METH_CLASS | METH_FASTCALL,
      .ml_doc = "Merge sequence of meshes together into a single mesh."},
     {.ml_name = "copy",
-     .ml_meth = (PyCFunction)pydust_mesh_copy,
+     .ml_meth = (void *)pydust_mesh_copy,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Create a copy of the mesh, with optionally changed positions."},
+    {.ml_name = "induced_velocity",
+     .ml_meth = (void *)pydust_mesh_induced_velocity,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Compute induced velocity from line circulations."},
     {},
 };
 

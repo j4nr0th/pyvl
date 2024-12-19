@@ -9,9 +9,9 @@
 #include "module.h"
 
 CDUST_INTERNAL
-const extern allocator_t CDUST_MEM_ALLOCATOR;
+extern const allocator_t CDUST_MEM_ALLOCATOR;
 
 CDUST_INTERNAL
-const extern allocator_t CDUST_OBJ_ALLOCATOR;
+extern const allocator_t CDUST_OBJ_ALLOCATOR;
 
 #endif // ALLOCATOR_H
