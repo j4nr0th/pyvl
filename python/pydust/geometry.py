@@ -1,7 +1,8 @@
 """Implementation of Geometry related operations."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from typing import ItemsView, KeysView, ValuesView
 from warnings import warn
 
 import meshio as mio
@@ -9,7 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
-from pydust.cdust import Mesh, ReferenceFrame
+from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
@@ -81,35 +82,117 @@ class Geometry:
         n = self.msh.surface_centers
         return self.reference_frame.from_parent_with_offset(n, n)
 
-    # def induction_matrix(
-    #     self,
-    #     tol: float,
-    #     control_points: npt.ArrayLike,
-    #     out: npt.NDArray[np.float64] | None = None,
-    # ):
-    #     """Compute the induction matrix of the geometry."""
-    #     cpts = np.asarray(control_points, np.float64)
-    #     if len(cpts.shape) != 2 or cpts.shape[1] != 3:
-    #         raise ValueError("Control points array must have the shape of (N, 3)")
-    #     out_shape = (cpts.shape[0], self.primal.n_surfaces, 3)
-    #     if out is None:
-    #         out = np.empty(out_shape, np.float64)
-    #     elif out.shape != out_shape:
-    #         raise ValueError(
-    #             f"The output array does not have the correct shape of {out_shape}, "
-    #             f"instead its shape is {out.shape}."
-    #         )
-    #     elif out.dtype != np.float64:
-    #         raise ValueError(
-    #             f"The output array does not have {np.float64} as its dtype, instead it "
-    #             f"has {out.dtype}."
-    #         )
-    #     line_buffer_shape = (cpts.shape[0], self.primal.n_lines, 3)
-    #     if self._line_buffer is None or self._line_buffer.shape != line_buffer_shape:
-    #         object.__setattr__(
-    #             self, "_line_buffer", np.empty(line_buffer_shape, np.float64)
-    #         )
-    #     return self.primal.induction_matrix(tol, cpts, out, self._line_buffer)
+
+@dataclass(frozen=True)
+class GeometryInfo:
+    """Class containing information about geometry."""
+
+    rf: ReferenceFrame
+    msh: Mesh
+    closed: bool
+    points: slice
+    lines: slice
+    surfaces: slice
+
+
+@dataclass(frozen=True)
+class SimulationGeometry(Mapping):
+    """Class which is the result of combining multiple geometries together."""
+
+    _info: dict[str, GeometryInfo]
+    n_surfaces: int
+    n_lines: int
+    n_points: int
+
+    def __init__(self, *geometries: Geometry) -> None:
+        geos = {g.label: g for g in geometries}
+        meshes: list[Mesh] = []
+        info: dict[str, GeometryInfo] = {}
+        n_points = 0
+        n_lines = 0
+        n_surfaces = 0
+        for g_name in geos:
+            g = geos[g_name]
+            meshes.append(g.msh)
+            if g.label in info:
+                raise ValueError(
+                    f'Geometries with duplicated label "{g.label}" were found.'
+                )
+            c_p = g.msh.n_points
+            c_l = g.msh.n_lines
+            c_s = g.msh.n_surfaces
+            dual = g.msh.compute_dual()
+            closed = True
+            for il in range(dual.n_lines):
+                ln = dual.get_line(il)
+                if ln.begin == INVALID_ID or ln.end == INVALID_ID:
+                    closed = False
+                    break
+            info[g.label] = GeometryInfo(
+                g.reference_frame,
+                g.msh,
+                closed,
+                slice(n_points, n_points + c_p),
+                slice(n_lines, n_lines + c_l),
+                slice(n_surfaces, n_surfaces + c_s),
+            )
+            n_points += c_p
+            n_lines += c_l
+            n_surfaces += c_s
+
+        object.__setattr__(self, "_info", info)
+        object.__setattr__(self, "n_points", n_points)
+        object.__setattr__(self, "n_lines", n_lines)
+        object.__setattr__(self, "n_surfaces", n_surfaces)
+
+    def __getitem__(self, key: str) -> GeometryInfo:
+        """Return the geometry corresponding to the key."""
+        return self._info[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Return iterator over keys of the simulation geometry."""
+        return iter(self._info)
+
+    def __len__(self) -> int:
+        """Return the number of meshes in the simulation geometry."""
+        return len(self._info)
+
+    def __contains__(self, key: object) -> bool:
+        """Check if a geometry with given label is within the simulation geometry."""
+        return key in self._info
+
+    def keys(self) -> KeysView[str]:
+        """Return the view of the keys."""
+        return self._info.keys()
+
+    def items(self) -> ItemsView[str, GeometryInfo]:
+        """Return the view of the items."""
+        return self._info.items()
+
+    def values(self) -> ValuesView[GeometryInfo]:
+        """Return the view of the values."""
+        return self._info.values()
+
+    def at_time(self, t: float) -> Mesh:
+        """Return the geometry at the specified time."""
+        meshes: list[Mesh] = []
+        for geo_name in self._info:
+            info = self._info[geo_name]
+            new_rf = info.rf.at_time(float(t))
+            new_pos = new_rf.to_global_with_offset(info.msh.positions)
+            meshes.append(info.msh.copy(new_pos))
+
+        return Mesh.merge_meshes(*meshes)
+
+    def at_time_polydata(self, t: float) -> pv.PolyData:
+        """Return the geometry at the specified time."""
+        mesh = self.at_time(t)
+        positions = mesh.positions
+        nper_elem, indices = mesh.to_element_connectivity()
+        offsets = np.pad(np.cumsum(nper_elem), (1, 0))
+        faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
+        pd = pv.PolyData.from_irregular_faces(positions, faces)
+        return pd
 
 
 def geometry_show_pyvista(
