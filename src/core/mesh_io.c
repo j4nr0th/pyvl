@@ -161,6 +161,7 @@ static const char *skip_forward(const char *str)
 int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, const allocator_t *allocator)
 {
     mesh_t this;
+    real3_t *positions = nullptr;
     this.lines = nullptr;
     this.surface_offsets = nullptr;
     this.surface_lines = nullptr;
@@ -187,7 +188,7 @@ int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, cons
         goto failed;
     str = skip_forward(ptr);
 
-    real3_t *const positions = allocator->allocate(allocator->state, sizeof(*positions) * this.n_points);
+    positions = allocator->allocate(allocator->state, sizeof(*positions) * this.n_points);
     if (!positions)
         goto failed;
     //  Parse positions

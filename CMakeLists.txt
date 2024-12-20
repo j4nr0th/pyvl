@@ -84,7 +84,7 @@ target_link_libraries(cdust PRIVATE ${OpenMP_C_LIBRARIES})
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_link_directories(cdust PRIVATE m GOMP)
-    target_compile_options(cdust PRIVATE -Wall -Wextra -Werror -lto=auto -fwhole-program -fopt-info-optimized-omp)
+    target_compile_options(cdust PRIVATE -Wall -Wextra -Werror -lto=auto -fopt-info-optimized-omp)
 endif ()
 
 #get_target_property(MAIN_CFLAGS cdust COMPILE_OPTIONS)
