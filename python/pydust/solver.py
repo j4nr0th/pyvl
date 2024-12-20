@@ -7,9 +7,9 @@ import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
-from pydust.cdust import Mesh, ReferenceFrame
+from pydust.cdust import ReferenceFrame
 from pydust.geometry import SimulationGeometry
-from pydust.settings import ModelSettings, SolverSettings
+from pydust.settings import SolverSettings
 
 
 @dataclass(frozen=True)
@@ -32,46 +32,44 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
 
     out_circulaiton_array = np.empty((len(times), geometry.n_surfaces), np.float64)
 
-    mesh_cache: dict[str, tuple[ReferenceFrame | None, Mesh]] = {
-        name: (None, geometry[name].msh) for name in geometry
-    }
-    merged = None
+    pos = np.empty((geometry.n_points, 3), np.float64)
+    norm = np.empty((geometry.n_surfaces, 3), np.float64)
+    cpts = np.empty((geometry.n_surfaces, 3), np.float64)
+
+    previous_rfs: dict[str, None | ReferenceFrame] = {name: None for name in geometry}
 
     for iteration, time in enumerate(times):
         iteration_begin_time = perf_counter()
-        # Update the mesh
-        # TODO: cache these updates.
         updated = 0
         for geo_name in geometry:
             info = geometry[geo_name]
             new_rf = info.rf.at_time(time)
-            if new_rf == mesh_cache[geo_name][0]:
+            if new_rf == previous_rfs[geo_name]:
+                # The geometry of that particular part did not change.
                 continue
             updated += 1
-            new_pos = new_rf.to_global_with_offset(info.msh.positions)
-            new_msh = info.msh.copy(new_pos)
-            mesh_cache[geo_name] = (new_rf, new_msh)
+            previous_rfs[geo_name] = new_rf
+            pos[info.points] = new_rf.to_global_with_offset(info.pos)
+            cpts[info.surfaces] = new_rf.to_global_with_offset(
+                info.msh.surface_average_vec3(info.pos)
+            )
+            norm[info.surfaces] = new_rf.to_global_without_offset(
+                info.msh.surface_normal(info.pos)
+            )
 
-        if merged is None or updated != 0:
-            merged = Mesh.merge_meshes(*(mesh_cache[name][1] for name in mesh_cache))
-
-            # Get mesh properties
-            control_points = merged.surface_centers
-            normals = merged.surface_normals
+        if updated != 0:
             # point_positions = merged.positions
             # Compute normal induction
-            system_matrix = merged.induction_matrix3(
-                settings.model_settings.vortex_limit,
-                control_points,
-                normals,
+            system_matrix = geometry.mesh.induction_matrix3(
+                settings.model_settings.vortex_limit, pos, cpts, norm
             )
             # Decompose the system matrix to allow for solving multiple times
             decomp = la.lu_factor(system_matrix, overwrite_a=True)
 
         # Compute flow velocity
-        element_velocity = settings.flow_conditions.get_velocity(time, control_points)
+        element_velocity = settings.flow_conditions.get_velocity(time, cpts)
         # Compute flow penetration at control points
-        rhs = np.vecdot(normals, -element_velocity, axis=1)  # type: ignore
+        rhs = np.vecdot(norm, -element_velocity, axis=1)  # type: ignore
 
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
@@ -104,11 +102,30 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
 
 
 def compute_induced_velocities(
-    msh: Mesh,
-    circulation: npt.NDArray[np.float64],
-    model_setting: ModelSettings,
+    simulation_geometry: SimulationGeometry,
+    settings: SolverSettings,
+    results: SolverResults,
     positions: npt.NDArray,
-) -> npt.NDArray:
+) -> list[npt.NDArray]:
     """Compute velocity induced by the mesh with circulation."""
-    induction_matrix = msh.induction_matrix(model_setting.vortex_limit, positions)
-    return np.linalg.vecdot(induction_matrix, circulation[None, :, None], axis=1)
+    out: list[npt.NDArray] = []
+    positions_time = 0.0
+    matrix_time = 0.0
+    matmul_time = 0.0
+    for time, circulation in zip(results.times, results.circulations):
+        t0 = perf_counter()
+        points = simulation_geometry.positions_at_time(time)
+        t1 = perf_counter()
+        induction_matrix = simulation_geometry.mesh.induction_matrix(
+            settings.model_settings.vortex_limit,
+            points,
+            positions,
+        )
+        t2 = perf_counter()
+        out.append(np.linalg.vecdot(induction_matrix, circulation[None, :, None], axis=1))
+        t3 = perf_counter()
+        positions_time += t1 - t0
+        matrix_time += t2 - t1
+        matmul_time += t3 - t2
+    print(f"{positions_time:g}, {matrix_time:g}, {matmul_time:g}")
+    return out

@@ -7,20 +7,9 @@ from pydust import Mesh
 
 def test_mesh_construction():
     """Check that constructor and getters/setters works as intended."""
-    positions = np.array(
-        [
-            [0, 2, 0.5],
-            [0.4, 2, 0.4],
-            [4, 0.1, 0.2],
-            [3, -0.1, 0.2],
-            [2, 1, 0.2],
-            [2, -1, 3],
-        ]
-    )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
-    msh = Mesh(positions, elements)
+    msh = Mesh(max(max(e) for e in elements), elements)
     flat_elements = np.array(sum(elements, start=[]))
-    assert np.all(msh.positions == positions)
     element_count, connectivity = msh.to_element_connectivity()
     assert np.all(element_count == [len(e) for e in elements])
     assert all(connectivity == flat_elements)
@@ -39,8 +28,8 @@ def test_mesh_surface_normals():
         ]
     )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
-    msh = Mesh(positions, elements)
-    normals = msh.surface_normals
+    msh = Mesh(positions.shape[0], elements)
+    normals = msh.surface_normal(positions)
     # Unit length
     assert 1 == pytest.approx(np.linalg.norm(normals, axis=1))
     # For triangle elements, these should be perpendicular to all lines
@@ -71,8 +60,8 @@ def test_mesh_surface_centers():
         ]
     )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
-    msh = Mesh(positions, elements)
-    centers = msh.surface_centers
+    msh = Mesh(positions.shape[0], elements)
+    centers = msh.surface_average_vec3(positions)
     for c, e in zip(centers, elements):
         v = np.mean(positions[e, :], axis=0)
 
@@ -82,18 +71,12 @@ def test_mesh_surface_centers():
 def test_mesh_merge():
     """Check that multiple meshes can be successfully merged."""
     np.random.seed(5463546)
-    msh1 = Mesh(
-        np.random.random_sample((6, 3)), [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
-    )
-    msh2 = Mesh(np.random.random_sample((6, 3)), [[2, 1, 0], [1, 2, 3], [4, 1, 5]])
-    msh3 = Mesh(np.random.random_sample((6, 3)), [[4, 1, 0], [5, 2, 4]])
+    msh1 = Mesh(6, [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]])
+    msh2 = Mesh(6, [[2, 1, 0], [1, 2, 3], [4, 1, 5]])
+    msh3 = Mesh(6, [[4, 1, 0], [5, 2, 4]])
 
     merged = Mesh.merge_meshes(msh1, msh2, msh3)
 
-    assert np.all(
-        merged.positions
-        == np.concatenate((msh1.positions, msh2.positions, msh3.positions), axis=0)
-    )
     assert merged.n_surfaces == msh1.n_surfaces + msh2.n_surfaces + msh3.n_surfaces
     assert merged.n_lines == msh1.n_lines + msh2.n_lines + msh3.n_lines
     assert merged.n_points == msh1.n_points + msh2.n_points + msh3.n_points
