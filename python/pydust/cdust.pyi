@@ -209,6 +209,32 @@ class Mesh:
         """Compute line gradient from point values."""
         ...
 
+    def dual_normal_criterion(
+        self, crit: float, normals: npt.NDArray[np.float64], /
+    ) -> npt.NDArray[np.uint]:
+        """Find edges satisfying neighbouring normal dot product criterion."""
+        ...
+
+    def dual_free_edges(self, /) -> npt.NDArray[np.uint]:
+        """Find edges with invalid nodes (dual free edges)."""
+        ...
+
+    @classmethod
+    def from_lines(cls, n_points: int, connectivity: npt.ArrayLike) -> Self:
+        """Create line-only mesh from line connectivity."""
+        ...
+
+    def line_induction_matrix(
+        self,
+        tol: float,
+        positions: npt.NDArray[np.float64],
+        control_points: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute an induction matrix for the mesh based on line circulations."""
+        ...
+
 class ReferenceFrame:
     """Class which is used to define position and orientation of geometry."""
 
