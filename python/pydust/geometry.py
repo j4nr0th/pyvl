@@ -135,6 +135,7 @@ class SimulationGeometry(Mapping):
 
     _info: dict[str, GeometryInfo]
     mesh: Mesh
+    dual: Mesh
     n_surfaces: int
     n_lines: int
     n_points: int
@@ -178,6 +179,7 @@ class SimulationGeometry(Mapping):
 
         object.__setattr__(self, "_info", info)
         object.__setattr__(self, "mesh", Mesh.merge_meshes(*meshes))
+        object.__setattr__(self, "dual", self.mesh.compute_dual())
         object.__setattr__(self, "n_points", n_points)
         object.__setattr__(self, "n_lines", n_lines)
         object.__setattr__(self, "n_surfaces", n_surfaces)
