@@ -11,18 +11,19 @@
  */
 static const mesh_t TEST_MESH1 = {
     .n_points = 2,
-    .positions = (real3_t[2]){(real3_t){{-0.1, 0, 0.3}}, (real3_t){{1, 0, 0}}},
     .n_lines = 1,
     .lines = (line_t[1]){{(geo_id_t){0, 0}, (geo_id_t){0, 1}}},
     .n_surfaces = 0,
-    .surfaces = nullptr,
+    .surface_offsets = nullptr,
+    .surface_lines = nullptr,
 };
 
 int main(int argc, char *argv[static argc])
 {
-    const real3_t dir = line_direction(&TEST_MESH1, (geo_id_t){0, 0});
+    constexpr real3_t positions[2] = {(real3_t){{-0.1, 0, 0.3}}, (real3_t){{1, 0, 0}}};
+    const real3_t dir = line_direction(positions, &TEST_MESH1, (geo_id_t){0, 0});
     const real3_t v = {{0.2, 0.4, -0.3}};
-    const real3_t induced = compute_mesh_line_induction(v, (geo_id_t){0, 0}, &TEST_MESH1, 1e-6);
+    const real3_t induced = compute_mesh_line_induction(positions, v, (geo_id_t){0, 0}, &TEST_MESH1, 1e-6);
 
     //  Make sure that the induced velocity's direction is perpendicular to the d1 vector
     const real_t x = real3_dot(induced, dir);
@@ -31,8 +32,8 @@ int main(int argc, char *argv[static argc])
                 ", but is instead %e!",
                 x);
 
-    const real3_t dr1 = real3_sub(v, TEST_MESH1.positions[0]);
-    const real3_t dr2 = real3_sub(v, TEST_MESH1.positions[1]);
+    const real3_t dr1 = real3_sub(v, positions[0]);
+    const real3_t dr2 = real3_sub(v, positions[1]);
 
     const real3_t d = real3_unit(dir);
     const real_t tan_dist1 = real3_dot(dr1, d);

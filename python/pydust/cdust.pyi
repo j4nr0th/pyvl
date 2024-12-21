@@ -90,7 +90,7 @@ class Mesh:
 
     def __new__(
         cls,
-        positions: npt.ArrayLike,
+        n_points: int,
         connectivity: Sequence[Sequence[int] | npt.ArrayLike],
     ) -> Self: ...
     def __str__(self) -> str: ...
@@ -108,16 +108,6 @@ class Mesh:
     @property
     def n_surfaces(self) -> int:
         """Number of surfaces in the mesh."""
-        ...
-
-    @property
-    def positions(self) -> npt.NDArray[np.float64]:
-        """Return array of positions of mesh points."""
-        ...
-
-    @positions.setter
-    def positions(self, positions: npt.ArrayLike) -> None:
-        """Positions of mesh points."""
         ...
 
     def get_line(self, i: int) -> Line:
@@ -138,19 +128,22 @@ class Mesh:
         """Create dual to the mesh."""
         ...
 
-    @property
-    def surface_normals(self) -> npt.NDArray[np.float64]:
-        """Compute normals to each surface of the mesh."""
+    def surface_normal(
+        self, positions: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Compute normals to surfaces based on point positions."""
         ...
 
-    @property
-    def surface_centers(self) -> npt.NDArray[np.float64]:
-        """Compute centers of each surface element."""
+    def surface_average_vec3(
+        self, vectors: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
+    ) -> npt.NDArray[np.float64]:
+        """Compute average vec3 for each surface based on point values."""
         ...
 
     def induction_matrix(
         self,
         tol: float,
+        positions: npt.NDArray[np.float64],
         control_points: npt.NDArray[np.float64],
         out: npt.NDArray[np.float64] | None = None,
         line_buffer: npt.NDArray[np.float64] | None = None,
@@ -159,9 +152,22 @@ class Mesh:
         """Compute an induction matrix for the mesh."""
         ...
 
+    def induction_matrix2(
+        self,
+        tol: float,
+        positions: npt.NDArray[np.float64],
+        control_points: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        line_buffer: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute an induction matrix for the mesh using OpenACC."""
+        ...
+
     def induction_matrix3(
         self,
         tol: float,
+        positions: npt.NDArray[np.float64],
         control_points: npt.NDArray[np.float64],
         normals: npt.NDArray[np.float64],
         out: npt.NDArray[np.float64] | None = None,
@@ -179,15 +185,15 @@ class Mesh:
         """Compute line velocities by averaging velocities at its end nodes."""
         ...
 
-    @staticmethod
-    def line_velocity_to_force(
-        primal_mesh: Mesh,
-        dual_mesh: Mesh,
-        surface_circulation: npt.NDArray[np.float64],
-        line_velocity_force: npt.NDArray[np.float64],
-    ) -> None:
-        """Compute line forces due to average velocity along it inplace."""
-        ...
+    # @staticmethod
+    # def line_velocity_to_force(
+    #     primal_mesh: Mesh,
+    #     dual_mesh: Mesh,
+    #     surface_circulation: npt.NDArray[np.float64],
+    #     line_velocity_force: npt.NDArray[np.float64],
+    # ) -> None:
+    #     """Compute line forces due to average velocity along it inplace."""
+    #     ...
 
     @classmethod
     def merge_meshes(cls, *meshes: Mesh) -> Self:
@@ -201,21 +207,6 @@ class Mesh:
         /,
     ) -> npt.NDArray[np.float64]:
         """Compute line gradient from point values."""
-        ...
-
-    def induced_velocity(
-        self,
-        tol: float,
-        line_circulations: npt.NDArray[np.float64],
-        positions: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
-        /,
-    ) -> npt.NDArray[np.float64]:
-        """Compute induced velocity from line circulations."""
-        ...
-
-    def copy(self, new_positions: npt.ArrayLike | None = None, /) -> Mesh:
-        """Create a copy of the mesh with optionally new positions."""
         ...
 
 class ReferenceFrame:

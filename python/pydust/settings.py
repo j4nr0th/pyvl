@@ -109,4 +109,4 @@ class SolverSettings:
 
     flow_conditions: FlowConditions
     model_settings: ModelSettings
-    time_settings: TimeSettings | None = None
+    time_settings: TimeSettings = TimeSettings(1, 1, None)

@@ -18,9 +18,8 @@
 #include <ctype.h>
 #include <string.h>
 
-#include "../test_common.h"
 #include "../../src/core/mesh_io.h"
-
+#include "../test_common.h"
 
 static void push_buffer(unsigned value, unsigned *size, unsigned *capacity, unsigned **buffer)
 {
@@ -102,47 +101,36 @@ int main(int argc, char *argv[static argc])
 
     char *read_mesh = read_file_to_string(path_mesh, 4096);
     TEST_ASSERT(read_mesh, "Could not read mesh to buffer");
-    mesh_t *mesh_comparison = deserialize_mesh(read_mesh, &TEST_ALLOCATOR);
+    mesh_t mesh_comparison;
+    real3_t *positions;
+    int stat = deserialize_mesh(&mesh_comparison, &positions, read_mesh, &TEST_ALLOCATOR);
     free(read_mesh);
-    TEST_ASSERT(mesh_comparison, "Could not load comparison mesh");
+    free(positions);
+    TEST_ASSERT(stat == 0, "Could not load comparison mesh");
 
-    mesh_t *mesh = mesh_from_elements(n_out, n_per_element, pts, &TEST_ALLOCATOR);
-    TEST_ASSERT(mesh, "Failed computing the mesh");
+    mesh_t mesh;
+    stat = mesh_from_elements(&mesh, n_out, n_per_element, pts, &TEST_ALLOCATOR);
+    TEST_ASSERT(stat == 0, "Failed computing the mesh");
     free(n_per_element);
     free(pts);
 
-    TEST_ASSERT(mesh->n_lines == mesh_comparison->n_lines, "Line counts do not match: %u vs %u", mesh->n_lines, mesh_comparison->n_lines);
-    TEST_ASSERT(mesh->n_surfaces == mesh_comparison->n_surfaces, "Surface counts do not match: %u vs %u", mesh->n_surfaces, mesh_comparison->n_surfaces);
+    TEST_ASSERT(mesh.n_lines == mesh_comparison.n_lines, "Line counts do not match: %u vs %u", mesh.n_lines,
+                mesh_comparison.n_lines);
+    TEST_ASSERT(mesh.n_surfaces == mesh_comparison.n_surfaces, "Surface counts do not match: %u vs %u", mesh.n_surfaces,
+                mesh_comparison.n_surfaces);
 
-    TEST_ASSERT(memcmp(mesh->lines, mesh_comparison->lines, sizeof(*mesh->lines) * mesh->n_lines) == 0, "Comparison of line arrays failed.");
-    for (unsigned i = 0; i < mesh->n_surfaces; ++i)
-    {
-        const surface_t *s1 = mesh->surfaces[i], *s2 = mesh_comparison->surfaces[i];
-        // printf("Surfaces %u:\n\t", i);
-        // for (unsigned j = 0; j < s1->n_lines; ++j)
-        // {
-        //     geo_id_t ln = s1->lines[j];
-        //     int v = ln.value + 1;
-        //     if (ln.orientation)
-        //         v *= -1;
-        //     printf(" %d", v);
-        // }
-        // printf("\n\t");
-        // for (unsigned j = 0; j < s2->n_lines; ++j)
-        // {
-        //     geo_id_t ln = s2->lines[j];
-        //     int v = ln.value + 1;
-        //     if (ln.orientation)
-        //         v *= -1;
-        //     printf(" %d", v);
-        // }
-        // printf("\n");
+    TEST_ASSERT(memcmp(mesh.lines, mesh_comparison.lines, sizeof(*mesh.lines) * mesh.n_lines) == 0,
+                "Comparison of line arrays failed.");
 
-        TEST_ASSERT(memcmp(s1, s2, sizeof(uint32_t) * s1->n_lines) == 0, "Comparison of surfaces.");
-    }
+    TEST_ASSERT(memcmp(mesh.surface_offsets, mesh_comparison.surface_offsets,
+                       sizeof(*mesh.surface_offsets) * mesh.n_surfaces) == 0,
+                "Comparison of surface offsets.");
+    TEST_ASSERT(memcmp(mesh.surface_lines, mesh_comparison.surface_lines,
+                       sizeof(*mesh.surface_lines) * mesh.surface_offsets[mesh.n_surfaces]) == 0,
+                "Comparison of surface lines.");
 
-    mesh_free(mesh, &TEST_ALLOCATOR);
-    mesh_free(mesh_comparison, &TEST_ALLOCATOR);
+    mesh_free(&mesh, &TEST_ALLOCATOR);
+    mesh_free(&mesh_comparison, &TEST_ALLOCATOR);
 
     return 0;
 }

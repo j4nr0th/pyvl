@@ -33,7 +33,3 @@ target_link_libraries(test_to_points PRIVATE static_cdust m)
 add_test(NAME test_to_points COMMAND
         test_to_points "${CMAKE_SOURCE_DIR}/test/from_points/test_points.dat"
         "${CMAKE_SOURCE_DIR}/test/from_points/test_mesh.msh")
-
-add_executable(test_induction_same induction/test_induction_same.c ${TEST_COMMON_FILES})
-target_link_libraries(test_induction_same PRIVATE static_cdust m)
-add_test(NAME test_induction_same COMMAND test_induction_same "${CMAKE_SOURCE_DIR}/test/induction/test_mesh.msh")

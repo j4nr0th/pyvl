@@ -214,15 +214,14 @@ CDUST_INTERNAL
 PyDust_SurfaceObject *pydust_surface_from_mesh_surface(const mesh_t *msh, geo_id_t id)
 {
     const unsigned idx = id.value;
-    const surface_t *const s = msh->surfaces[idx];
+    const unsigned i0 = msh->surface_offsets[idx], i1 = msh->surface_offsets[idx + 1];
     PyDust_SurfaceObject *const this =
-        (PyDust_SurfaceObject *)pydust_surface_type.tp_alloc(&pydust_surface_type, (Py_ssize_t)s->n_lines);
+        (PyDust_SurfaceObject *)pydust_surface_type.tp_alloc(&pydust_surface_type, (Py_ssize_t)(i1 - i0));
     if (!this)
         return nullptr;
-    this->n_lines = s->n_lines;
-    for (unsigned i = 0; i < s->n_lines; ++i)
+    for (unsigned i = 0; i < i1 - i0; ++i)
     {
-        const geo_id_t lid = s->lines[i];
+        const geo_id_t lid = msh->surface_lines[i + i0];
         if (lid.orientation ^ id.orientation)
         {
             this->lines[i] = msh->lines[lid.value];

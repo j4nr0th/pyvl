@@ -9,6 +9,7 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 set(CMAKE_C_STANDARD 23)
 
 find_package(OpenMP REQUIRED)
+find_package(OpenACC REQUIRED)
 find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
 
 # Find the NumPy headers
@@ -77,14 +78,17 @@ target_compile_definitions(cdust PRIVATE CDUST_ASSERTS)
 if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
     message( FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
-target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS} ${OPENMP_INCUDE_DIRS})
+target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
 
 target_compile_options(cdust PRIVATE ${OpenMP_C_FLAGS})
 target_link_libraries(cdust PRIVATE ${OpenMP_C_LIBRARIES})
 
+target_compile_options(cdust PRIVATE ${OpenACC_C_FLAGS})
+target_link_libraries(cdust PRIVATE ${OpenACC_C_LIBRARIES})
+
+
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_link_directories(cdust PRIVATE m GOMP)
-    target_compile_options(cdust PRIVATE -Wall -Wextra -Werror -lto=auto -fwhole-program -fopt-info-optimized-omp)
+    target_compile_options(cdust PRIVATE -Wall -Wextra -Werror -lto=auto -g -fopt-info-optimized-omp -fno-omit-frame-pointer)
 endif ()
 
 #get_target_property(MAIN_CFLAGS cdust COMPILE_OPTIONS)

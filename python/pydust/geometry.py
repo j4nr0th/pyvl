@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import ItemsView, KeysView, ValuesView
+from typing import ItemsView, KeysView, Self, ValuesView
 from warnings import warn
 
 import meshio as mio
@@ -13,7 +13,7 @@ import pyvista as pv
 from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
 
 
-def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
+def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
     """TODO."""
     connections: list[npt.NDArray[np.unsignedinteger]] = []
     c: mio.CellBlock
@@ -26,7 +26,15 @@ def mesh_from_mesh_io(m: mio.Mesh) -> Mesh:
             continue
         for element in c.data:
             connections.append(np.asarray(element, np.uint32))
-    return Mesh(m.points, connections)
+    return (np.asarray(m.points, dtype=np.float64), Mesh(m.points.shape[0], connections))
+
+
+def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
+    """Convert mesh into PolyData faces."""
+    nper_elem, indices = m.to_element_connectivity()
+    offsets = np.pad(np.cumsum(nper_elem), (1, 0))
+    faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
+    return faces
 
 
 @dataclass(init=False, frozen=True)
@@ -35,10 +43,15 @@ class Geometry:
 
     label: str
     reference_frame: ReferenceFrame
+    positions: npt.NDArray[np.float64]
     msh: Mesh
 
     def __init__(
-        self, label: str, reference_frame: ReferenceFrame, mesh: mio.Mesh | Mesh
+        self,
+        label: str,
+        reference_frame: ReferenceFrame,
+        mesh: Mesh,
+        positions: npt.ArrayLike,
     ) -> None:
         if not isinstance(label, str):
             raise TypeError(
@@ -49,37 +62,57 @@ class Geometry:
                 "reference_frame must be a ReferenceFrame, instead it was "
                 f"{type(reference_frame).__name__}."
             )
-        if not isinstance(mesh, (Mesh, mio.Mesh)):
+        if not isinstance(mesh, Mesh):
             raise TypeError(
-                f"mesh must be a either {Mesh} or {mio.Mesh}, instead it was "
-                f"{type(mesh)}."
+                f"mesh must be a either Mesh object, instead it was " f"{type(mesh)}."
             )
-        if isinstance(mesh, mio.Mesh):
-            mesh = mesh_from_mesh_io(mesh)
+        try:
+            pos = np.array(positions, np.float64).reshape((-1, 3))
+        except Exception as e:
+            raise ValueError("Positions must be a (N, 3) array.") from e
 
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "reference_frame", reference_frame)
+        object.__setattr__(self, "positions", pos)
         object.__setattr__(self, "msh", mesh)
+
+    @classmethod
+    def from_meshio(
+        cls, label: str, reference_frame: ReferenceFrame, mesh: mio.Mesh
+    ) -> Self:
+        """Create a Geometry from a MeshIO Mesh object."""
+        p, m = mesh_from_mesh_io(mesh)
+        return cls(label=label, reference_frame=reference_frame, mesh=m, positions=p)
+
+    @classmethod
+    def from_polydata(
+        cls, label: str, reference_frame: ReferenceFrame, pd: pv.PolyData
+    ) -> Self:
+        """Create a Geometry from a PyVista's PolyData object."""
+        return cls(
+            label=label,
+            reference_frame=reference_frame,
+            mesh=Mesh(pd.points.shape[0], pd.irregular_faces),
+            positions=pd.points,
+        )
 
     def as_polydata(self) -> pv.PolyData:
         """Convert geometry into PyVista's PolyData."""
-        positions = self.reference_frame.from_parent_with_offset(self.msh.positions)
-        nper_elem, indices = self.msh.to_element_connectivity()
-        offsets = np.pad(np.cumsum(nper_elem), (1, 0))
-        faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
+        positions = self.reference_frame.from_parent_with_offset(self.positions)
+        faces = mesh_to_polydata_faces(self.msh)
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
 
     @property
     def normals(self) -> npt.NDArray[np.float64]:
         """Compute normals to mesh surfaces."""
-        n = self.msh.surface_normals
+        n = self.msh.surface_normal(self.positions)
         return self.reference_frame.from_parent_without_offset(n, n)
 
     @property
     def centers(self) -> npt.NDArray[np.float64]:
         """Compute centers of mesh sufraces."""
-        n = self.msh.surface_centers
+        n = self.msh.surface_average_vec3(self.positions)
         return self.reference_frame.from_parent_with_offset(n, n)
 
 
@@ -89,6 +122,7 @@ class GeometryInfo:
 
     rf: ReferenceFrame
     msh: Mesh
+    pos: npt.NDArray[np.float64]
     closed: bool
     points: slice
     lines: slice
@@ -100,6 +134,7 @@ class SimulationGeometry(Mapping):
     """Class which is the result of combining multiple geometries together."""
 
     _info: dict[str, GeometryInfo]
+    mesh: Mesh
     n_surfaces: int
     n_lines: int
     n_points: int
@@ -131,6 +166,7 @@ class SimulationGeometry(Mapping):
             info[g.label] = GeometryInfo(
                 g.reference_frame,
                 g.msh,
+                g.positions,
                 closed,
                 slice(n_points, n_points + c_p),
                 slice(n_lines, n_lines + c_l),
@@ -141,6 +177,7 @@ class SimulationGeometry(Mapping):
             n_surfaces += c_s
 
         object.__setattr__(self, "_info", info)
+        object.__setattr__(self, "mesh", Mesh.merge_meshes(*meshes))
         object.__setattr__(self, "n_points", n_points)
         object.__setattr__(self, "n_lines", n_lines)
         object.__setattr__(self, "n_surfaces", n_surfaces)
@@ -173,25 +210,20 @@ class SimulationGeometry(Mapping):
         """Return the view of the values."""
         return self._info.values()
 
-    def at_time(self, t: float) -> Mesh:
-        """Return the geometry at the specified time."""
-        meshes: list[Mesh] = []
+    def positions_at_time(self, t: float) -> npt.NDArray[np.float64]:
+        """Return the point positions at the specified time."""
+        pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
             new_rf = info.rf.at_time(float(t))
-            new_pos = new_rf.to_global_with_offset(info.msh.positions)
-            meshes.append(info.msh.copy(new_pos))
+            pos[info.points] = new_rf.to_global_with_offset(info.pos)
+        return pos
 
-        return Mesh.merge_meshes(*meshes)
-
-    def at_time_polydata(self, t: float) -> pv.PolyData:
-        """Return the geometry at the specified time."""
-        mesh = self.at_time(t)
-        positions = mesh.positions
-        nper_elem, indices = mesh.to_element_connectivity()
-        offsets = np.pad(np.cumsum(nper_elem), (1, 0))
-        faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
-        pd = pv.PolyData.from_irregular_faces(positions, faces)
+    def polydata_at_time(self, t: float) -> pv.PolyData:
+        """Return the geometry as polydata at the specified time."""
+        pos = self.positions_at_time(t)
+        faces = mesh_to_polydata_faces(self.mesh)
+        pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
 
 
