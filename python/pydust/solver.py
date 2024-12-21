@@ -1,5 +1,6 @@
 """Implementation of the flow solver."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -106,26 +107,29 @@ def compute_induced_velocities(
     settings: SolverSettings,
     results: SolverResults,
     positions: npt.NDArray,
-) -> list[npt.NDArray]:
+    workers: int | None = None,
+) -> npt.NDArray:
     """Compute velocity induced by the mesh with circulation."""
-    out: list[npt.NDArray] = []
-    positions_time = 0.0
-    matrix_time = 0.0
-    matmul_time = 0.0
-    for time, circulation in zip(results.times, results.circulations):
-        t0 = perf_counter()
+    out_vec = np.empty((len(results.times), positions.shape[0], 3), np.float64)
+
+    def _velocity_compute_function(
+        i, time: float, circulation: npt.NDArray[np.float64]
+    ) -> None:
+        """Compute velocity induction."""
         points = simulation_geometry.positions_at_time(time)
-        t1 = perf_counter()
-        induction_matrix = simulation_geometry.mesh.induction_matrix(
+        ind_mat = simulation_geometry.mesh.induction_matrix(
             settings.model_settings.vortex_limit,
             points,
             positions,
         )
-        t2 = perf_counter()
-        out.append(np.linalg.vecdot(induction_matrix, circulation[None, :, None], axis=1))
-        t3 = perf_counter()
-        positions_time += t1 - t0
-        matrix_time += t2 - t1
-        matmul_time += t3 - t2
-    print(f"{positions_time:g}, {matrix_time:g}, {matmul_time:g}")
-    return out
+        np.vecdot(ind_mat, circulation[None, :, None], out=out_vec[i, ...], axis=1)  # type: ignore
+
+    with ThreadPoolExecutor(workers) as executor:
+        executor.map(
+            _velocity_compute_function,
+            range(results.times.size),
+            results.times,
+            results.circulations,
+        )
+
+    return out_vec

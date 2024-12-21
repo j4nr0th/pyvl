@@ -86,7 +86,7 @@ static inline real3_t real3_cross(const real3_t a, const real3_t b)
 }
 static inline real_t real3_mag(const real3_t a)
 {
-    return hypot(hypot(a.v0, a.v1), a.v2);
+    return sqrt(real3_dot(a, a));
 }
 static inline real3_t real3_unit(const real3_t a)
 {

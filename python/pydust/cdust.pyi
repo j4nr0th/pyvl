@@ -152,6 +152,18 @@ class Mesh:
         """Compute an induction matrix for the mesh."""
         ...
 
+    def induction_matrix2(
+        self,
+        tol: float,
+        positions: npt.NDArray[np.float64],
+        control_points: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+        line_buffer: npt.NDArray[np.float64] | None = None,
+        /,
+    ) -> npt.NDArray[np.float64]:
+        """Compute an induction matrix for the mesh using OpenACC."""
+        ...
+
     def induction_matrix3(
         self,
         tol: float,

@@ -89,8 +89,7 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
                             const real3_t cpts[static restrict n_cpts], real3_t out[restrict n_lines * n_cpts],
                             real_t tol)
 {
-#pragma omp parallel for collapse(2) schedule(static) default(none)                                                    \
-    shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
+#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
     for (unsigned iln = 0; iln < n_lines; ++iln)
     {
         const line_t line = lines[iln];
@@ -102,7 +101,6 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
         direction.v0 /= len;
         direction.v1 /= len;
         direction.v2 /= len;
-
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
             const real3_t control_point = cpts[icp];
@@ -177,7 +175,7 @@ void line_induction_to_normal_surface_induction(unsigned n_surfaces,
                                                 const real3_t line_inductions[static restrict n_lines * n_cpts],
                                                 real_t out[restrict n_surfaces * n_cpts])
 {
-#pragma omp parallel for default(none)                                                                                 \
+#pragma omp parallel for default(none) collapse(2)                                                                     \
     shared(n_surfaces, surface_offsets, surface_lines, n_lines, n_cpts, line_inductions, normal_vectors, out)
     for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
