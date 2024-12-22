@@ -1118,8 +1118,7 @@ static PyObject *pydust_mesh_from_lines(PyObject *type, PyObject *args, PyObject
 {
     unsigned npts;
     PyObject *arg;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (const char *[3]){"n_points", "connectivity", nullptr}, &npts,
-                                     &arg))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"n_points", "connectivity", nullptr}, &npts, &arg))
     {
         return nullptr;
     }
@@ -1149,7 +1148,7 @@ static PyObject *pydust_mesh_from_lines(PyObject *type, PyObject *args, PyObject
     this->mesh.n_lines = n_lines;
     this->mesh.n_surfaces = 0;
 
-    this->mesh.lines;
+    this->mesh.lines = nullptr;
     this->mesh.surface_lines = nullptr;
     this->mesh.surface_offsets = PyObject_Malloc(sizeof *this->mesh.surface_offsets);
     if (!this->mesh.surface_offsets)
@@ -1303,8 +1302,8 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_flags = METH_NOARGS,
      .ml_doc = "Find edges with invalid nodes (dual free edges)."},
     {.ml_name = "from_lines",
-     .ml_meth = pydust_mesh_from_lines,
-     .ml_flags = METH_VARARGS | METH_CLASS,
+     .ml_meth = (void *)pydust_mesh_from_lines,
+     .ml_flags = METH_VARARGS | METH_CLASS | METH_KEYWORDS,
      .ml_doc = "Create line-only mesh from line connectivity."},
     {.ml_name = "line_induction_matrix",
      .ml_meth = (void *)pydust_mesh_line_induction_matrix,
