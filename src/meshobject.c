@@ -744,7 +744,7 @@ static PyObject *pydust_mesh_merge(PyObject *type, PyObject *const *args, Py_ssi
         if (!PyObject_TypeCheck(o, &pydust_mesh_type))
         {
             PyErr_Format(PyExc_TypeError, "Element %u in the input sequence was not a Mesh, but was instead %R", i,
-                         PyObject_Type(o));
+                         Py_TYPE(o));
             return nullptr;
         }
         const PyDust_MeshObject *const this = (PyDust_MeshObject *)o;

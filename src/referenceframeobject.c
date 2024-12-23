@@ -21,8 +21,7 @@ static PyObject *pydust_reference_frame_new(PyTypeObject *type, PyObject *args, 
     }
     else if (!PyObject_TypeCheck(p, &pydust_reference_frame_type))
     {
-        PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R",
-                     PyObject_Type(p));
+        PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R", Py_TYPE(p));
         return nullptr;
     }
     else
