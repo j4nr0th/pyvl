@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
 from warnings import warn
 
+import h5py
 import meshio as mio
 import numpy as np
 import numpy.typing as npt
@@ -35,6 +36,58 @@ def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
     offsets = np.pad(np.cumsum(nper_elem), (1, 0))
     faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
     return faces
+
+
+def mesh_to_hdf5(m: Mesh, group: h5py.Group) -> None:
+    """Serialize the mesh into a HDF5 group."""
+    group["n_points"] = m.n_points
+    n_per_element, flattened_elements = m.to_element_connectivity()
+    group["n_per_element"] = n_per_element
+    group["flattened_elements"] = flattened_elements
+
+
+def mesh_from_hdf5(group: h5py.Group) -> Mesh:
+    """Deserialize the mesh from HDF5 group."""
+    n_points = group["n_points"]
+    n_per_element = group["n_per_element"]
+    flattened_elements = group["flattened_elements"]
+    assert isinstance(n_points, h5py.Dataset)
+    assert isinstance(n_per_element, h5py.Dataset)
+    assert isinstance(flattened_elements, h5py.Dataset)
+    nper_elem = n_per_element[()]
+    indices = flattened_elements[()]
+    offsets = np.pad(np.cumsum(nper_elem), (1, 0))
+    faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
+    return Mesh(n_points=n_points[()], connectivity=faces)
+
+
+def rf_to_hdf5(self: ReferenceFrame, group: h5py.Group) -> None:
+    """Serialize the ReferenceFrame into a HDF5 group."""
+    rf_type = type(self)
+    group["type"] = rf_type.__module__ + "." + rf_type.__qualname__
+    data = group.create_group("data")
+    self.save(data)
+    if self.parent is not None:
+        parent = group.create_group("parent")
+        rf_to_hdf5(self.parent, parent)
+
+
+def rf_from_hdf5(group: h5py.Group) -> ReferenceFrame:
+    """Load reference frame from a HDF5 group."""
+    rf_type_name = group["type"]
+    assert isinstance(rf_type_name, h5py.Dataset)
+    type_name = str(rf_type_name[()])
+    mname, tname = type_name.rsplit(".", 1)
+    mod = __import__(mname, fromlist=[tname])
+    cls = getattr(mod, tname)
+    data = group["data"]
+    assert isinstance(data, h5py.Group)
+    parent = None
+    if "parent" in group:
+        parent_group = group["parent"]
+        assert isinstance(parent_group, h5py.Group)
+        parent = rf_from_hdf5(parent_group)
+    return cls.load(group=data, parent=parent)
 
 
 @dataclass(init=False, frozen=True)
@@ -114,6 +167,29 @@ class Geometry:
         """Compute centers of mesh sufraces."""
         n = self.msh.surface_average_vec3(self.positions)
         return self.reference_frame.from_parent_with_offset(n, n)
+
+    def save(self, group: h5py.Group) -> None:
+        """Save geometry into a HDF5 group."""
+        group["positions"] = self.positions
+        mesh_grop = group.create_group("mesh")
+        mesh_to_hdf5(self.msh, mesh_grop)
+        rf_group = group.create_group("reference_frame")
+        rf_to_hdf5(self.reference_frame, rf_group)
+
+    @classmethod
+    def load(cls, label: str, group: h5py.Group) -> Self:
+        """Load the geometry for the HDF5 group."""
+        positions = group["positions"]
+        mesh_group = group["mesh"]
+        rf_group = group["reference_frame"]
+        assert isinstance(positions, h5py.Dataset)
+        assert isinstance(mesh_group, h5py.Group)
+        assert isinstance(rf_group, h5py.Group)
+
+        msh = mesh_from_hdf5(mesh_group)
+        rf = rf_from_hdf5(rf_group)
+
+        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
 
 
 @dataclass(frozen=True)
@@ -252,6 +328,24 @@ class SimulationGeometry(Mapping):
             bordering_nodes[i, :] = (primal_line.begin, primal_line.end)
             adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
         return (bordering_nodes, adjacent_surfaces)
+
+    def save(self, group: h5py.Group) -> None:
+        """Save the simulation geometry into a HDF5 group."""
+        for geo_name in self._info:
+            info = self._info[geo_name]
+            geo_group = group.create_group(geo_name)
+            Geometry(geo_name, info.rf, info.msh, info.pos).save(geo_group)
+
+    @classmethod
+    def load(cls, group: h5py.Group) -> Self:
+        """Load the simulation geometry from the HDF5 group."""
+        geometries: list[Geometry] = []
+        for geo_name in group:
+            sub_group = group[geo_name]
+            assert isinstance(sub_group, h5py.Group)
+            geo = Geometry.load(str(geo_name), sub_group)
+            geometries.append(geo)
+        return cls(*geometries)
 
 
 def geometry_show_pyvista(
