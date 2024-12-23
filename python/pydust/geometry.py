@@ -1,6 +1,6 @@
 """Implementation of Geometry related operations."""
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
 from warnings import warn
@@ -227,6 +227,31 @@ class SimulationGeometry(Mapping):
         faces = mesh_to_polydata_faces(self.mesh)
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
+
+    def te_normal_criterion(self, crit: float) -> npt.NDArray[np.uint]:
+        """Identify edges, for which the normals of neighbouring surfaces meet dp crit."""
+        normals = np.empty((self.n_surfaces, 3), np.float64)
+        for name in self._info:
+            info = self._info[name]
+            normals[info.points] = info.msh.surface_normal(info.pos)
+        return self.dual.dual_normal_criterion(crit, normals)
+
+    def te_free_criterion(self) -> npt.NDArray[np.uint]:
+        """Identify edges, which have only one surface attached."""
+        return self.dual.dual_free_edges()
+
+    def line_adjecency_information(
+        self, lines: Sequence[int] | npt.NDArray[np.integer]
+    ) -> tuple[npt.NDArray[np.uint], npt.NDArray[np.uint]]:
+        """Return line information in terms of adjacent points and surfaces."""
+        bordering_nodes = np.empty((len(lines), 2), np.uint)
+        adjacent_surfaces = np.empty((len(lines), 2), np.uint)
+        for i, line_id in enumerate(lines):
+            primal_line = self.mesh.get_line(int(line_id))
+            dual_line = self.dual.get_line(int(line_id))
+            bordering_nodes[i, :] = (primal_line.begin, primal_line.end)
+            adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
+        return (bordering_nodes, adjacent_surfaces)
 
 
 def geometry_show_pyvista(

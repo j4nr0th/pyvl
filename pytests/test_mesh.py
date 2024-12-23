@@ -100,3 +100,12 @@ def test_mesh_merge():
             n_lines += 1
 
         point_offset += m.n_points
+
+
+def test_overlap_induction_matrix() -> None:
+    """Check that induction matrix behaves nicely even on the lines."""
+    msh = Mesh(4, [[0, 1, 2, 3]])
+    positions = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], np.float64)
+    test_mat = msh.line_induction_matrix(1e-6, positions, positions)
+    for i in range(4):
+        assert all(test_mat[i, i, :] == (0, 0, 0))
