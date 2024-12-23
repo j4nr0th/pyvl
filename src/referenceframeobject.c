@@ -904,6 +904,7 @@ static PyObject *pydust_reference_frame_load(PyObject *self, PyObject *args, PyO
     Py_DECREF(off_array);
     Py_DECREF(rot_array);
     this->parent = (PyDust_ReferenceFrame *)parent;
+    Py_XINCREF(parent);
 
     return (PyObject *)this;
 }

@@ -76,7 +76,7 @@ def rf_from_hdf5(group: h5py.Group) -> ReferenceFrame:
     """Load reference frame from a HDF5 group."""
     rf_type_name = group["type"]
     assert isinstance(rf_type_name, h5py.Dataset)
-    type_name = str(rf_type_name[()])
+    type_name: str = rf_type_name[()].decode()
     mname, tname = type_name.rsplit(".", 1)
     mod = __import__(mname, fromlist=[tname])
     cls = getattr(mod, tname)

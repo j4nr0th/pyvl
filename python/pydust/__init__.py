@@ -7,7 +7,7 @@ from pydust.cdust import Mesh as Mesh
 from pydust.cdust import ReferenceFrame as ReferenceFrame
 from pydust.cdust import Surface as Surface
 
-# Settings
+# Flow Conditions
 from pydust.flow_conditions import FlowConditions as FlowConditions
 from pydust.flow_conditions import FlowConditionsRotating as FlowConditionsRotating
 from pydust.flow_conditions import FlowConditionsUniform as FlowConditionsUniform
@@ -17,6 +17,12 @@ from pydust.geometry import Geometry as Geometry
 from pydust.geometry import SimulationGeometry as SimulationGeometry
 from pydust.geometry import geometry_show_pyvista as geometry_show_pyvista
 from pydust.geometry import mesh_from_mesh_io as mesh_from_mesh_io
+
+# Reference Frames
+from pydust.reference_frames import RotorReferenceFrame as RotorReferenceFrame
+from pydust.reference_frames import TranslatingReferenceFrame as TranslatingReferenceFrame
+
+# Settings
 from pydust.settings import ModelSettings as ModelSettings
 from pydust.settings import SolverSettings as SolverSettings
 from pydust.settings import TimeSettings as TimeSettings
