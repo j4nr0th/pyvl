@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Self, final
 
+import h5py
 import numpy as np
 from numpy import typing as npt
 
@@ -357,4 +358,13 @@ class ReferenceFrame:
     @staticmethod
     def angles_from_rotation(rotation_matrix: npt.ArrayLike) -> npt.NDArray[np.double]:
         """Compute rotation angles from a transformation matrix."""
+        ...
+
+    def save(self, group: h5py.Group, /) -> None:
+        """Serialize the ReferenceFrame into a HDF5 group."""
+        ...
+
+    @classmethod
+    def load(cls, group: h5py.Group, parent: ReferenceFrame | None = None) -> Self:
+        """Load the ReferenceFrame from a HDF5 group."""
         ...
