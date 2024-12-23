@@ -58,19 +58,22 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
                 info.msh.surface_normal(info.pos)
             )
 
-        if updated != 0:
-            # point_positions = merged.positions
-            # Compute normal induction
-            system_matrix = geometry.mesh.induction_matrix3(
-                settings.model_settings.vortex_limit, pos, cpts, norm
-            )
-            # Decompose the system matrix to allow for solving multiple times
-            decomp = la.lu_factor(system_matrix, overwrite_a=True)
-
         # Compute flow velocity
         element_velocity = settings.flow_conditions.get_velocity(time, cpts)
         # Compute flow penetration at control points
         rhs = np.vecdot(norm, -element_velocity, axis=1)  # type: ignore
+        # if updated != 0:
+        # Compute normal induction
+        system_matrix = geometry.mesh.induction_matrix3(
+            settings.model_settings.vortex_limit, pos, cpts, norm
+        )
+
+        # Apply the wake model's effect
+        if settings.wake_model is not None:
+            settings.wake_model.apply_corrections(cpts, norm, system_matrix, rhs)
+
+        # Decompose the system matrix to allow for solving multiple times
+        decomp = la.lu_factor(system_matrix, overwrite_a=True)
 
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
@@ -81,6 +84,12 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
             if not info.closed:
                 continue
             circulation[info.surfaces] -= np.mean(circulation[info.surfaces])
+
+        # update the wake model
+        if settings.wake_model is not None:
+            settings.wake_model.update(
+                time, geometry, pos, circulation, settings.flow_conditions
+            )
 
         iteration_end_time = perf_counter()
         if (

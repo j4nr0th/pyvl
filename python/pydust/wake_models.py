@@ -187,7 +187,7 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         circ = self.circulation.reshape((self.shedding_lines.size, self.line_rows))[
             :, 1:
         ].reshape((-1,))
-        ev = np.vecdot(explicit, circ[None, :, None])
+        ev = np.vecdot(np.vecdot(explicit, circ[None, :, None], axis=1), normals, axis=-1)  # type: ignore
         rhs_in[:] += ev
 
     def as_polydata(self) -> pv.PolyData:

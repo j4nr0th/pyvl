@@ -42,6 +42,16 @@ class WakeModel(ABC):
         """Update the wake model."""
         ...
 
+    def apply_corrections(
+        self,
+        control_pts: npt.NDArray[np.float64],
+        normals: npt.NDArray[np.float64],
+        mat_in: npt.NDArray[np.float64],
+        rhs_in: npt.NDArray[np.float64],
+    ) -> None:
+        """Return implicit and explicit corrections for the no-prenetration conditions."""
+        ...
+
     @abstractmethod
     def get_velocity(
         self,
