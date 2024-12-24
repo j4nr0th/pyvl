@@ -32,7 +32,7 @@ static PyObject *pydust_mesh_new(PyTypeObject *type, PyObject *args, PyObject *k
 
     PyObject *root;
     unsigned n_points;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"positions", "connectivity", nullptr}, &n_points,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"n_points", "connectivity", nullptr}, &n_points,
                                      &root))
     {
         return nullptr;
@@ -1312,6 +1312,34 @@ static PyMethodDef pydust_mesh_methods[] = {
     {},
 };
 
+static PyObject *pydust_mesh_rich_compare(PyObject *self, PyObject *other, const int op)
+{
+    if (!PyObject_TypeCheck(other, &pydust_mesh_type) || (op != Py_EQ && op != Py_NE))
+    {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    bool res = true;
+    const PyDust_MeshObject *const this = (PyDust_MeshObject *)self;
+    const PyDust_MeshObject *const that = (PyDust_MeshObject *)other;
+    if (this->mesh.n_points != that->mesh.n_points || this->mesh.n_lines != that->mesh.n_lines ||
+        this->mesh.n_surfaces != that->mesh.n_surfaces ||
+        memcmp(this->mesh.lines, that->mesh.lines, sizeof(*this->mesh.lines) * this->mesh.n_lines) != 0 ||
+        memcmp(this->mesh.surface_offsets, that->mesh.surface_offsets,
+               sizeof(*this->mesh.surface_offsets) * (this->mesh.n_surfaces + 1)) != 0 ||
+        memcmp(this->mesh.surface_lines, that->mesh.surface_lines,
+               sizeof(*this->mesh.surface_lines) * this->mesh.surface_offsets[this->mesh.n_surfaces]) != 0)
+    {
+        res = false;
+    }
+
+    res = (op == Py_EQ) ? res : !res;
+    if (res)
+    {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
+
 CDUST_INTERNAL
 PyTypeObject pydust_mesh_type = {
     .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "cdust.Mesh",
@@ -1324,4 +1352,5 @@ PyTypeObject pydust_mesh_type = {
     .tp_getset = pydust_mesh_getset,
     .tp_new = pydust_mesh_new,
     .tp_dealloc = pydust_mesh_dealloc,
+    .tp_richcompare = pydust_mesh_rich_compare,
 };
