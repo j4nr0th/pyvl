@@ -18,6 +18,9 @@ from pydust.geometry import SimulationGeometry as SimulationGeometry
 from pydust.geometry import geometry_show_pyvista as geometry_show_pyvista
 from pydust.geometry import mesh_from_mesh_io as mesh_from_mesh_io
 
+# IO
+from pydust.io_common import HirearchicalMap as HirearchicalMap
+
 # Reference Frames
 from pydust.reference_frames import RotorReferenceFrame as RotorReferenceFrame
 from pydust.reference_frames import TranslatingReferenceFrame as TranslatingReferenceFrame

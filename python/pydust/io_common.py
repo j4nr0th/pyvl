@@ -1,0 +1,125 @@
+"""Classes and implementation of IO related functionality."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, Iterator
+
+import numpy as np
+from numpy import typing as npt
+
+
+class HirearchicalMap(Mapping):
+    """Mapping which contains other hierarchical mappings or values uniquly."""
+
+    _map: dict[str, HirearchicalMap | Any]
+
+    def __getitem__(self, key: str) -> Any:
+        """Return the value associated with the key."""
+        return self._map[key]
+
+    def insert_type(self, key: str, t: type) -> None:
+        """Insert a type into the mapping as an entry "type"."""
+        assert isinstance(t, type)
+        self._insert(key, t.__module__ + "." + t.__name__)
+
+    def insert_array(self, key: str, value: npt.ArrayLike) -> None:
+        """Insert an array-like into the mapping and copies it."""
+        self._insert(key, np.array(value))
+
+    def insert_string(self, key: str, value: str) -> None:
+        """Insert a string into the mapping."""
+        assert isinstance(value, str)
+        self._insert(key, np.array(value))
+
+    def insert_scalar(self, key: str, value: int | float) -> None:
+        """Insert a scalar into the mapping."""
+        assert isinstance(value, (int, float))
+        self._insert(key, value)
+
+    # def recursive_contains(self, key: str) -> list[list[str]]:
+    #     """Return the all full key if the mapping or its children contain the key."""
+    #     if key in self._map:
+    #         return [[key]]
+    #     out: list[list[str]] = []
+    #     for k in self._map:
+    #         v = self._map[k]
+    #         if not isinstance(v, HirearchicalMap):
+    #             continue
+    #         res = v.recursive_contains(key)
+    #         for i in res:
+    #             i.insert(0, k)
+    #         out.extend(res)
+    #     return out
+    def _recursion_check(self, value: HirearchicalMap) -> bool:
+        """Check if the value would cause a recursive hirearchiy."""
+        for k in self._map:
+            v = self._map[k]
+            if not isinstance(v, HirearchicalMap):
+                continue
+            if v._recursion_check(value):
+                return True
+
+        return False
+
+    def insert_hirearchycal_map(self, key: str, value: HirearchicalMap) -> None:
+        """Insert another mapping into the mapping."""
+        if self._recursion_check(value):
+            raise ValueError(
+                "Inserting the hierarchical map would cause cyclical hierarchy."
+            )
+        self._insert(key, value)
+
+    def get_type(self, key: str) -> type:
+        """Load a type from the mapping as an entry "type"."""
+        full_type_name = self[key]
+        assert isinstance(full_type_name, str)
+        module_name, type_name = full_type_name.rsplit(".", 1)
+        mod = __import__(module_name, fromlist=[type_name])
+        cls: type = getattr(mod, type_name)
+        return cls
+
+    def get_array(self, key: str) -> npt.NDArray:
+        """Load a copy of an array from the mapping."""
+        v = self[key]
+        return np.array(v)
+
+    def get_string(self, key: str) -> str:
+        """Load a string from the mapping."""
+        value = self._map[key]
+        assert isinstance(value, str)
+        return value
+
+    def get_scalar(self, key: str) -> int | float:
+        """Load a scalar from the mapping."""
+        value = self._map[key]
+        assert isinstance(value, (int, float))
+        return value
+
+    def get_hirearchical_map(self, key: str) -> HirearchicalMap:
+        """Load a hierarchical map from the mapping."""
+        value = self._map[key]
+        assert isinstance(value, HirearchicalMap)
+        return value
+
+    def _insert(self, key: str, value: Any) -> None:
+        """Set the value associated with the key."""
+        if not isinstance(key, str):
+            raise TypeError(f"Key is not a string but a {type(key).__name__}.")
+        if key in self._map:
+            raise KeyError(f'Map already contains a key "{key}".')
+        if key == "type":
+            raise ValueError(f'Key with the value "{key}" is not allowed.')
+        self._map[key] = value
+
+    def __len__(self) -> int:
+        """Return the number of key-value pairs in the mapping."""
+        return len(self._map)
+
+    def __delitem__(self, key: str) -> None:
+        """Remove the item from the mapping."""
+        del self._map[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Return iterator over keys."""
+        return iter(self._map)
