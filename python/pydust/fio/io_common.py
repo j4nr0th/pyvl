@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 import numpy as np
 from numpy import typing as npt
@@ -150,3 +151,7 @@ class HirearchicalMap(MutableMapping[str, Any]):
     def __iter__(self) -> Iterator[str]:
         """Return iterator over keys."""
         return iter(self._map)
+
+
+SerializationFunction = Callable[[HirearchicalMap, Path], None]
+DeserializationFunction = Callable[[Path], HirearchicalMap]

@@ -6,9 +6,9 @@ import numpy as np
 import pyvista as pv
 from numpy import typing as npt
 
+from pydust.fio.io_common import HirearchicalMap
 from pydust.flow_conditions import FlowConditions
 from pydust.geometry import INVALID_ID, Mesh, SimulationGeometry, mesh_to_polydata_faces
-from pydust.io_common import HirearchicalMap
 from pydust.wake import WakeModel
 
 
