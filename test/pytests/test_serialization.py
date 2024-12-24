@@ -1,10 +1,12 @@
 """Tests for serialization to and from HDF5 files."""
 
 import warnings
+from pathlib import Path
 
 import meshio as mio
 import numpy as np
 from pydust import Geometry, ReferenceFrame, TranslatingReferenceFrame, mesh_from_mesh_io
+from pydust import fio as fio
 from pydust.geometry import rf_from_serial, rf_to_serial
 
 
@@ -101,11 +103,52 @@ def test_geometry_serialization1() -> None:
     geo1 = Geometry.load(geo.label, out)
     assert geo1.label == geo.label
     assert np.all(geo1.positions == geo.positions)
-    assert geo1.msh == geo.msh  # TODO
+    assert geo1.msh == geo.msh
 
 
-if __name__ == "__main__":
-    test_rf_serialization1()
-    test_rf_serialization2()
-    test_rf_serialization3()
-    test_geometry_serialization1()
+def test_geometry_serialization_hdf() -> None:
+    """Test that geometry is properly serialized and de-serialized with HDF5."""
+    m = mio.read("test/pytests/test_inputs/cylinder.msh")
+    fpath = Path("test/pytests/test_outputs/ser_geo_1.h5")
+    with warnings.catch_warnings(action="ignore", category=UserWarning):
+        pos, msh = mesh_from_mesh_io(m)
+
+    geo = Geometry(
+        "test_geometry",
+        ReferenceFrame(),
+        msh,
+        pos,
+    )
+
+    out = geo.save()
+    fio.serialize_hdf5(out, fpath)
+    inv = fio.deserialize_hdf5(fpath)
+
+    geo1 = Geometry.load(geo.label, inv)
+    assert geo1.label == geo.label
+    assert np.all(geo1.positions == geo.positions)
+    assert geo1.msh == geo.msh
+
+
+def test_geometry_serialization_json() -> None:
+    """Test that geometry is properly serialized and de-serialized with JSON."""
+    m = mio.read("test/pytests/test_inputs/cylinder.msh")
+    fpath = Path("test/pytests/test_outputs/ser_geo_1.json")
+    with warnings.catch_warnings(action="ignore", category=UserWarning):
+        pos, msh = mesh_from_mesh_io(m)
+
+    geo = Geometry(
+        "test_geometry",
+        ReferenceFrame(),
+        msh,
+        pos,
+    )
+
+    out = geo.save()
+    fio.serialize_json(out, fpath)
+    inv = fio.deserialize_json(fpath)
+
+    geo1 = Geometry.load(geo.label, inv)
+    assert geo1.label == geo.label
+    assert np.all(geo1.positions == geo.positions)
+    assert geo1.msh == geo.msh

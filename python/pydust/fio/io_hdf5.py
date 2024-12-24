@@ -32,7 +32,7 @@ def deserialize_hdf5(path: Path | str) -> HirearchicalMap:
     hmap = HirearchicalMap()
     with h5py.File(path, "r") as f_in:
         iterators: list[tuple[Iterator, HirearchicalMap, h5py.Group | h5py.File]] = [
-            (iter(hmap), hmap, f_in)
+            (iter(f_in), hmap, f_in)
         ]
         while iterators:
             it, hm, src = iterators.pop()
@@ -44,5 +44,9 @@ def deserialize_hdf5(path: Path | str) -> HirearchicalMap:
                     hm.insert_hirearchycal_map(key, new_hm)
                     iterators.append((iter(val), new_hm, val))
                     break
-                hm[key] = val
+                assert not isinstance(val, h5py.Datatype)
+                v = val[()]
+                if isinstance(v, bytes):
+                    v = v.decode()
+                hm[key] = v
     return hmap

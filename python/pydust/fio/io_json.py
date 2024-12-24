@@ -1,6 +1,7 @@
 """Implementation of the HDF5 based IO."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,11 @@ def _deserialize_function(arg: dict[Any, Any]) -> HirearchicalMap:
     """Deserialized into a HirearchicalMap."""
     hm = HirearchicalMap()
     for key in arg:
-        hm[key] = arg
+        v = arg[key]
+        if isinstance(v, Sequence) and not isinstance(v, str):
+            hm[key] = np.array(v)
+        else:
+            hm[key] = v
     return hm
 
 

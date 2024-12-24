@@ -52,7 +52,7 @@ def mesh_from_serial(group: HirearchicalMap) -> Mesh:
     """Deserialize the mesh from a HirearchicalMap."""
     n_points = group.get_int("n_points")
     n_per_element = group.get_array("n_per_element")
-    flattened_elements = group.get_array("flattened_elements")
+    flattened_elements = np.asarray(group.get_array("flattened_elements"), np.uint32)
     offsets = np.pad(np.cumsum(n_per_element), (1, 0))
     faces = [
         flattened_elements[offsets[i] : offsets[i + 1]] for i in range(n_per_element.size)

@@ -118,9 +118,9 @@ class HirearchicalMap(MutableMapping[str, Any]):
     def get_int(self, key: str) -> int:
         """Load a scalar from the mapping."""
         value = self._map[key]
-        if not isinstance(value, int):
+        if not isinstance(value, (int, np.integer)):
             raise TypeError(f"The value was not an int but {type(value).__name__}")
-        return value
+        return int(value)
 
     def get_hirearchical_map(self, key: str) -> HirearchicalMap:
         """Load a hierarchical map from the mapping."""
