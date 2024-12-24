@@ -1,8 +1,9 @@
 """Tests for serialization to and from HDF5 files."""
 
 import h5py
+import meshio as mio
 import numpy as np
-from pydust import ReferenceFrame, TranslatingReferenceFrame
+from pydust import Geometry, ReferenceFrame, TranslatingReferenceFrame, mesh_from_mesh_io
 from pydust.geometry import rf_from_hdf5, rf_to_hdf5
 
 
@@ -100,7 +101,34 @@ def test_rf_serialization3() -> None:
         assert rf_in.parent.parent == rf_2.parent.parent
 
 
+def test_geometry_serialization1() -> None:
+    """Test that geometry is properly serialized and de-serialized."""
+    fpath = "test/pytests/test_outputs/ser_geo_1.h5"
+    m = mio.read("test/pytests/test_inputs/cylinder.msh")
+    pos, msh = mesh_from_mesh_io(m)
+
+    geo = Geometry(
+        "test_geometry",
+        ReferenceFrame(),
+        msh,
+        pos,
+    )
+
+    with h5py.File(fpath, "w") as f_out:
+        out_group = f_out.create_group(geo.label)
+        geo.save(out_group)
+
+    with h5py.File(fpath, "r") as f_in:
+        key = [k for k in f_in.keys()]
+        assert len(key) == 1
+        label = key[0]
+        in_group = f_in[label]
+        assert isinstance(in_group, h5py.Group)
+        geo1 = Geometry.load(label, in_group)
+        assert geo1.label == geo.label
+        assert np.all(geo1.positions == geo.positions)
+        assert geo1.msh == geo.msh  # TODO
+
+
 if __name__ == "__main__":
-    test_rf_serialization1()
-    test_rf_serialization2()
-    test_rf_serialization3()
+    test_geometry_serialization1()
