@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
 from warnings import warn
 
-import h5py
 import meshio as mio
 import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
 from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
+from pydust.io_common import HirearchicalMap
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
@@ -38,55 +38,50 @@ def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
     return faces
 
 
-def mesh_to_hdf5(m: Mesh, group: h5py.Group) -> None:
-    """Serialize the mesh into a HDF5 group."""
-    group["n_points"] = m.n_points
+def mesh_to_serial(m: Mesh) -> HirearchicalMap:
+    """Serialize the mesh into a HirearchicalMap."""
+    out = HirearchicalMap()
+    out.insert_int("n_points", m.n_points)
     n_per_element, flattened_elements = m.to_element_connectivity()
-    group["n_per_element"] = n_per_element
-    group["flattened_elements"] = flattened_elements
+    out.insert_array("n_per_element", n_per_element)
+    out.insert_array("flattened_elements", flattened_elements)
+    return out
 
 
-def mesh_from_hdf5(group: h5py.Group) -> Mesh:
-    """Deserialize the mesh from HDF5 group."""
-    n_points = group["n_points"]
-    n_per_element = group["n_per_element"]
-    flattened_elements = group["flattened_elements"]
-    assert isinstance(n_points, h5py.Dataset)
-    assert isinstance(n_per_element, h5py.Dataset)
-    assert isinstance(flattened_elements, h5py.Dataset)
-    nper_elem = n_per_element[()]
-    indices = flattened_elements[()]
-    offsets = np.pad(np.cumsum(nper_elem), (1, 0))
-    faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
-    return Mesh(n_points=n_points[()], connectivity=faces)
+def mesh_from_serial(group: HirearchicalMap) -> Mesh:
+    """Deserialize the mesh from a HirearchicalMap."""
+    n_points = group.get_int("n_points")
+    n_per_element = group.get_array("n_per_element")
+    flattened_elements = group.get_array("flattened_elements")
+    offsets = np.pad(np.cumsum(n_per_element), (1, 0))
+    faces = [
+        flattened_elements[offsets[i] : offsets[i + 1]] for i in range(n_per_element.size)
+    ]
+    return Mesh(n_points=n_points, connectivity=faces)
 
 
-def rf_to_hdf5(self: ReferenceFrame, group: h5py.Group) -> None:
-    """Serialize the ReferenceFrame into a HDF5 group."""
-    rf_type = type(self)
-    group["type"] = rf_type.__module__ + "." + rf_type.__qualname__
-    data = group.create_group("data")
+def rf_to_serial(self: ReferenceFrame) -> HirearchicalMap:
+    """Serialize the ReferenceFrame into a HirearchicalMap."""
+    out = HirearchicalMap()
+    out.insert_type("type", type(self))
+
+    data = HirearchicalMap()
     self.save(data)
+    out.insert_hirearchycal_map("data", data)
     if self.parent is not None:
-        parent = group.create_group("parent")
-        rf_to_hdf5(self.parent, parent)
+        parent = rf_to_serial(self.parent)
+        out.insert_hirearchycal_map("parent", parent)
+    return out
 
 
-def rf_from_hdf5(group: h5py.Group) -> ReferenceFrame:
+def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
     """Load reference frame from a HDF5 group."""
-    rf_type_name = group["type"]
-    assert isinstance(rf_type_name, h5py.Dataset)
-    type_name: str = rf_type_name[()].decode()
-    mname, tname = type_name.rsplit(".", 1)
-    mod = __import__(mname, fromlist=[tname])
-    cls = getattr(mod, tname)
-    data = group["data"]
-    assert isinstance(data, h5py.Group)
+    cls: type[ReferenceFrame] = group.get_type("type")
+    data = group.get_hirearchical_map("data")
     parent = None
     if "parent" in group:
-        parent_group = group["parent"]
-        assert isinstance(parent_group, h5py.Group)
-        parent = rf_from_hdf5(parent_group)
+        parent_group = group.get_hirearchical_map("parent")
+        parent = rf_from_serial(parent_group)
     return cls.load(group=data, parent=parent)
 
 
@@ -168,26 +163,25 @@ class Geometry:
         n = self.msh.surface_average_vec3(self.positions)
         return self.reference_frame.from_parent_with_offset(n, n)
 
-    def save(self, group: h5py.Group) -> None:
-        """Save geometry into a HDF5 group."""
-        group["positions"] = self.positions
-        mesh_grop = group.create_group("mesh")
-        mesh_to_hdf5(self.msh, mesh_grop)
-        rf_group = group.create_group("reference_frame")
-        rf_to_hdf5(self.reference_frame, rf_group)
+    def save(self) -> HirearchicalMap:
+        """Save geometry into a HirearchicalMap."""
+        out = HirearchicalMap()
+        out.insert_array("positions", self.positions)
+        mesh_group = mesh_to_serial(self.msh)
+        out.insert_hirearchycal_map("mesh", mesh_group)
+        rf_group = rf_to_serial(self.reference_frame)
+        out.insert_hirearchycal_map("reference_frame", rf_group)
+        return out
 
     @classmethod
-    def load(cls, label: str, group: h5py.Group) -> Self:
-        """Load the geometry for the HDF5 group."""
-        positions = group["positions"]
-        mesh_group = group["mesh"]
-        rf_group = group["reference_frame"]
-        assert isinstance(positions, h5py.Dataset)
-        assert isinstance(mesh_group, h5py.Group)
-        assert isinstance(rf_group, h5py.Group)
+    def load(cls, label: str, group: HirearchicalMap) -> Self:
+        """Load the geometry from a HirearchicalMap."""
+        positions = group.get_array("positions")
+        mesh_group = group.get_hirearchical_map("mesh")
+        rf_group = group.get_hirearchical_map("reference_frame")
 
-        msh = mesh_from_hdf5(mesh_group)
-        rf = rf_from_hdf5(rf_group)
+        msh = mesh_from_serial(mesh_group)
+        rf = rf_from_serial(rf_group)
 
         return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
 
@@ -329,20 +323,21 @@ class SimulationGeometry(Mapping):
             adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
         return (bordering_nodes, adjacent_surfaces)
 
-    def save(self, group: h5py.Group) -> None:
-        """Save the simulation geometry into a HDF5 group."""
+    def save(self) -> HirearchicalMap:
+        """Save the simulation geometry into a HirearchicalMap."""
+        out = HirearchicalMap()
         for geo_name in self._info:
             info = self._info[geo_name]
-            geo_group = group.create_group(geo_name)
-            Geometry(geo_name, info.rf, info.msh, info.pos).save(geo_group)
+            geo_group = Geometry(geo_name, info.rf, info.msh, info.pos).save()
+            out.insert_hirearchycal_map(geo_name, geo_group)
+        return out
 
     @classmethod
-    def load(cls, group: h5py.Group) -> Self:
-        """Load the simulation geometry from the HDF5 group."""
+    def load(cls, group: HirearchicalMap) -> Self:
+        """Load the simulation geometry from a HirearchicalMap."""
         geometries: list[Geometry] = []
         for geo_name in group:
-            sub_group = group[geo_name]
-            assert isinstance(sub_group, h5py.Group)
+            sub_group = group.get_hirearchical_map(geo_name)
             geo = Geometry.load(str(geo_name), sub_group)
             geometries.append(geo)
         return cls(*geometries)

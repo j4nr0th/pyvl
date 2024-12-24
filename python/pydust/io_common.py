@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 from typing import Any, Iterator
 
 import numpy as np
 from numpy import typing as npt
 
 
-class HirearchicalMap(Mapping):
+class HirearchicalMap(MutableMapping[str, Any]):
     """Mapping which contains other hierarchical mappings or values uniquly."""
 
     _map: dict[str, HirearchicalMap | Any]
@@ -20,6 +20,10 @@ class HirearchicalMap(Mapping):
     def __getitem__(self, key: str) -> Any:
         """Return the value associated with the key."""
         return self._map[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Add a value associated with the key."""
+        self._map[key] = value
 
     def insert_type(self, key: str, t: type) -> None:
         """Insert a type into the mapping as an entry "type"."""
@@ -43,6 +47,12 @@ class HirearchicalMap(Mapping):
             raise TypeError(
                 f"The value was not an int or float but {type(value).__name__}"
             )
+        self._insert(key, value)
+
+    def insert_int(self, key: str, value: int) -> None:
+        """Insert a int into the mapping."""
+        if not isinstance(value, int):
+            raise TypeError(f"The value was not an int but {type(value).__name__}")
         self._insert(key, value)
 
     def _recursion_check(self, value: HirearchicalMap) -> bool:
@@ -104,6 +114,13 @@ class HirearchicalMap(Mapping):
             )
         return value
 
+    def get_int(self, key: str) -> int:
+        """Load a scalar from the mapping."""
+        value = self._map[key]
+        if not isinstance(value, int):
+            raise TypeError(f"The value was not an int but {type(value).__name__}")
+        return value
+
     def get_hirearchical_map(self, key: str) -> HirearchicalMap:
         """Load a hierarchical map from the mapping."""
         value = self._map[key]
@@ -120,8 +137,6 @@ class HirearchicalMap(Mapping):
             raise TypeError(f"Key is not a string but a {type(key).__name__}.")
         if key in self._map:
             raise KeyError(f'Map already contains a key "{key}".')
-        if key == "type":
-            raise ValueError(f'Key with the value "{key}" is not allowed.')
         self._map[key] = value
 
     def __len__(self) -> int:

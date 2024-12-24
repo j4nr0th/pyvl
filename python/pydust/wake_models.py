@@ -2,27 +2,14 @@
 
 from typing import Self
 
-import h5py
 import numpy as np
 import pyvista as pv
 from numpy import typing as npt
 
 from pydust.flow_conditions import FlowConditions
 from pydust.geometry import INVALID_ID, Mesh, SimulationGeometry, mesh_to_polydata_faces
+from pydust.io_common import HirearchicalMap
 from pydust.wake import WakeModel
-
-
-class WakeModelNone(WakeModel):
-    """Wake model, which does nothing."""
-
-    def __init__(self, *args, **kwargs) -> None:
-        del args, kwargs
-        pass
-
-    def update(self, *args, **kwargs) -> None:
-        """Returh the model's (no) contribution."""
-        del args, kwargs
-        return None
 
 
 class WakeModelLineExplicitUnsteady(WakeModel):
@@ -198,53 +185,44 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         pd.cell_data["circulation"] = self.circulation.flatten()
         return pd
 
-    def save(self, group: h5py.Group) -> None:
-        """Serialize state into HDF5 group."""
-        group["bordering_nodes"] = self.bordering_nodes
-        group["adjacent_surfaces"] = self.adjacent_surfaces
-        group["shedding_lines"] = self.shedding_lines
-        group["current_time"] = self.current_time
-        group["step_count"] = self.step_count
-        group["line_rows"] = self.line_rows
-        group["wake_mesh"] = self.wake_mesh
-        group["wake_position"] = self.wake_positions
-        group["vortex_tol"] = self.vortex_tol
-        group["circulation"] = self.circulation
+    def save(self) -> HirearchicalMap:
+        """Serialize state into a HirearchicalMap."""
+        out = HirearchicalMap()
+        out.insert_array("bordering_nodes", self.bordering_nodes)
+        out.insert_array("adjacent_surfaces", self.adjacent_surfaces)
+        out.insert_array("shedding_lines", self.shedding_lines)
+        out.insert_scalar("current_time", self.current_time)
+        out.insert_int("step_count", self.step_count)
+        out.insert_int("line_rows", self.line_rows)
+        out.insert_array("wake_position", self.wake_positions)
+        out.insert_scalar("vortex_tol", self.vortex_tol)
+        out.insert_array("circulation", self.circulation)
+        return out
 
     @classmethod
-    def load(cls, group: h5py.Group) -> Self:
+    def load(cls, group: HirearchicalMap) -> Self:
         """Create instance of the wake model from the data in the HDF5 group."""
-        bordering_nodes = group["bordering_nodes"]
-        shedding_lines = group["shedding_lines"]
-        adjacent_surfaces = group["adjacent_surfaces"]
-        vortex_tol = group["vortex_tol"]
-        time = group["current_time"]
-        line_rows = group["line_rows"]
-        circulation = group["circulation"]
-        wake_positions = group["wake_positions"]
-        step_count = group["step_count"]
-
-        assert isinstance(bordering_nodes, h5py.Dataset)
-        assert isinstance(shedding_lines, h5py.Dataset)
-        assert isinstance(adjacent_surfaces, h5py.Dataset)
-        assert isinstance(vortex_tol, h5py.Dataset)
-        assert isinstance(time, h5py.Dataset)
-        assert isinstance(line_rows, h5py.Dataset)
-        assert isinstance(circulation, h5py.Dataset)
-        assert isinstance(wake_positions, h5py.Dataset)
-        assert isinstance(step_count, h5py.Dataset)
+        bordering_nodes = group.get_array("bordering_nodes")
+        shedding_lines = group.get_array("shedding_lines")
+        adjacent_surfaces = group.get_array("adjacent_surfaces")
+        vortex_tol = group.get_scalar("vortex_tol")
+        time = group.get_scalar("current_time")
+        line_rows = group.get_int("line_rows")
+        circulation = group.get_array("circulation")
+        wake_positions = group.get_array("wake_positions")
+        step_count = group.get_int("step_count")
 
         out = cls(
-            bordering_nodes[()],
-            shedding_lines[()],
-            adjacent_surfaces[()],
-            vortex_tol[()],
-            time[()],
-            line_rows[()],
+            bordering_nodes,
+            shedding_lines,
+            adjacent_surfaces,
+            vortex_tol,
+            time,
+            line_rows,
         )
 
-        out.circulation[...] = circulation[()]
-        out.wake_positions[...] = wake_positions[()]
-        out.step_count = step_count[()]
+        out.circulation[...] = circulation
+        out.wake_positions[...] = wake_positions
+        out.step_count = step_count
 
         return out

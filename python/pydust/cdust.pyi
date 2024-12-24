@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Self, final
 
-import h5py
 import numpy as np
 from numpy import typing as npt
 
 from pydust._typing import VecLike3
+from pydust.io_common import HirearchicalMap
 
 INVALID_ID: int = ...
 """Value of ID indicating an invalid object.
@@ -360,11 +360,11 @@ class ReferenceFrame:
         """Compute rotation angles from a transformation matrix."""
         ...
 
-    def save(self, group: h5py.Group, /) -> None:
+    def save(self, group: HirearchicalMap, /) -> None:
         """Serialize the ReferenceFrame into a HDF5 group."""
         ...
 
     @classmethod
-    def load(cls, group: h5py.Group, parent: ReferenceFrame | None = None) -> Self:
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
         """Load the ReferenceFrame from a HDF5 group."""
         ...

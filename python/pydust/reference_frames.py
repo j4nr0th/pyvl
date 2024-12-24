@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Self
 
-import h5py
 import numpy as np
 import numpy.typing as npt
 from scipy.integrate import quad
 
 from pydust._typing import VecLike3
 from pydust.cdust import ReferenceFrame
+from pydust.io_common import HirearchicalMap
 
 
 class TranslatingReferenceFrame(ReferenceFrame):
@@ -50,26 +50,21 @@ class TranslatingReferenceFrame(ReferenceFrame):
             theta=self.angles,
         )
 
-    def save(self, group: h5py.Group) -> None:
-        """Serialze the reference frame into the HDF5 group."""
-        group["velocity"] = self.vel
-        group["time"] = self.time
+    def save(self, group: HirearchicalMap) -> None:
+        """Serialze the reference frame into a HirearchicalMap."""
+        group.insert_array("velocity", self.vel)
+        group.insert_scalar("time", self.time)
         return super().save(group)
 
     @classmethod
-    def load(cls, group: h5py.Group, parent: ReferenceFrame | None = None) -> Self:
-        """Deserialize the reference frame into the HDF5 group."""
-        offset = group["offset"]
-        angles = group["angles"]
-        velocity = group["velocity"]
-        time = group["time"]
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
+        """Deserialize the reference frame from a HirearchicalMap."""
+        offset = group.get_array("offset")
+        angles = group.get_array("angles")
+        velocity = group.get_array("velocity")
+        time = group.get_scalar("time")
 
-        assert isinstance(offset, h5py.Dataset)
-        assert isinstance(angles, h5py.Dataset)
-        assert isinstance(velocity, h5py.Dataset)
-        assert isinstance(time, h5py.Dataset)
-
-        return cls(offset[()], angles[()], velocity[()], parent, time[()])
+        return cls(offset, angles, velocity, parent, time)
 
 
 class RotorReferenceFrame(ReferenceFrame):
@@ -123,11 +118,11 @@ class RotorReferenceFrame(ReferenceFrame):
             f"time={self.time:g}, rotation={self.rotation})"
         )
 
-    def save(self, group: h5py.Group) -> None:
+    def save(self, group: HirearchicalMap) -> None:
         """Serialze the reference frame into the HDF5 group."""
         raise NotImplementedError
 
     @classmethod
-    def load(cls, group: h5py.Group, parent: ReferenceFrame | None = None) -> Self:
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
         """Deserialize the reference frame into the HDF5 group."""
         raise NotImplementedError
