@@ -14,13 +14,17 @@ class HirearchicalMap(Mapping):
 
     _map: dict[str, HirearchicalMap | Any]
 
+    def __init__(self) -> None:
+        self._map = dict()
+
     def __getitem__(self, key: str) -> Any:
         """Return the value associated with the key."""
         return self._map[key]
 
     def insert_type(self, key: str, t: type) -> None:
         """Insert a type into the mapping as an entry "type"."""
-        assert isinstance(t, type)
+        if not isinstance(t, type):
+            raise TypeError(f"The value was not a type but {type(t).__name__}")
         self._insert(key, t.__module__ + "." + t.__name__)
 
     def insert_array(self, key: str, value: npt.ArrayLike) -> None:
@@ -29,28 +33,18 @@ class HirearchicalMap(Mapping):
 
     def insert_string(self, key: str, value: str) -> None:
         """Insert a string into the mapping."""
-        assert isinstance(value, str)
+        if not isinstance(value, str):
+            raise TypeError(f"The value was not a string but {type(value).__name__}")
         self._insert(key, np.array(value))
 
     def insert_scalar(self, key: str, value: int | float) -> None:
         """Insert a scalar into the mapping."""
-        assert isinstance(value, (int, float))
+        if not isinstance(value, (int, float)):
+            raise TypeError(
+                f"The value was not an int or float but {type(value).__name__}"
+            )
         self._insert(key, value)
 
-    # def recursive_contains(self, key: str) -> list[list[str]]:
-    #     """Return the all full key if the mapping or its children contain the key."""
-    #     if key in self._map:
-    #         return [[key]]
-    #     out: list[list[str]] = []
-    #     for k in self._map:
-    #         v = self._map[k]
-    #         if not isinstance(v, HirearchicalMap):
-    #             continue
-    #         res = v.recursive_contains(key)
-    #         for i in res:
-    #             i.insert(0, k)
-    #         out.extend(res)
-    #     return out
     def _recursion_check(self, value: HirearchicalMap) -> bool:
         """Check if the value would cause a recursive hirearchiy."""
         for k in self._map:
@@ -68,15 +62,25 @@ class HirearchicalMap(Mapping):
             raise ValueError(
                 "Inserting the hierarchical map would cause cyclical hierarchy."
             )
+        if not isinstance(value, HirearchicalMap):
+            raise TypeError(
+                f"The value was not a HirearchicalMap but {type(value).__name__}"
+            )
         self._insert(key, value)
 
     def get_type(self, key: str) -> type:
         """Load a type from the mapping as an entry "type"."""
         full_type_name = self[key]
-        assert isinstance(full_type_name, str)
+        if not isinstance(full_type_name, str):
+            raise TypeError(
+                "The value was not a type name but instead "
+                f"{type(full_type_name).__name__}"
+            )
         module_name, type_name = full_type_name.rsplit(".", 1)
         mod = __import__(module_name, fromlist=[type_name])
         cls: type = getattr(mod, type_name)
+        if not isinstance(cls, type):
+            raise TypeError(f"The value was not a type but {type(cls).__name__}")
         return cls
 
     def get_array(self, key: str) -> npt.NDArray:
@@ -87,19 +91,27 @@ class HirearchicalMap(Mapping):
     def get_string(self, key: str) -> str:
         """Load a string from the mapping."""
         value = self._map[key]
-        assert isinstance(value, str)
+        if not isinstance(value, str):
+            raise TypeError(f"The value was not a strint but {type(value).__name__}")
         return value
 
     def get_scalar(self, key: str) -> int | float:
         """Load a scalar from the mapping."""
         value = self._map[key]
-        assert isinstance(value, (int, float))
+        if not isinstance(value, (int, float)):
+            raise TypeError(
+                f"The value was not an int or float but {type(value).__name__}"
+            )
         return value
 
     def get_hirearchical_map(self, key: str) -> HirearchicalMap:
         """Load a hierarchical map from the mapping."""
         value = self._map[key]
-        assert isinstance(value, HirearchicalMap)
+        if not isinstance(value, HirearchicalMap):
+            raise TypeError(
+                f"The value was not a HirearchicalMap but {type(value).__name__}"
+            )
+
         return value
 
     def _insert(self, key: str, value: Any) -> None:
