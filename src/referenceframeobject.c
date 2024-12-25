@@ -88,32 +88,6 @@ static PyObject *pydust_reference_frame_repr(PyObject *self)
     return out;
 }
 
-static inline int64_t rotate(const int64_t v, const unsigned n)
-{
-    return (v << n) | (v >> (8 * sizeof(v) - n));
-}
-
-static Py_hash_t pydust_reference_frame_hash(PyObject *self)
-{
-    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
-    Py_hash_t h = 0;
-    union type_pun_union {
-        int64_t ival;
-        real_t rval;
-    };
-    while (this)
-    {
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v0}.ival, 0);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v1}.ival, 4);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v2}.ival, 8);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v0}.ival, 12);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v1}.ival, 16);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v2}.ival, 24);
-        this = this->parent;
-    }
-    return h;
-}
-
 static PyObject *pydust_reference_frame_get_parent(PyObject *self, void *Py_UNUSED(closure))
 {
     const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
@@ -226,6 +200,51 @@ static PyObject *pydust_reference_frame_get_parents(PyObject *self, void *Py_UNU
     return out;
 }
 
+static PyObject *pydust_reference_frame_rich_compare(PyObject *self, PyObject *other, const int op)
+{
+    constexpr real_t tol = 1e-10;
+    if (op != Py_EQ && op != Py_NE)
+    {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    if (!PyType_CheckExact(other, &pydust_reference_frame_type))
+    {
+        Py_RETURN_FALSE;
+    }
+    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
+    const PyDust_ReferenceFrame *that = (PyDust_ReferenceFrame *)other;
+
+    bool result = true;
+    while (this && that)
+    {
+        const real3_t dr1 = real3_sub(this->transformation.offset, that->transformation.offset);
+        if (real3_dot(dr1, dr1) < tol)
+        {
+            result = false;
+            break;
+        }
+        const real3_t dr2 = real3_sub(this->transformation.angles, that->transformation.angles);
+        if (real3_dot(dr2, dr2) < tol)
+        {
+            result = false;
+            break;
+        }
+        this = this->parent;
+        that = that->parent;
+    }
+    if (this || that)
+    {
+        result = false;
+    }
+
+    result = (op == Py_EQ) ? result : !result;
+    if (!result)
+    {
+        Py_RETURN_FALSE;
+    }
+    Py_RETURN_TRUE;
+}
+
 static PyGetSetDef pydust_reference_frame_getset[] = {
     {.name = "parent",
      .get = pydust_reference_frame_get_parent,
@@ -247,7 +266,7 @@ static PyGetSetDef pydust_reference_frame_getset[] = {
      .set = nullptr,
      .doc = "Matrix representing rotation of the reference frame.",
      .closure = nullptr},
-    {.name = "rotation_matrix_intverse",
+    {.name = "rotation_matrix_inverse",
      .get = pydust_reference_frame_get_rotation_matrix_inverse,
      .set = nullptr,
      .doc = "Matrix representing inverse rotation of the reference frame.",
@@ -998,12 +1017,11 @@ PyTypeObject pydust_reference_frame_type = {
     .tp_basicsize = sizeof(PyDust_ReferenceFrame),
     .tp_itemsize = 0,
     .tp_repr = pydust_reference_frame_repr,
-    .tp_hash = pydust_reference_frame_hash,
     .tp_doc = pydust_reference_frame_type_docstring,
     .tp_getset = pydust_reference_frame_getset,
     .tp_methods = pydust_reference_frame_methods,
     .tp_new = pydust_reference_frame_new,
     .tp_dealloc = pydust_reference_frame_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
-    // .tp_richcompare =
+    .tp_richcompare = pydust_reference_frame_rich_compare,
 };

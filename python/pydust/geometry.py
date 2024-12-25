@@ -185,8 +185,18 @@ class Geometry:
 
         return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
 
+    def __eq__(self, other) -> bool:
+        """Check for equality."""
+        if not isinstance(other, Geometry):
+            return False
+        return (
+            self.label == other.label
+            and self.msh == other.msh
+            and np.allclose(self.positions, other.positions)
+        )
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, eq=False)
 class GeometryInfo:
     """Class containing information about geometry."""
 
@@ -197,6 +207,20 @@ class GeometryInfo:
     points: slice
     lines: slice
     surfaces: slice
+
+    def __eq__(self, other) -> bool:
+        """Equality check."""
+        if not isinstance(other, GeometryInfo):
+            return False
+        return (
+            self.rf == other.rf
+            and self.msh == other.msh
+            and np.allclose(self.pos, other.pos)
+            and self.closed == other.closed
+            and self.points == other.points
+            and self.lines == other.lines
+            and self.surfaces == other.surfaces
+        )
 
 
 @dataclass(frozen=True)
@@ -341,6 +365,20 @@ class SimulationGeometry(Mapping):
             geo = Geometry.load(str(geo_name), sub_group)
             geometries.append(geo)
         return cls(*geometries)
+
+    def __eq__(self, other) -> bool:
+        """Check for equality."""
+        if not isinstance(other, SimulationGeometry):
+            return False
+
+        return (
+            self.n_points == other.n_points
+            and self.n_lines == other.n_lines
+            and self.n_surfaces == other.n_surfaces
+            and self._info == other._info
+            and self.mesh == other.mesh
+            and self.dual == other.dual
+        )
 
 
 def geometry_show_pyvista(
