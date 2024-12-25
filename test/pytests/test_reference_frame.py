@@ -17,7 +17,6 @@ def test_creation_and_getset():
         theta=(theta_x, theta_y, theta_z),
         offset=(offset_x, offset_y, offset_z),
     )
-    print("Created")
     # Test sines and cosines, since negative angles will be wrapped to the positive side.
     assert np.sin(rf_0.angles) == pytest.approx(np.sin([theta_x, theta_y, theta_z]))
     assert np.cos(rf_0.angles) == pytest.approx(np.cos([theta_x, theta_y, theta_z]))

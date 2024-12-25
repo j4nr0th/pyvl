@@ -20,7 +20,7 @@ def test_comparison():
 
 
 def test_bad_construction():
-    """Check that construciton fails with unconnected lines."""
+    """Check that construction fails with unconnected lines."""
     caught = False
     try:
         # First point does not connect

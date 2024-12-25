@@ -7,7 +7,7 @@ def test_creation() -> None:
     """Check that creation and assignment work as intended."""
     id1 = GeoID(1, 4)
     assert id1.orientation
-    id1.orientation = 0
+    id1.orientation = 0  # type: ignore
     assert not id1.orientation
     id1.index = 3
     assert id1.index == 3

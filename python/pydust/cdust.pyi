@@ -9,6 +9,7 @@ import numpy as np
 from numpy import typing as npt
 
 from pydust._typing import VecLike3
+from pydust.fio.io_common import HirearchicalMap
 
 INVALID_ID: int = ...
 """Value of ID indicating an invalid object.
@@ -357,4 +358,13 @@ class ReferenceFrame:
     @staticmethod
     def angles_from_rotation(rotation_matrix: npt.ArrayLike) -> npt.NDArray[np.double]:
         """Compute rotation angles from a transformation matrix."""
+        ...
+
+    def save(self, group: HirearchicalMap, /) -> None:
+        """Serialize the ReferenceFrame into a HDF5 group."""
+        ...
+
+    @classmethod
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
+        """Load the ReferenceFrame from a HDF5 group."""
         ...

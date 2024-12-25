@@ -93,7 +93,7 @@ exclude_also = ["if TYPE_CHECKING:", "@(abc\\.)?abstractmethod"]
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules -ra --cov=pydust"
-testpaths = ["pytests", "python"]
+testpaths = ["test/pytests", "python"]
 console_output_style = "count"
 
 [tool.interrogate]

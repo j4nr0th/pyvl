@@ -5,10 +5,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Self
 
-import h5py
 import numpy as np
 from numpy import typing as npt
 
+from pydust.fio.io_common import HirearchicalMap
 from pydust.flow_conditions import FlowConditions
 from pydust.geometry import SimulationGeometry
 
@@ -61,38 +61,30 @@ class WakeModel(ABC):
         ...
 
     @abstractmethod
-    def save(self, group: h5py.Group) -> None:
-        """Save current state into a h5py group."""
+    def save(self) -> HirearchicalMap:
+        """Save current state into a HirearchicalMap."""
         ...
 
     @classmethod
     @abstractmethod
-    def load(cls, group: h5py.Group) -> Self:
-        """Load the wake model state from the group."""
+    def load(cls, group: HirearchicalMap) -> Self:
+        """Load the wake model state from a HirearchicalMap."""
         ...
 
 
-def _load_wake_model(group: h5py.Group) -> WakeModel:
-    """Load the wake model from the HDF5 group."""
-    # Load the fully qualified type name and parse it
-    type_data = group["type"]
-    assert isinstance(type_data, h5py.Dataset)
-    type_name = str(type_data[()])
-    mname, tname = type_name.rsplit(".", 1)
-    # Import the module and the type
-    mod = __import__(mname, fromlist=[tname])
-    cls = getattr(mod, tname)
+def _load_wake_model(group: HirearchicalMap) -> WakeModel:
+    """Load the wake model from a HirearchicalMap."""
+    cls: type[WakeModel] = group.get_type("type")
     # Create the type and pass the state to construct it from
-    data = group["data"]
-    assert isinstance(data, h5py.Group)
+    data = group.get_hirearchical_map("data")
     return cls.load(data)
 
 
-def _store_wake_model(wm: WakeModel, group: h5py.Group) -> None:
-    """Store the wake model in the HDF5 group."""
-    # Load the fully qualified type name and parse it
-    t = type(wm)
-    group["type"] = t.__module__ + "." + t.__qualname__
+def _store_wake_model(wm: WakeModel) -> HirearchicalMap:
+    """Store the wake model into a HirearchicalMap."""
+    out = HirearchicalMap()
+    out.insert_type("type", type(wm))
     # Create the type and pass the state to construct it from
-    data_group = group.create_group("data")
-    wm.save(data_group)
+    data_group = wm.save()
+    out.insert_hirearchycal_map("data", data_group)
+    return out

@@ -7,3 +7,4 @@ build/
 .mypy_cache/
 __pycache__/
 .coverage
+test/pytests/test_outputs/

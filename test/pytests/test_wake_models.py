@@ -1,7 +1,8 @@
 """Tests related to wake models."""
 
 import numpy as np
-import pyvista as pv
+
+# import pyvista as pv
 from pydust import (
     Geometry,
     Mesh,
@@ -37,10 +38,10 @@ def test_explicit_unsteady():
     trailing_edge = sim_geo.dual.dual_normal_criterion(
         -0.5, sim_geo.mesh.surface_normal(sim_geo.positions_at_time(0))
     )
-    print(
-        f"Trailing edge has id(s) {trailing_edge}, which is the line"
-        f" {sim_geo.mesh.get_line(trailing_edge[0])}"
-    )
+    # print(
+    #     f"Trailing edge has id(s) {trailing_edge}, which is the line"
+    #     f" {sim_geo.mesh.get_line(trailing_edge[0])}"
+    # )
 
     assert len(trailing_edge) == 1
     ln = sim_geo.mesh.get_line(trailing_edge[0])
@@ -61,20 +62,16 @@ def test_explicit_unsteady():
             float(i), sim_geo, sim_geo.positions_at_time(0), _circulation_function(i), fc
         )
 
-        plt = pv.Plotter()
-        pd = geo.as_polydata()
-        plt.add_mesh(pd, color="red", label="SimGeo")
-        wake_mesh = wake_model.as_polydata()
-        wake_mesh.set_active_scalars("circulation")
-        plt.add_mesh(wake_mesh, label="WakeModel")
-        plt.show()
+        # plt = pv.Plotter()
+        # pd = geo.as_polydata()
+        # plt.add_mesh(pd, color="red", label="SimGeo")
+        # wake_mesh = wake_model.as_polydata()
+        # wake_mesh.set_active_scalars("circulation")
+        # plt.add_mesh(wake_mesh, label="WakeModel")
+        # plt.show()
 
-    print("Checking the difference of circulations.")
+    # print("Checking the difference of circulations.")
     for i in range(5):
         v1, v2, _ = _circulation_function(i)
         assert wake_model.circulation[0, 4 - i] == (v1 - v2)
-    print("Circulation is being properly differenced.")
-
-
-if __name__ == "__main__":
-    test_explicit_unsteady()
+    # print("Circulation is being properly differenced.")
