@@ -207,7 +207,7 @@ static PyObject *pydust_reference_frame_rich_compare(PyObject *self, PyObject *o
     {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    if (!PyType_CheckExact(other, &pydust_reference_frame_type))
+    if (Py_TYPE(other) != &pydust_reference_frame_type)
     {
         Py_RETURN_FALSE;
     }
