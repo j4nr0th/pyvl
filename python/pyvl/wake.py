@@ -8,9 +8,9 @@ from typing import Self
 import numpy as np
 from numpy import typing as npt
 
-from pydust.fio.io_common import HirearchicalMap
-from pydust.flow_conditions import FlowConditions
-from pydust.geometry import SimulationGeometry
+from pyvl.fio.io_common import HirearchicalMap
+from pyvl.flow_conditions import FlowConditions
+from pyvl.geometry import SimulationGeometry
 
 
 class WakeModel(ABC):

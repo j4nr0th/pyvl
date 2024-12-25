@@ -10,7 +10,7 @@
  * argv[1] : Path to the test file with element connectivity. Each line specifies zero-based indices of points of a
  * single element.
  *
- * argv[2] : Path to test file to load. It should be the be correct result to converting file from argv[1] into a CDUST
+ * argv[2] : Path to test file to load. It should be the be correct result to converting file from argv[1] into a CVL
  * mesh.
  *
  */

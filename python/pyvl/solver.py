@@ -8,12 +8,12 @@ import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
-from pydust.cdust import ReferenceFrame
-from pydust.fio.io_common import HirearchicalMap, SerializationFunction
-from pydust.fio.io_hdf5 import serialize_hdf5
-from pydust.fio.io_json import serialize_json
-from pydust.geometry import SimulationGeometry
-from pydust.settings import SolverSettings
+from pyvl.cvl import ReferenceFrame
+from pyvl.fio.io_common import HirearchicalMap, SerializationFunction
+from pyvl.fio.io_hdf5 import serialize_hdf5
+from pyvl.fio.io_json import serialize_json
+from pyvl.geometry import SimulationGeometry
+from pyvl.settings import SolverSettings
 
 
 class SolverState:

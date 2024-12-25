@@ -8,26 +8,26 @@
 #define PY_SSIZE_T_CLEAN
 
 #ifdef __GNUC__
-#define CDUST_INTERNAL __attribute__((visibility("hidden")))
-#define CDUST_EXTERNAL __attribute__((visibility("default")))
-#define CDUST_ARRAY_ARG(arr, sz) arr[sz]
-#define CDUST_EXPECT_CONDITION(x) (__builtin_expect(x, 1))
+#define CVL_INTERNAL __attribute__((visibility("hidden")))
+#define CVL_EXTERNAL __attribute__((visibility("default")))
+#define CVL_ARRAY_ARG(arr, sz) arr[sz]
+#define CVL_EXPECT_CONDITION(x) (__builtin_expect(x, 1))
 #endif
 
-#ifndef CDUST_EXPECT_CONDITION
-#define CDUST_EXPECT_CONDITION(x) (x)
+#ifndef CVL_EXPECT_CONDITION
+#define CVL_EXPECT_CONDITION(x) (x)
 #endif
 
-#ifndef CDUST_INTERNAL
-#define CDUST_INTERNAL
+#ifndef CVL_INTERNAL
+#define CVL_INTERNAL
 #endif
 
-#ifndef CDUST_EXTERNAL
-#define CDUST_EXTERNAL
+#ifndef CVL_EXTERNAL
+#define CVL_EXTERNAL
 #endif
 
-#ifndef CDUST_ARRAY_ARG
-#define CDUST_ARRAY_ARG(arr, sz) *arr
+#ifndef CVL_ARRAY_ARG
+#define CVL_ARRAY_ARG(arr, sz) *arr
 #endif
 
 #ifndef NPY_NO_DEPRECATED_API
@@ -36,7 +36,7 @@
 
 #ifndef PY_ARRAY_UNIQUE_SYMBOL
 #define NO_IMPORT_ARRAY
-#define PY_ARRAY_UNIQUE_SYMBOL cdust
+#define PY_ARRAY_UNIQUE_SYMBOL cvl
 #endif
 
 #include <Python.h>

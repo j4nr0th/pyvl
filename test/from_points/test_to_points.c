@@ -6,10 +6,10 @@
  * Test program takes 2 command line arguments:
  *
  * argv[1] : Path to the test file with element connectivity. Each line specifies zero-based indices of points of a
- * single element. It should be the be correct result to converting file from argv[1] into a CDUST
+ * single element. It should be the be correct result to converting file from argv[1] into a CVL
  * mesh.
  *
- * argv[2] : Path to CDUST mesh to load.
+ * argv[2] : Path to CVL mesh to load.
  */
 
 #include <ctype.h>

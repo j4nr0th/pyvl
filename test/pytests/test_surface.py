@@ -1,6 +1,6 @@
 """Tests for the surface objects."""
 
-from pydust import Line, Surface
+from pyvl import Line, Surface
 
 
 def test_creation():

@@ -3,7 +3,7 @@
 import numpy as np
 
 # import pyvista as pv
-from pydust import (
+from pyvl import (
     Geometry,
     Mesh,
     ModelSettings,
@@ -12,7 +12,7 @@ from pydust import (
     SolverSettings,
     WakeModelLineExplicitUnsteady,
 )
-from pydust.flow_conditions import FlowConditionsUniform
+from pyvl.flow_conditions import FlowConditionsUniform
 
 
 def test_explicit_unsteady():

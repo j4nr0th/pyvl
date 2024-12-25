@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pydust import Mesh
+from pyvl import Mesh
 
 
 def test_mesh_construction():

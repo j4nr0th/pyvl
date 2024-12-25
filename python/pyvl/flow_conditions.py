@@ -7,7 +7,7 @@ from typing import Self
 import numpy as np
 import numpy.typing as npt
 
-from pydust.fio.io_common import HirearchicalMap
+from pyvl.fio.io_common import HirearchicalMap
 
 
 class FlowConditions(ABC):

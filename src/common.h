@@ -2,11 +2,11 @@
 // Created by jan on 14.12.2024.
 //
 
-#ifndef PYDUST_COMMON_H
-#define PYDUST_COMMON_H
+#ifndef PYVL_COMMON_H
+#define PYVL_COMMON_H
 
-static inline PyArrayObject *pydust_ensure_array(PyObject *arr, unsigned n_dims, const npy_intp dims[static n_dims],
-                                                 int flags, int type, const char *array_name)
+static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, const npy_intp dims[static n_dims],
+                                               int flags, int type, const char *array_name)
 {
     if (!PyArray_Check(arr))
     {
@@ -64,4 +64,4 @@ static inline PyArrayObject *pydust_ensure_array(PyObject *arr, unsigned n_dims,
     return this;
 }
 
-#endif // PYDUST_COMMON_H
+#endif // PYVL_COMMON_H

@@ -1,4 +1,4 @@
-#define PY_ARRAY_UNIQUE_SYMBOL cdust
+#define PY_ARRAY_UNIQUE_SYMBOL cvl
 #include "module.h"
 #include "geoidobject.h"
 #include "lineobject.h"
@@ -8,10 +8,10 @@
 
 #include <numpy/arrayobject.h>
 
-static PyModuleDef cdust_module = {
+static PyModuleDef cvl_module = {
     .m_base = PyModuleDef_HEAD_INIT,
-    .m_name = "cdust",
-    .m_doc = "The C implementation part of PyDUST",
+    .m_name = "cvl",
+    .m_doc = "The C implementation part of PyVL",
     .m_size = -1,
     .m_methods = nullptr,
     .m_slots = nullptr,
@@ -20,26 +20,26 @@ static PyModuleDef cdust_module = {
     .m_free = nullptr,
 };
 
-PyMODINIT_FUNC PyInit_cdust(void)
+PyMODINIT_FUNC PyInit_cvl(void)
 {
     // TODO: as a low priority, maybe add Perf maps for each subfile.
     import_array();
     if (PyArray_ImportNumPyAPI() < 0)
         return nullptr;
 
-    PyObject *const mod = PyModule_Create(&cdust_module);
+    PyObject *const mod = PyModule_Create(&cvl_module);
     if (!mod)
         goto failed;
 
-    if (PyModule_AddType(mod, &pydust_geoid_type))
+    if (PyModule_AddType(mod, &pyvl_geoid_type))
         goto failed;
-    if (PyModule_AddType(mod, &pydust_line_type))
+    if (PyModule_AddType(mod, &pyvl_line_type))
         goto failed;
-    if (PyModule_AddType(mod, &pydust_surface_type))
+    if (PyModule_AddType(mod, &pyvl_surface_type))
         goto failed;
-    if (PyModule_AddType(mod, &pydust_mesh_type))
+    if (PyModule_AddType(mod, &pyvl_mesh_type))
         goto failed;
-    if (PyModule_AddType(mod, &pydust_reference_frame_type))
+    if (PyModule_AddType(mod, &pyvl_reference_frame_type))
         goto failed;
     if (PyModule_AddIntConstant(mod, "INVALID_ID", INVALID_ID))
         goto failed;

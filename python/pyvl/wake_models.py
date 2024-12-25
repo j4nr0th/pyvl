@@ -6,10 +6,10 @@ import numpy as np
 import pyvista as pv
 from numpy import typing as npt
 
-from pydust.fio.io_common import HirearchicalMap
-from pydust.flow_conditions import FlowConditions
-from pydust.geometry import INVALID_ID, Mesh, SimulationGeometry, mesh_to_polydata_faces
-from pydust.wake import WakeModel
+from pyvl.fio.io_common import HirearchicalMap
+from pyvl.flow_conditions import FlowConditions
+from pyvl.geometry import INVALID_ID, Mesh, SimulationGeometry, mesh_to_polydata_faces
+from pyvl.wake import WakeModel
 
 
 class WakeModelLineExplicitUnsteady(WakeModel):

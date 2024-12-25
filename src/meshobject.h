@@ -11,9 +11,9 @@
 typedef struct
 {
     PyObject_HEAD mesh_t mesh;
-} PyDust_MeshObject;
+} PyVL_MeshObject;
 
-CDUST_INTERNAL
-extern PyTypeObject pydust_mesh_type;
+CVL_INTERNAL
+extern PyTypeObject pyvl_mesh_type;
 
 #endif // MESHOBJECT_H
