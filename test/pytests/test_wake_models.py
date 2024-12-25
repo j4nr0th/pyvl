@@ -55,6 +55,7 @@ def test_explicit_unsteady():
     )
 
     def _circulation_function(time: float):
+        """Return changing circulation."""
         return 0.01 * np.array((np.sin(time), np.cos(time), 1))
 
     for i in range(5):
