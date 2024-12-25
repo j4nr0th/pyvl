@@ -1,14 +1,19 @@
 """Base class and implementations for the FlowConditions."""
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 import numpy.typing as npt
 
+from pydust.fio.io_common import HirearchicalMap
 
-class FlowConditions:
+
+class FlowConditions(ABC):
     """Base class for flow field information."""
 
+    @abstractmethod
     def get_velocity(
         self,
         time: float,
@@ -16,7 +21,18 @@ class FlowConditions:
         out_array: npt.NDArray[np.float64] | None = None,
     ) -> npt.NDArray[np.float64]:
         """Return velocity at the specified positions at given time."""
-        raise NotImplementedError
+        ...
+
+    @abstractmethod
+    def save(self) -> HirearchicalMap:
+        """Serialize itself into a HirearchicalMap."""
+        ...
+
+    @classmethod
+    @abstractmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize from a HirearchicalMap."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -40,6 +56,17 @@ class FlowConditionsUniform(FlowConditions):
             out_array[:, :] = v[None, :]
             return out_array
         return np.full_like(positions, v)
+
+    def save(self) -> HirearchicalMap:
+        """Serialize itself into a HirearchicalMap."""
+        hm = HirearchicalMap()
+        hm.insert_array("velocity", (self.vx, self.vy, self.vz))
+        return hm
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize from a HirearchicalMap."""
+        return cls(*hmap.get_array("velocity"))
 
 
 @dataclass(frozen=True)
@@ -68,3 +95,15 @@ class FlowConditionsRotating(FlowConditions):
         omg = np.array((self.omega_x, self.omega_y, self.omega_z), np.float64)
         v = np.linalg.cross(pos, omg)
         return v
+
+    def save(self) -> HirearchicalMap:
+        """Serialize itself into a HirearchicalMap."""
+        hm = HirearchicalMap()
+        hm.insert_array("center", (self.center_x, self.center_y, self.center_z))
+        hm.insert_array("omega", (self.omega_x, self.omega_y, self.omega_z))
+        return hm
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize from a HirearchicalMap."""
+        return cls(*(*hmap.get_array("center"), *hmap.get_array("omega")))

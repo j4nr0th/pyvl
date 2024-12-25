@@ -3,15 +3,18 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Callable, Literal, Self
 
 import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
 from pydust.cdust import ReferenceFrame
+from pydust.fio.io_common import HirearchicalMap, SerializationFunction
+from pydust.fio.io_hdf5 import serialize_hdf5
+from pydust.fio.io_json import serialize_json
 from pydust.geometry import SimulationGeometry
 from pydust.settings import SolverSettings
-from pydust.wake import WakeModel  # , _load_wake_model, _store_wake_model
 
 
 class SolverState:
@@ -23,66 +26,72 @@ class SolverState:
     circulation: npt.NDArray[np.float64]
     geometry: SimulationGeometry
     settings: SolverSettings
-    wake_model: WakeModel | None
     iteration: int
 
     def __init__(
         self,
         geometry: SimulationGeometry,
-        # settings: SolverSettings,
+        settings: SolverSettings,
     ) -> None:
         self.geometry = geometry
         self.positions = np.empty((geometry.n_points, 3), np.float64)
         self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
-        # self.settings = settings
+        self.settings = settings
 
-    # def save(self, out_file: h5py.File, comment: str | None = None) -> None:
-    #     """Serialize current state to file."""
-    #     out_file["positions"] = self.positions
-    #     out_file["normals"] = self.normals
-    #     out_file["control_points"] = self.control_points
-    #     out_file["circulation"] = self.circulation
-    #     if self.wake_model is not None:
-    #         wake_group = _store_wake_model(self.wake_model)
-    #     out_file["iteration"] = self.iteration
-    #     # TODO: settings
-    #     geometry_group = self.geometry.save()
-    #     out_file.create_group("simulation_geometry")
+    def save(self) -> HirearchicalMap:
+        """Serialize current state to a HirearchicalMap."""
+        out = HirearchicalMap()
+        out.insert_array("positions", self.positions)
+        out.insert_array("normals", self.normals)
+        out.insert_array("control_points", self.control_points)
+        out.insert_array("circulation", self.circulation)
+        out.insert_int("iteration", self.iteration)
+        out.insert_hirearchycal_map("solver_settings", self.settings.save())
+        out.insert_hirearchycal_map("simulation_geometry", self.geometry.save())
+        return out
 
-    #     if comment:
-    #         out_file["comment"] = comment
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize current state from a HirearchicalMap."""
+        geometry = SimulationGeometry.load(
+            hmap.get_hirearchical_map("simulation_geometry")
+        )
+        settings = SolverSettings.load(hmap.get_hirearchical_map("solver_settings"))
+        self = cls(geometry=geometry, settings=settings)
+        self.iteration = hmap.get_int("iteration")
+        self.positions[:] = hmap.get_array("positions")
+        self.normals[:] = hmap.get_array("normals")
+        self.control_points[:] = hmap.get_array("control_points")
+        self.circulation[:] = hmap.get_array("circulation")
 
-    # @classmethod
-    # def load(cls, in_file: h5py.File) -> None:
-    #     """Serialize current state to file."""
-    #     positions = in_file["positions"]
-    #     normals = in_file["normals"]
-    #     control_points = in_file["control_points"]
-    #     circulation = in_file["circulation"]
-    #     geometry_group = in_file["simulation_geometry"]
+        return self
 
-    #     assert isinstance(positions, h5py.Dataset)
-    #     assert isinstance(normals, h5py.Dataset)
-    #     assert isinstance(control_points, h5py.Dataset)
-    #     assert isinstance(circulation, h5py.Dataset)
-    #     assert isinstance(geometry_group, h5py.Group)
 
-    #     # TODO: settings
-    #     geometry = SimulationGeometry.load(geometry_group)
-    #     self: SolverState = cls(geometry)
+OutputFileType = Literal["HDF5", "JSON"]
+NamingFunction = Callable[[int, float], str]
 
-    #     self.positions[:] = positions[()]
-    #     self.normals[:] = normals[()]
-    #     self.control_points[:] = control_points[()]
-    #     self.circulation[:] = circulation[()]
-    #     if "wake_model" in in_file:
-    #         wake_group = in_file["wake_model"]
-    #         assert isinstance(wake_group, h5py.Group)
-    #         self.wake_model = _load_wake_model(wake_group)
-    #     else:
-    #         self.wake_model = None
-    #     # TODO: settings
+
+@dataclass(init=False, eq=False, frozen=True)
+class OutputSettings:
+    """Settings to control the output from a solver."""
+
+    naming_callback: Callable[[int, float], str]
+    serialization_fn: SerializationFunction
+
+    def __init__(
+        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str]
+    ) -> None:
+        serialization_fn: SerializationFunction
+        match ftype:
+            case "HDF5":
+                serialization_fn = serialize_hdf5
+            case "JSON":
+                serialization_fn = serialize_json
+            case _:
+                raise ValueError(f"The file type {ftype=} is not valid.")
+        object.__setattr__(self, "serialization_fn", serialization_fn)
+        object.__setattr__(self, "naming_callback", naming_callback)
 
 
 @dataclass(frozen=True)
@@ -93,7 +102,11 @@ class SolverResults:
     times: npt.NDArray[np.float64]
 
 
-def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> SolverResults:
+def run_solver(
+    geometry: SimulationGeometry,
+    settings: SolverSettings,
+    output_settings: OutputSettings,
+) -> SolverResults:
     """Run the flow solver to obtain specified circulations."""
     times: npt.NDArray[np.float64]
     if settings.time_settings is None:
@@ -103,15 +116,14 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
 
     i_out = 0
 
-    out_circulaiton_array = np.empty((len(times), geometry.n_surfaces), np.float64)
+    state = SolverState(geometry, settings)
 
-    pos = np.empty((geometry.n_points, 3), np.float64)
-    norm = np.empty((geometry.n_surfaces, 3), np.float64)
-    cpts = np.empty((geometry.n_surfaces, 3), np.float64)
+    out_circulaiton_array = np.empty((len(times), geometry.n_surfaces), np.float64)
 
     previous_rfs: dict[str, None | ReferenceFrame] = {name: None for name in geometry}
 
     for iteration, time in enumerate(times):
+        state.iteration = iteration
         iteration_begin_time = perf_counter()
         updated = 0
         for geo_name in geometry:
@@ -122,27 +134,34 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
                 continue
             updated += 1
             previous_rfs[geo_name] = new_rf
-            pos[info.points] = new_rf.to_global_with_offset(info.pos)
-            cpts[info.surfaces] = new_rf.to_global_with_offset(
+            state.positions[info.points] = new_rf.to_global_with_offset(info.pos)
+            state.control_points[info.surfaces] = new_rf.to_global_with_offset(
                 info.msh.surface_average_vec3(info.pos)
             )
-            norm[info.surfaces] = new_rf.to_global_without_offset(
+            state.normals[info.surfaces] = new_rf.to_global_without_offset(
                 info.msh.surface_normal(info.pos)
             )
 
         # Compute flow velocity
-        element_velocity = settings.flow_conditions.get_velocity(time, cpts)
+        element_velocity = settings.flow_conditions.get_velocity(
+            time, state.control_points
+        )
         # Compute flow penetration at control points
-        rhs = np.vecdot(norm, -element_velocity, axis=1)  # type: ignore
+        rhs = np.vecdot(state.normals, -element_velocity, axis=1)  # type: ignore
         # if updated != 0:
         # Compute normal induction
         system_matrix = geometry.mesh.induction_matrix3(
-            settings.model_settings.vortex_limit, pos, cpts, norm
+            settings.model_settings.vortex_limit,
+            state.positions,
+            state.control_points,
+            state.normals,
         )
 
         # Apply the wake model's effect
         if settings.wake_model is not None:
-            settings.wake_model.apply_corrections(cpts, norm, system_matrix, rhs)
+            settings.wake_model.apply_corrections(
+                state.control_points, state.normals, system_matrix, rhs
+            )
 
         # Decompose the system matrix to allow for solving multiple times
         decomp = la.lu_factor(system_matrix, overwrite_a=True)
@@ -160,7 +179,7 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
         # update the wake model
         if settings.wake_model is not None:
             settings.wake_model.update(
-                time, geometry, pos, circulation, settings.flow_conditions
+                time, geometry, state.positions, circulation, settings.flow_conditions
             )
 
         iteration_end_time = perf_counter()
@@ -169,6 +188,9 @@ def run_solver(geometry: SimulationGeometry, settings: SolverSettings) -> Solver
             or (settings.time_settings.output_interval is None)
             or (iteration % settings.time_settings.output_interval == 0)
         ):
+            output_settings.serialization_fn(
+                state.save(), output_settings.naming_callback(iteration, time)
+            )
             out_circulaiton_array[i_out, :] = circulation
             i_out += 1
         print(

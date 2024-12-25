@@ -153,5 +153,5 @@ class HirearchicalMap(MutableMapping[str, Any]):
         return iter(self._map)
 
 
-SerializationFunction = Callable[[HirearchicalMap, Path], None]
-DeserializationFunction = Callable[[Path], HirearchicalMap]
+SerializationFunction = Callable[[HirearchicalMap, Path | str], None]
+DeserializationFunction = Callable[[Path | str], HirearchicalMap]
