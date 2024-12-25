@@ -21,8 +21,7 @@ static PyObject *pydust_reference_frame_new(PyTypeObject *type, PyObject *args, 
     }
     else if (!PyObject_TypeCheck(p, &pydust_reference_frame_type))
     {
-        PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R",
-                     PyObject_Type(p));
+        PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R", Py_TYPE(p));
         return nullptr;
     }
     else
@@ -87,32 +86,6 @@ static PyObject *pydust_reference_frame_repr(PyObject *self)
     PyMem_Free(buffer);
     // Py_ReprLeave(self);
     return out;
-}
-
-static inline int64_t rotate(const int64_t v, const unsigned n)
-{
-    return (v << n) | (v >> (8 * sizeof(v) - n));
-}
-
-static Py_hash_t pydust_reference_frame_hash(PyObject *self)
-{
-    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
-    Py_hash_t h = 0;
-    union type_pun_union {
-        int64_t ival;
-        real_t rval;
-    };
-    while (this)
-    {
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v0}.ival, 0);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v1}.ival, 4);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.angles.v2}.ival, 8);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v0}.ival, 12);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v1}.ival, 16);
-        h ^= rotate((union type_pun_union){.rval = this->transformation.offset.v2}.ival, 24);
-        this = this->parent;
-    }
-    return h;
 }
 
 static PyObject *pydust_reference_frame_get_parent(PyObject *self, void *Py_UNUSED(closure))
@@ -227,6 +200,51 @@ static PyObject *pydust_reference_frame_get_parents(PyObject *self, void *Py_UNU
     return out;
 }
 
+static PyObject *pydust_reference_frame_rich_compare(PyObject *self, PyObject *other, const int op)
+{
+    constexpr real_t tol = 1e-10;
+    if (op != Py_EQ && op != Py_NE)
+    {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    if (!PyType_CheckExact(other, &pydust_reference_frame_type))
+    {
+        Py_RETURN_FALSE;
+    }
+    const PyDust_ReferenceFrame *this = (PyDust_ReferenceFrame *)self;
+    const PyDust_ReferenceFrame *that = (PyDust_ReferenceFrame *)other;
+
+    bool result = true;
+    while (this && that)
+    {
+        const real3_t dr1 = real3_sub(this->transformation.offset, that->transformation.offset);
+        if (real3_dot(dr1, dr1) < tol)
+        {
+            result = false;
+            break;
+        }
+        const real3_t dr2 = real3_sub(this->transformation.angles, that->transformation.angles);
+        if (real3_dot(dr2, dr2) < tol)
+        {
+            result = false;
+            break;
+        }
+        this = this->parent;
+        that = that->parent;
+    }
+    if (this || that)
+    {
+        result = false;
+    }
+
+    result = (op == Py_EQ) ? result : !result;
+    if (!result)
+    {
+        Py_RETURN_FALSE;
+    }
+    Py_RETURN_TRUE;
+}
+
 static PyGetSetDef pydust_reference_frame_getset[] = {
     {.name = "parent",
      .get = pydust_reference_frame_get_parent,
@@ -248,7 +266,7 @@ static PyGetSetDef pydust_reference_frame_getset[] = {
      .set = nullptr,
      .doc = "Matrix representing rotation of the reference frame.",
      .closure = nullptr},
-    {.name = "rotation_matrix_intverse",
+    {.name = "rotation_matrix_inverse",
      .get = pydust_reference_frame_get_rotation_matrix_inverse,
      .set = nullptr,
      .doc = "Matrix representing inverse rotation of the reference frame.",
@@ -743,6 +761,173 @@ static PyObject *pydust_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *
     return (PyObject *)out;
 }
 
+static PyObject *pydust_reference_frame_save(PyObject *self, PyObject *arg)
+{
+    if (!PyMapping_Check(arg))
+    {
+        PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
+        return nullptr;
+    }
+    PyObject *const off_array = pydust_reference_frame_get_offset(self, nullptr);
+    PyObject *const rot_array = pydust_reference_frame_get_angles(self, nullptr);
+    if (!off_array || !rot_array)
+    {
+        Py_XDECREF(off_array);
+        Py_XDECREF(rot_array);
+        return nullptr;
+    }
+    // if (this->parent)
+    // {
+    //     PyObject *const out_group = PyObject_CallMethod(arg, "create_group", "s", "parent");
+    //     if (!out_group)
+    //     {
+    //         Py_DECREF(off_array);
+    //         Py_DECREF(rot_array);
+    //         return nullptr;
+    //     }
+    //     PyObject *const res = pydust_reference_frame_save((PyObject *)this->parent, out_group);
+    //     Py_DECREF(out_group);
+    //     Py_XDECREF(res);
+    //     if (!res)
+    //         return nullptr;
+    // }
+    const int res1 = PyMapping_SetItemString(arg, "offset", off_array);
+    Py_DECREF(off_array);
+    const int res2 = PyMapping_SetItemString(arg, "angles", rot_array);
+    Py_DECREF(rot_array);
+    if (res1 < 0 || res2 < 0)
+        return nullptr;
+    PyObject *type_name = PyUnicode_FromString(pydust_reference_frame_type.tp_name);
+    if (!type_name)
+        return nullptr;
+    const int res3 = PyMapping_SetItemString(arg, "type", type_name);
+    Py_DECREF(type_name);
+    if (res3 < 0)
+        return nullptr;
+    Py_RETURN_NONE;
+}
+
+static PyObject *pydust_reference_frame_load(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    PyObject *group, *parent = nullptr;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char *[3]){"group", "parent", nullptr}, &group, &parent))
+    {
+        return nullptr;
+    }
+    if (parent)
+    {
+        if (Py_IsNone(parent))
+        {
+            parent = nullptr;
+        }
+        else if (!PyObject_TypeCheck(parent, &pydust_reference_frame_type))
+        {
+            PyErr_Format(PyExc_TypeError, "Parent was neither None nor a ReferenceFrame (instead it was %R).",
+                         Py_TYPE(parent));
+            return nullptr;
+        }
+    }
+    if (!PyMapping_Check(group))
+    {
+        PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
+        return nullptr;
+    }
+    // PyObject *const type_name = PyMapping_GetItemString(group, "type");
+    // if (!type_name)
+    //     return nullptr;
+    // Py_ssize_t len;
+    // const char *const full_name = PyUnicode_AsUTF8AndSize(type_name, &len);
+    // if (!full_name)
+    // {
+    //     Py_DECREF(type_name);
+    //     return nullptr;
+    // }
+    // const char *const split = strrchr(full_name, '.');
+    // if (!split)
+    // {
+    //     Py_DECREF(type_name);
+    //     PyErr_Format(PyExc_ValueError, "The type name did not contain any \".\" characters.");
+    //     return nullptr;
+    // }
+    // const unsigned mod_len = split - full_name;
+    // char *const buffer = PyMem_Malloc(sizeof(*buffer) * (mod_len));
+    // if (!buffer)
+    // {
+    //     Py_DECREF(type_name);
+    //     return nullptr;
+    // }
+    // memcpy(buffer, full_name, mod_len - 1);
+    // buffer[mod_len - 1] = 0;
+    // PyObject *module = PyImport_ImportModule(buffer);
+    // PyMem_Free(buffer);
+    // if (!module)
+    // {
+    //     Py_DECREF(type_name);
+    //     return nullptr;
+    // }
+    PyTypeObject *type = (PyTypeObject *)self; // PyObject_GetAttrString(module, split + 1);
+    // Py_DECREF(type_name);
+    // if (!type)
+    //     return nullptr;
+
+    PyDust_ReferenceFrame *const this = (PyDust_ReferenceFrame *)type->tp_alloc(type, 0);
+    // Py_DECREF(type);
+    if (!this)
+        return nullptr;
+    PyObject *const off_val = PyMapping_GetItemString(group, "offset");
+    PyObject *const rot_val = PyMapping_GetItemString(group, "angles");
+    if (!off_val || !rot_val)
+    {
+        Py_XDECREF(off_val);
+        Py_XDECREF(rot_val);
+        return nullptr;
+    }
+    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(
+        off_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, nullptr);
+    Py_DECREF(off_val);
+    PyArrayObject *const rot_array = (PyArrayObject *)PyArray_FromAny(
+        rot_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, nullptr);
+    Py_DECREF(rot_val);
+    if (!off_array || !rot_array)
+    {
+        Py_XDECREF(off_array);
+        Py_XDECREF(rot_array);
+        Py_DECREF(this);
+        return nullptr;
+    }
+    if (PyArray_SIZE(off_array) != 3)
+    {
+        PyErr_Format(PyExc_ValueError, "Offset array did not have 3 elements, but had %u instead.",
+                     (unsigned)PyArray_SIZE(off_array));
+        Py_DECREF(off_array);
+        Py_DECREF(rot_array);
+        Py_DECREF(this);
+        return nullptr;
+    }
+    if (PyArray_SIZE(rot_array) != 3)
+    {
+        PyErr_Format(PyExc_ValueError, "Angle array did not have 3 elements, but had %u instead.",
+                     (unsigned)PyArray_SIZE(rot_array));
+        Py_DECREF(off_array);
+        Py_DECREF(rot_array);
+        Py_DECREF(this);
+        return nullptr;
+    }
+
+    const npy_float64 *const offset_ptr = PyArray_DATA(off_array);
+    const npy_float64 *const angles_ptr = PyArray_DATA(rot_array);
+
+    this->transformation.offset = (real3_t){.x = offset_ptr[0], .y = offset_ptr[1], .z = offset_ptr[2]};
+    this->transformation.angles = (real3_t){.x = angles_ptr[0], .y = angles_ptr[1], .z = angles_ptr[2]};
+
+    Py_DECREF(off_array);
+    Py_DECREF(rot_array);
+    this->parent = (PyDust_ReferenceFrame *)parent;
+    Py_XINCREF(parent);
+
+    return (PyObject *)this;
+}
+
 static PyMethodDef pydust_reference_frame_methods[] = {
     {.ml_name = "from_parent_with_offset",
      .ml_meth = (void *)pydust_reference_frame_from_parent_with_offset,
@@ -812,6 +997,14 @@ static PyMethodDef pydust_reference_frame_methods[] = {
      .ml_meth = pydust_matrix_to_angles,
      .ml_flags = METH_O | METH_STATIC,
      .ml_doc = "Compute rotation angles from a transformation matrix."},
+    {.ml_name = "save",
+     .ml_meth = pydust_reference_frame_save,
+     .ml_flags = METH_O,
+     .ml_doc = "Serialize the ReferenceFrame into a HDF5 group."},
+    {.ml_name = "load",
+     .ml_meth = (void *)pydust_reference_frame_load,
+     .ml_flags = METH_VARARGS | METH_KEYWORDS | METH_CLASS,
+     .ml_doc = "Load the ReferenceFrame from a HDF5 group."},
     {},
 };
 
@@ -820,16 +1013,15 @@ constexpr PyDoc_STRVAR(pydust_reference_frame_type_docstring,
 
 CDUST_INTERNAL
 PyTypeObject pydust_reference_frame_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "cdust.ReferenceFrame",
+    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pydust.cdust.ReferenceFrame",
     .tp_basicsize = sizeof(PyDust_ReferenceFrame),
     .tp_itemsize = 0,
     .tp_repr = pydust_reference_frame_repr,
-    .tp_hash = pydust_reference_frame_hash,
     .tp_doc = pydust_reference_frame_type_docstring,
     .tp_getset = pydust_reference_frame_getset,
     .tp_methods = pydust_reference_frame_methods,
     .tp_new = pydust_reference_frame_new,
     .tp_dealloc = pydust_reference_frame_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
-    // .tp_richcompare =
+    .tp_richcompare = pydust_reference_frame_rich_compare,
 };

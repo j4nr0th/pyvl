@@ -1,9 +1,14 @@
 """Implementation of the flow solver settings."""
 
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 import numpy.typing as npt
+
+from pydust.fio.io_common import HirearchicalMap
+from pydust.flow_conditions import FlowConditions
+from pydust.wake import WakeModel
 
 
 @dataclass(frozen=True)
@@ -28,69 +33,23 @@ class TimeSettings:
             self.nt, step=self.output_interval, dtype=np.float64
         )  # type: ignore
 
+    def save(self) -> HirearchicalMap:
+        """Serialize the object into a HirearchicalMap."""
+        hm = HirearchicalMap()
+        hm.insert_int("nt", self.nt)
+        hm.insert_scalar("dt", self.dt)
+        if self.output_interval is not None:
+            hm.insert_int("output_interval", self.output_interval)
+        return hm
 
-class FlowConditions:
-    """Base class for flow field information."""
-
-    def get_velocity(
-        self,
-        time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
-        """Return velocity at the specified positions at given time."""
-        raise NotImplementedError
-
-
-@dataclass(frozen=True)
-class FlowConditionsUniform(FlowConditions):
-    """Flow field with uniform velocity."""
-
-    vx: float
-    vy: float
-    vz: float
-
-    def get_velocity(
-        self,
-        time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
-        """Return the uniform velocity."""
-        del time
-        v = np.array((self.vx, self.vy, self.vz), np.float64)
-        if out_array is not None:
-            out_array[:, :] = v[None, :]
-            return out_array
-        return np.full_like(positions, v)
-
-
-@dataclass(frozen=True)
-class FlowConditionsRotating(FlowConditions):
-    """Rotating flow field."""
-
-    center_x: float
-    center_y: float
-    center_z: float
-
-    omega_x: float
-    omega_y: float
-    omega_z: float
-
-    def get_velocity(
-        self,
-        time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
-        """Return the uniform velocity."""
-        del time, out_array
-        pos = positions - np.array(
-            ((self.center_x, self.center_y, self.center_z),), np.float64
-        )
-        omg = np.array((self.omega_x, self.omega_y, self.omega_z), np.float64)
-        v = np.linalg.cross(pos, omg)
-        return v
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize the object from a HirearchicalMap."""
+        nt = hmap.get_int("nt")
+        dt = hmap.get_scalar("dt")
+        if "output_interval" in hmap:
+            output_interval = hmap.get_int("output_interval")
+        return cls(nt=nt, dt=dt, output_interval=output_interval)
 
 
 @dataclass
@@ -98,6 +57,17 @@ class ModelSettings:
     """Class for specifying model settings."""
 
     vortex_limit: float
+
+    def save(self) -> HirearchicalMap:
+        """Serialize the object into a HirearchicalMap."""
+        hm = HirearchicalMap()
+        hm.insert_scalar("vortex_limit", self.vortex_limit)
+        return hm
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize the object from a HirearchicalMap."""
+        return cls(vortex_limit=hmap.get_scalar("vortex_limit"))
 
 
 # TODO: symmetry settings
@@ -110,3 +80,51 @@ class SolverSettings:
     flow_conditions: FlowConditions
     model_settings: ModelSettings
     time_settings: TimeSettings = TimeSettings(1, 1, None)
+    wake_model: WakeModel | None = None
+
+    def save(self) -> HirearchicalMap:
+        """Serialize the object into a HirearchicalMap."""
+        hm = HirearchicalMap()
+        # Flow conditiotns
+        fc = HirearchicalMap()
+        fc.insert_type("type", type(self.flow_conditions))
+        fc.insert_hirearchycal_map("data", self.flow_conditions.save())
+        hm.insert_hirearchycal_map("flow_conditions", fc)
+        # Model settings
+        hm.insert_hirearchycal_map("model_settings", self.model_settings.save())
+        # Time settings
+        hm.insert_hirearchycal_map("time_settings", self.time_settings.save())
+        # Wake model
+        if self.wake_model is not None:
+            wm = HirearchicalMap()
+            wm.insert_type("type", type(self.wake_model))
+            wm.insert_hirearchycal_map("data", self.wake_model.save())
+            hm.insert_hirearchycal_map("wake_model", wm)
+        return hm
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize the object from a HirearchicalMap."""
+        # Flow conditiotns
+        fc = hmap.get_hirearchical_map("flow_conditions")
+        flow_conditions_type: type[FlowConditions] = fc.get_type("type")
+        flow_conditions: FlowConditions = flow_conditions_type.load(
+            fc.get_hirearchical_map("data")
+        )
+
+        # Model settings
+        model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))
+        # Time settings
+        time_settings = TimeSettings.load(hmap.get_hirearchical_map("time_settings"))
+        # Wake model
+        wake_model = None
+        if "wake_model" in hmap:
+            wm = hmap.get_hirearchical_map("wake_model")
+            wm_type: type[WakeModel] = wm.get_type("type")
+            wake_model = wm_type.load(wm.get_hirearchical_map("data"))
+        return cls(
+            flow_conditions=flow_conditions,
+            model_settings=model_settings,
+            time_settings=time_settings,
+            wake_model=wake_model,
+        )

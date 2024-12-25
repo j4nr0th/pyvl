@@ -87,7 +87,7 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
 void compute_line_induction(unsigned n_lines, const line_t lines[static restrict n_lines], unsigned n_positions,
                             const real3_t positions[static restrict n_positions], unsigned n_cpts,
                             const real3_t cpts[static restrict n_cpts], real3_t out[restrict n_lines * n_cpts],
-                            real_t tol)
+                            const real_t tol)
 {
 #pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
     for (unsigned iln = 0; iln < n_lines; ++iln)
@@ -120,14 +120,15 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
             const real_t norm_dist1 = real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1);
             const real_t norm_dist2 = real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2);
 
-            const real_t norm_dist = sqrt((norm_dist1 + norm_dist2) / 2.0);
+            const real_t norm_dist_squared = (norm_dist1 + norm_dist2) / 2.0;
 
-            if (norm_dist < tol)
+            if (norm_dist_squared < tol * tol)
             {
                 //  Filament is too short
                 out[icp * n_lines + iln] = (real3_t){};
                 continue;
             }
+            const real_t norm_dist = sqrt(norm_dist_squared);
 
             const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
             // const real3_t dr_avg = (real3_mul1(real3_add(dr1, dr2), 0.5));

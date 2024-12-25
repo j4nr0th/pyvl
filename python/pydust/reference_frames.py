@@ -11,6 +11,7 @@ from scipy.integrate import quad
 
 from pydust._typing import VecLike3
 from pydust.cdust import ReferenceFrame
+from pydust.fio.io_common import HirearchicalMap
 
 
 class TranslatingReferenceFrame(ReferenceFrame):
@@ -48,6 +49,22 @@ class TranslatingReferenceFrame(ReferenceFrame):
             parent=self.parent.at_time(t) if self.parent is not None else None,
             theta=self.angles,
         )
+
+    def save(self, group: HirearchicalMap) -> None:
+        """Serialze the reference frame into a HirearchicalMap."""
+        group.insert_array("velocity", self.vel)
+        group.insert_scalar("time", self.time)
+        return super().save(group)
+
+    @classmethod
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
+        """Deserialize the reference frame from a HirearchicalMap."""
+        offset = group.get_array("offset")
+        angles = group.get_array("angles")
+        velocity = group.get_array("velocity")
+        time = group.get_scalar("time")
+
+        return cls(offset, angles, velocity, parent, time)
 
 
 class RotorReferenceFrame(ReferenceFrame):
@@ -100,3 +117,12 @@ class RotorReferenceFrame(ReferenceFrame):
             f", {angles[0]:g}, {angles[1]:g}, {angles[2]:g}, {self.parent}, "
             f"time={self.time:g}, rotation={self.rotation})"
         )
+
+    def save(self, group: HirearchicalMap) -> None:
+        """Serialze the reference frame into the HDF5 group."""
+        raise NotImplementedError
+
+    @classmethod
+    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
+        """Deserialize the reference frame into the HDF5 group."""
+        raise NotImplementedError

@@ -32,7 +32,7 @@ static PyObject *pydust_mesh_new(PyTypeObject *type, PyObject *args, PyObject *k
 
     PyObject *root;
     unsigned n_points;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"positions", "connectivity", nullptr}, &n_points,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"n_points", "connectivity", nullptr}, &n_points,
                                      &root))
     {
         return nullptr;
@@ -427,12 +427,15 @@ static PyObject *pydust_mesh_induction_matrix3(PyObject *self, PyObject *const *
     const real3_t *restrict normals = PyArray_DATA(norm_array);
     real_t *restrict out_ptr = PyArray_DATA(out_array);
 
-    Py_BEGIN_ALLOW_THREADS compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions,
-                                                  n_cpts, control_pts, line_buffer, tol);
+    Py_BEGIN_ALLOW_THREADS;
+    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
+                           line_buffer, tol);
     line_induction_to_normal_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets,
                                                this->mesh.surface_lines, this->mesh.n_lines, n_cpts, normals,
                                                line_buffer, out_ptr);
-    Py_END_ALLOW_THREADS if (free_mem) PyMem_Free(line_buffer);
+    Py_END_ALLOW_THREADS;
+    if (free_mem)
+        PyMem_Free(line_buffer);
 
     return (PyObject *)out_array;
 }
@@ -451,7 +454,7 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
 
     PyArrayObject *const pos_array =
         pydust_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Control point array");
+                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position");
     if (!pos_array)
         return nullptr;
     PyArrayObject *const in_array =
@@ -508,11 +511,14 @@ static PyObject *pydust_mesh_induction_matrix(PyObject *self, PyObject *const *a
     const real3_t *control_pts = PyArray_DATA(in_array);
     const real3_t *positions = PyArray_DATA(pos_array);
     real3_t *out_ptr = PyArray_DATA(out_array);
-    Py_BEGIN_ALLOW_THREADS compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions,
-                                                  n_cpts, control_pts, line_buffer, tol);
+    Py_BEGIN_ALLOW_THREADS;
+    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
+                           line_buffer, tol);
     line_induction_to_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets, this->mesh.surface_lines,
                                         this->mesh.n_lines, n_cpts, line_buffer, out_ptr);
-    Py_END_ALLOW_THREADS if (free_mem) PyMem_Free(line_buffer);
+    Py_END_ALLOW_THREADS;
+    if (free_mem)
+        PyMem_Free(line_buffer);
 
     return (PyObject *)out_array;
 }
@@ -531,7 +537,7 @@ static PyObject *pydust_mesh_induction_matrix2(PyObject *self, PyObject *const *
 
     PyArrayObject *const pos_array =
         pydust_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Control point array");
+                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position");
     if (!pos_array)
         return nullptr;
     PyArrayObject *const in_array =
@@ -602,7 +608,7 @@ static PyObject *pydust_mesh_induction_matrix2(PyObject *self, PyObject *const *
     (void)n_entries;
     (void)n_points;
 
-    Py_BEGIN_ALLOW_THREADS
+    Py_BEGIN_ALLOW_THREADS;
 
 #pragma acc data copyin(positions[0 : n_points], lines[0 : n_lines], surface_offsets[0 : n_surfaces + 1],              \
                         surface_lines[0 : n_entries]) copyout(out_ptr[0 : n_surfaces])                                 \
@@ -680,9 +686,10 @@ static PyObject *pydust_mesh_induction_matrix2(PyObject *self, PyObject *const *
         }
     }
 
-    Py_END_ALLOW_THREADS
+    Py_END_ALLOW_THREADS;
 
-        if (free_mem) PyMem_Free(line_buffer);
+    if (free_mem)
+        PyMem_Free(line_buffer);
 
     return (PyObject *)out_array;
 }
@@ -737,7 +744,7 @@ static PyObject *pydust_mesh_merge(PyObject *type, PyObject *const *args, Py_ssi
         if (!PyObject_TypeCheck(o, &pydust_mesh_type))
         {
             PyErr_Format(PyExc_TypeError, "Element %u in the input sequence was not a Mesh, but was instead %R", i,
-                         PyObject_Type(o));
+                         Py_TYPE(o));
             return nullptr;
         }
         const PyDust_MeshObject *const this = (PyDust_MeshObject *)o;
@@ -1012,6 +1019,230 @@ static PyObject *pydust_mesh_surface_average_vec3(PyObject *self, PyObject *cons
     return (PyObject *)out;
 }
 
+static PyObject *pydust_mesh_dual_normal_criterion(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    if (nargs != 2)
+    {
+        PyErr_Format(PyExc_TypeError, "Function takes 2 arguments, but %u were given.", (unsigned)nargs);
+        return nullptr;
+    }
+
+    const real_t crit = PyFloat_AsDouble(args[0]);
+    if (PyErr_Occurred())
+        return nullptr;
+
+    if (crit > 1.0 || crit < -1.0)
+    {
+        char buffer[20];
+        snprintf(buffer, sizeof(buffer), "%g", crit);
+        PyErr_Format(PyExc_ValueError,
+                     "Dot product criterion was %s, which is not inside the allowed range of"
+                     " -1.0 to +1.0.",
+                     buffer);
+        return nullptr;
+    }
+
+    const PyDust_MeshObject *const this = (PyDust_MeshObject *)self;
+
+    PyArrayObject *const normal_array =
+        pydust_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
+                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Normals array");
+    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64));
+
+    if (!normal_array)
+        return nullptr;
+
+    const real3_t *restrict normals = PyArray_DATA(normal_array);
+
+    npy_intp n_found = 0;
+    for (unsigned i_line = 0; i_line < this->mesh.n_lines; ++i_line)
+    {
+        const line_t *ln = this->mesh.lines + i_line;
+        if (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID)
+            continue;
+        const real_t dp = real3_dot(normals[ln->p1.value], normals[ln->p2.value]);
+        n_found += (dp < crit);
+    }
+
+    PyArrayObject *const array_out = (PyArrayObject *)PyArray_SimpleNew(1, &n_found, NPY_UINT);
+    if (!array_out)
+        return nullptr;
+    npy_intp idx_out = 0;
+    npy_uint *restrict p_out = PyArray_DATA(array_out);
+    for (unsigned i_line = 0; i_line < this->mesh.n_lines && idx_out < n_found; ++i_line)
+    {
+        const line_t *ln = this->mesh.lines + i_line;
+        if (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID)
+            continue;
+        const real_t dp = real3_dot(normals[ln->p1.value], normals[ln->p2.value]);
+        if (dp < crit)
+        {
+            p_out[idx_out] = (npy_uint)i_line;
+            idx_out += 1;
+        }
+    }
+
+    return (PyObject *)array_out;
+}
+
+static PyObject *pydust_mesh_dual_free_edges(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    const PyDust_MeshObject *const this = (PyDust_MeshObject *)self;
+
+    npy_intp n_found = 0;
+    for (unsigned i_line = 0; i_line < this->mesh.n_lines; ++i_line)
+    {
+        const line_t *ln = this->mesh.lines + i_line;
+        n_found += (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID);
+    }
+
+    PyArrayObject *const array_out = (PyArrayObject *)PyArray_SimpleNew(1, &n_found, NPY_UINT);
+    if (!array_out)
+        return nullptr;
+    npy_intp idx_out = 0;
+    npy_uint *restrict p_out = PyArray_DATA(array_out);
+    for (unsigned i_line = 0; i_line < this->mesh.n_lines && idx_out < n_found; ++i_line)
+    {
+        const line_t *ln = this->mesh.lines + i_line;
+        if (ln->p1.value == INVALID_ID || ln->p2.value == INVALID_ID)
+        {
+            p_out[idx_out] = (npy_uint)i_line;
+            idx_out += 1;
+        }
+    }
+
+    return (PyObject *)array_out;
+}
+
+static PyObject *pydust_mesh_from_lines(PyObject *type, PyObject *args, PyObject *kwargs)
+{
+    unsigned npts;
+    PyObject *arg;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "IO", (char *[3]){"n_points", "connectivity", nullptr}, &npts, &arg))
+    {
+        return nullptr;
+    }
+
+    PyArrayObject *const array = (PyArrayObject *)PyArray_FromAny(arg, PyArray_DescrFromType(NPY_UINT), 2, 2,
+                                                                  NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, nullptr);
+    if (!array)
+        return nullptr;
+    const unsigned n_lines = PyArray_DIM(array, 0);
+    if (PyArray_DIM(array, 1) != 2)
+    {
+        PyErr_Format(PyExc_ValueError,
+                     "Connectivity array must have the shape (N, 2), but instead its shape was (%u, %u).",
+                     (unsigned)PyArray_DIM(array, 0), (unsigned)PyArray_DIM(array, 1));
+        Py_DECREF(array);
+        return nullptr;
+    }
+    PyTypeObject *const obj_type = (PyTypeObject *)type;
+    PyDust_MeshObject *const this = (PyDust_MeshObject *)obj_type->tp_alloc(obj_type, 0);
+    if (!this)
+    {
+        Py_DECREF(array);
+        return nullptr;
+    }
+
+    this->mesh.n_points = npts;
+    this->mesh.n_lines = n_lines;
+    this->mesh.n_surfaces = 0;
+
+    this->mesh.lines = nullptr;
+    this->mesh.surface_lines = nullptr;
+    this->mesh.surface_offsets = PyObject_Malloc(sizeof *this->mesh.surface_offsets);
+    if (!this->mesh.surface_offsets)
+    {
+        Py_DECREF(this);
+        Py_DECREF(array);
+        return nullptr;
+    }
+    this->mesh.lines = PyObject_Malloc(sizeof *this->mesh.lines * n_lines);
+    if (!this->mesh.lines)
+    {
+        Py_DECREF(this);
+        Py_DECREF(array);
+        return nullptr;
+    }
+
+    const npy_uint32 *restrict p_in = PyArray_DATA(array);
+    for (unsigned i_ln = 0; i_ln < n_lines; ++i_ln)
+    {
+        if (p_in[0] >= npts || p_in[1] >= npts)
+        {
+            PyErr_Format(PyExc_ValueError, "Line %u has points (%u, %u), but there were only %u points specified.",
+                         (unsigned)p_in[0], (unsigned)p_in[1], npts);
+            Py_DECREF(this);
+            Py_DECREF(array);
+            return nullptr;
+        }
+        this->mesh.lines[i_ln] = (line_t){
+            .p1 = {.orientation = 0, .value = p_in[0]},
+            .p2 = {.orientation = 0, .value = p_in[1]},
+        };
+        p_in += 2;
+    }
+    Py_DECREF(array);
+
+    return (PyObject *)this;
+}
+
+static PyObject *pydust_mesh_line_induction_matrix(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    const PyDust_MeshObject *this = (PyDust_MeshObject *)self;
+    if (nargs != 4 && nargs != 3)
+    {
+        PyErr_Format(PyExc_TypeError, "Method requires 3, or 4 arguments, but was called with %u.", (unsigned)nargs);
+        return nullptr;
+    }
+    const double tol = PyFloat_AsDouble(args[0]);
+    if (PyErr_Occurred())
+        return nullptr;
+
+    PyArrayObject *const pos_array =
+        pydust_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
+                            NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position array");
+    if (!pos_array)
+        return nullptr;
+    PyArrayObject *const in_array =
+        pydust_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
+                            NPY_FLOAT64, "Control point array");
+    if (!in_array)
+        return nullptr;
+    const npy_intp *dims = PyArray_DIMS(in_array);
+    const unsigned n_cpts = dims[0];
+
+    PyArrayObject *out_array;
+    if (nargs > 3 && !Py_IsNone(args[3]))
+    {
+        // If None is second arg, treat it as if it is not present at all.
+        out_array = pydust_ensure_array(args[3], 3, (const npy_intp[3]){n_cpts, this->mesh.n_lines, 3},
+                                        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, NPY_FLOAT64,
+                                        "Output tensor");
+        if (!out_array)
+            return nullptr;
+        Py_INCREF(out_array);
+    }
+    else
+    {
+        const npy_intp out_dims[3] = {n_cpts, this->mesh.n_lines, 3};
+        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
+        if (!out_array)
+            return nullptr;
+    }
+
+    // Now I can be sure the arrays are well-behaved
+    const real3_t *control_pts = PyArray_DATA(in_array);
+    const real3_t *positions = PyArray_DATA(pos_array);
+    real3_t *out_ptr = PyArray_DATA(out_array);
+    Py_BEGIN_ALLOW_THREADS;
+    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
+                           out_ptr, tol);
+    Py_END_ALLOW_THREADS;
+
+    return (PyObject *)out_array;
+}
+
 static PyMethodDef pydust_mesh_methods[] = {
     {.ml_name = "get_line",
      .ml_meth = pydust_mesh_get_line,
@@ -1049,10 +1280,7 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (void *)pydust_mesh_merge,
      .ml_flags = METH_CLASS | METH_FASTCALL,
      .ml_doc = "Merge sequence of meshes together into a single mesh."},
-    {.ml_name = "copy",
-     .ml_meth = pydust_mesh_copy,
-     .ml_flags = METH_NOARGS,
-     .ml_doc = "Create a copy of the mesh, with optionally changed positions."},
+    {.ml_name = "copy", .ml_meth = pydust_mesh_copy, .ml_flags = METH_NOARGS, .ml_doc = "Create a copy of the mesh."},
     {.ml_name = "line_gradient",
      .ml_meth = (void *)pydust_mesh_line_gradient,
      .ml_flags = METH_FASTCALL,
@@ -1065,8 +1293,52 @@ static PyMethodDef pydust_mesh_methods[] = {
      .ml_meth = (void *)pydust_mesh_surface_average_vec3,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute average vec3 for each surface based on point values."},
+    {.ml_name = "dual_normal_criterion",
+     .ml_meth = (void *)pydust_mesh_dual_normal_criterion,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Find edges satisfying neighbouring normal dot product criterion."},
+    {.ml_name = "dual_free_edges",
+     .ml_meth = pydust_mesh_dual_free_edges,
+     .ml_flags = METH_NOARGS,
+     .ml_doc = "Find edges with invalid nodes (dual free edges)."},
+    {.ml_name = "from_lines",
+     .ml_meth = (void *)pydust_mesh_from_lines,
+     .ml_flags = METH_VARARGS | METH_CLASS | METH_KEYWORDS,
+     .ml_doc = "Create line-only mesh from line connectivity."},
+    {.ml_name = "line_induction_matrix",
+     .ml_meth = (void *)pydust_mesh_line_induction_matrix,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "Compute an induction matrix for the mesh based on line circulations."},
     {},
 };
+
+static PyObject *pydust_mesh_rich_compare(PyObject *self, PyObject *other, const int op)
+{
+    if (!PyObject_TypeCheck(other, &pydust_mesh_type) || (op != Py_EQ && op != Py_NE))
+    {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    bool res = true;
+    const PyDust_MeshObject *const this = (PyDust_MeshObject *)self;
+    const PyDust_MeshObject *const that = (PyDust_MeshObject *)other;
+    if (this->mesh.n_points != that->mesh.n_points || this->mesh.n_lines != that->mesh.n_lines ||
+        this->mesh.n_surfaces != that->mesh.n_surfaces ||
+        memcmp(this->mesh.lines, that->mesh.lines, sizeof(*this->mesh.lines) * this->mesh.n_lines) != 0 ||
+        memcmp(this->mesh.surface_offsets, that->mesh.surface_offsets,
+               sizeof(*this->mesh.surface_offsets) * (this->mesh.n_surfaces + 1)) != 0 ||
+        memcmp(this->mesh.surface_lines, that->mesh.surface_lines,
+               sizeof(*this->mesh.surface_lines) * this->mesh.surface_offsets[this->mesh.n_surfaces]) != 0)
+    {
+        res = false;
+    }
+
+    res = (op == Py_EQ) ? res : !res;
+    if (res)
+    {
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+}
 
 CDUST_INTERNAL
 PyTypeObject pydust_mesh_type = {
@@ -1080,4 +1352,5 @@ PyTypeObject pydust_mesh_type = {
     .tp_getset = pydust_mesh_getset,
     .tp_new = pydust_mesh_new,
     .tp_dealloc = pydust_mesh_dealloc,
+    .tp_richcompare = pydust_mesh_rich_compare,
 };

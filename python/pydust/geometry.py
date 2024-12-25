@@ -1,6 +1,6 @@
 """Implementation of Geometry related operations."""
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
 from warnings import warn
@@ -11,6 +11,7 @@ import numpy.typing as npt
 import pyvista as pv
 
 from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
+from pydust.fio.io_common import HirearchicalMap
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
@@ -35,6 +36,53 @@ def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
     offsets = np.pad(np.cumsum(nper_elem), (1, 0))
     faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
     return faces
+
+
+def mesh_to_serial(m: Mesh) -> HirearchicalMap:
+    """Serialize the mesh into a HirearchicalMap."""
+    out = HirearchicalMap()
+    out.insert_int("n_points", m.n_points)
+    n_per_element, flattened_elements = m.to_element_connectivity()
+    out.insert_array("n_per_element", n_per_element)
+    out.insert_array("flattened_elements", flattened_elements)
+    return out
+
+
+def mesh_from_serial(group: HirearchicalMap) -> Mesh:
+    """Deserialize the mesh from a HirearchicalMap."""
+    n_points = group.get_int("n_points")
+    n_per_element = group.get_array("n_per_element")
+    flattened_elements = np.asarray(group.get_array("flattened_elements"), np.uint32)
+    offsets = np.pad(np.cumsum(n_per_element), (1, 0))
+    faces = [
+        flattened_elements[offsets[i] : offsets[i + 1]] for i in range(n_per_element.size)
+    ]
+    return Mesh(n_points=n_points, connectivity=faces)
+
+
+def rf_to_serial(self: ReferenceFrame) -> HirearchicalMap:
+    """Serialize the ReferenceFrame into a HirearchicalMap."""
+    out = HirearchicalMap()
+    out.insert_type("type", type(self))
+
+    data = HirearchicalMap()
+    self.save(data)
+    out.insert_hirearchycal_map("data", data)
+    if self.parent is not None:
+        parent = rf_to_serial(self.parent)
+        out.insert_hirearchycal_map("parent", parent)
+    return out
+
+
+def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
+    """Load reference frame from a HDF5 group."""
+    cls: type[ReferenceFrame] = group.get_type("type")
+    data = group.get_hirearchical_map("data")
+    parent = None
+    if "parent" in group:
+        parent_group = group.get_hirearchical_map("parent")
+        parent = rf_from_serial(parent_group)
+    return cls.load(group=data, parent=parent)
 
 
 @dataclass(init=False, frozen=True)
@@ -115,8 +163,40 @@ class Geometry:
         n = self.msh.surface_average_vec3(self.positions)
         return self.reference_frame.from_parent_with_offset(n, n)
 
+    def save(self) -> HirearchicalMap:
+        """Save geometry into a HirearchicalMap."""
+        out = HirearchicalMap()
+        out.insert_array("positions", self.positions)
+        mesh_group = mesh_to_serial(self.msh)
+        out.insert_hirearchycal_map("mesh", mesh_group)
+        rf_group = rf_to_serial(self.reference_frame)
+        out.insert_hirearchycal_map("reference_frame", rf_group)
+        return out
 
-@dataclass(frozen=True)
+    @classmethod
+    def load(cls, label: str, group: HirearchicalMap) -> Self:
+        """Load the geometry from a HirearchicalMap."""
+        positions = group.get_array("positions")
+        mesh_group = group.get_hirearchical_map("mesh")
+        rf_group = group.get_hirearchical_map("reference_frame")
+
+        msh = mesh_from_serial(mesh_group)
+        rf = rf_from_serial(rf_group)
+
+        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
+
+    def __eq__(self, other) -> bool:
+        """Check for equality."""
+        if not isinstance(other, Geometry):
+            return False
+        return (
+            self.label == other.label
+            and self.msh == other.msh
+            and np.allclose(self.positions, other.positions)
+        )
+
+
+@dataclass(frozen=True, eq=False)
 class GeometryInfo:
     """Class containing information about geometry."""
 
@@ -128,6 +208,20 @@ class GeometryInfo:
     lines: slice
     surfaces: slice
 
+    def __eq__(self, other) -> bool:
+        """Equality check."""
+        if not isinstance(other, GeometryInfo):
+            return False
+        return (
+            self.rf == other.rf
+            and self.msh == other.msh
+            and np.allclose(self.pos, other.pos)
+            and self.closed == other.closed
+            and self.points == other.points
+            and self.lines == other.lines
+            and self.surfaces == other.surfaces
+        )
+
 
 @dataclass(frozen=True)
 class SimulationGeometry(Mapping):
@@ -135,6 +229,7 @@ class SimulationGeometry(Mapping):
 
     _info: dict[str, GeometryInfo]
     mesh: Mesh
+    dual: Mesh
     n_surfaces: int
     n_lines: int
     n_points: int
@@ -178,6 +273,7 @@ class SimulationGeometry(Mapping):
 
         object.__setattr__(self, "_info", info)
         object.__setattr__(self, "mesh", Mesh.merge_meshes(*meshes))
+        object.__setattr__(self, "dual", self.mesh.compute_dual())
         object.__setattr__(self, "n_points", n_points)
         object.__setattr__(self, "n_lines", n_lines)
         object.__setattr__(self, "n_surfaces", n_surfaces)
@@ -225,6 +321,64 @@ class SimulationGeometry(Mapping):
         faces = mesh_to_polydata_faces(self.mesh)
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
+
+    def te_normal_criterion(self, crit: float) -> npt.NDArray[np.uint]:
+        """Identify edges, for which the normals of neighbouring surfaces meet dp crit."""
+        normals = np.empty((self.n_surfaces, 3), np.float64)
+        for name in self._info:
+            info = self._info[name]
+            normals[info.points] = info.msh.surface_normal(info.pos)
+        return self.dual.dual_normal_criterion(crit, normals)
+
+    def te_free_criterion(self) -> npt.NDArray[np.uint]:
+        """Identify edges, which have only one surface attached."""
+        return self.dual.dual_free_edges()
+
+    def line_adjecency_information(
+        self, lines: Sequence[int] | npt.NDArray[np.integer]
+    ) -> tuple[npt.NDArray[np.uint], npt.NDArray[np.uint]]:
+        """Return line information in terms of adjacent points and surfaces."""
+        bordering_nodes = np.empty((len(lines), 2), np.uint)
+        adjacent_surfaces = np.empty((len(lines), 2), np.uint)
+        for i, line_id in enumerate(lines):
+            primal_line = self.mesh.get_line(int(line_id))
+            dual_line = self.dual.get_line(int(line_id))
+            bordering_nodes[i, :] = (primal_line.begin, primal_line.end)
+            adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
+        return (bordering_nodes, adjacent_surfaces)
+
+    def save(self) -> HirearchicalMap:
+        """Save the simulation geometry into a HirearchicalMap."""
+        out = HirearchicalMap()
+        for geo_name in self._info:
+            info = self._info[geo_name]
+            geo_group = Geometry(geo_name, info.rf, info.msh, info.pos).save()
+            out.insert_hirearchycal_map(geo_name, geo_group)
+        return out
+
+    @classmethod
+    def load(cls, group: HirearchicalMap) -> Self:
+        """Load the simulation geometry from a HirearchicalMap."""
+        geometries: list[Geometry] = []
+        for geo_name in group:
+            sub_group = group.get_hirearchical_map(geo_name)
+            geo = Geometry.load(str(geo_name), sub_group)
+            geometries.append(geo)
+        return cls(*geometries)
+
+    def __eq__(self, other) -> bool:
+        """Check for equality."""
+        if not isinstance(other, SimulationGeometry):
+            return False
+
+        return (
+            self.n_points == other.n_points
+            and self.n_lines == other.n_lines
+            and self.n_surfaces == other.n_surfaces
+            and self._info == other._info
+            and self.mesh == other.mesh
+            and self.dual == other.dual
+        )
 
 
 def geometry_show_pyvista(
