@@ -1,6 +1,5 @@
 """Implementation of the flow solver."""
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Callable, Literal, Self
@@ -94,19 +93,11 @@ class OutputSettings:
         object.__setattr__(self, "naming_callback", naming_callback)
 
 
-@dataclass(frozen=True)
-class SolverResults:
-    """Class which contains solver results."""
-
-    circulations: npt.NDArray[np.float64]
-    times: npt.NDArray[np.float64]
-
-
 def run_solver(
     geometry: SimulationGeometry,
     settings: SolverSettings,
     output_settings: OutputSettings,
-) -> SolverResults:
+) -> None:
     """Run the flow solver to obtain specified circulations."""
     times: npt.NDArray[np.float64]
     if settings.time_settings is None:
@@ -117,8 +108,6 @@ def run_solver(
     i_out = 0
 
     state = SolverState(geometry, settings)
-
-    out_circulaiton_array = np.empty((len(times), geometry.n_surfaces), np.float64)
 
     previous_rfs: dict[str, None | ReferenceFrame] = {name: None for name in geometry}
 
@@ -147,7 +136,7 @@ def run_solver(
             time, state.control_points
         )
         # Compute flow penetration at control points
-        rhs = np.vecdot(state.normals, -element_velocity, axis=1)  # type: ignore
+        np.vecdot(state.normals, -element_velocity, out=state.circulation, axis=1)  # type: ignore
         # if updated != 0:
         # Compute normal induction
         system_matrix = geometry.mesh.induction_matrix3(
@@ -160,7 +149,7 @@ def run_solver(
         # Apply the wake model's effect
         if settings.wake_model is not None:
             settings.wake_model.apply_corrections(
-                state.control_points, state.normals, system_matrix, rhs
+                state.control_points, state.normals, system_matrix, state.circulation
             )
 
         # Decompose the system matrix to allow for solving multiple times
@@ -168,7 +157,7 @@ def run_solver(
 
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
-        circulation = la.lu_solve(decomp, rhs, overwrite_b=True)
+        circulation = la.lu_solve(decomp, state.circulation, overwrite_b=True)
         # Adjust circulations
         for geo_name in geometry:
             info = geometry[geo_name]
@@ -191,48 +180,22 @@ def run_solver(
             output_settings.serialization_fn(
                 state.save(), output_settings.naming_callback(iteration, time)
             )
-            out_circulaiton_array[i_out, :] = circulation
             i_out += 1
         print(
             f"Finished iteration {iteration} out of {len(times)} in "
             f"{iteration_end_time - iteration_begin_time:g} seconds."
         )
 
-    # del system_matrix, line_buffer, velocity, rhs
-    return SolverResults(
-        out_circulaiton_array,
-        times,
-    )
-
 
 def compute_induced_velocities(
-    simulation_geometry: SimulationGeometry,
-    settings: SolverSettings,
-    results: SolverResults,
-    positions: npt.NDArray,
-    workers: int | None = None,
+    state: SolverState,
+    positions: npt.ArrayLike,
 ) -> npt.NDArray:
     """Compute velocity induced by the mesh with circulation."""
-    out_vec = np.empty((len(results.times), positions.shape[0], 3), np.float64)
-
-    def _velocity_compute_function(
-        i, time: float, circulation: npt.NDArray[np.float64]
-    ) -> None:
-        """Compute velocity induction."""
-        points = simulation_geometry.positions_at_time(time)
-        ind_mat = simulation_geometry.mesh.induction_matrix(
-            settings.model_settings.vortex_limit,
-            points,
-            positions,
-        )
-        np.vecdot(ind_mat, circulation[None, :, None], out=out_vec[i, ...], axis=1)  # type: ignore
-
-    with ThreadPoolExecutor(workers) as executor:
-        executor.map(
-            _velocity_compute_function,
-            range(results.times.size),
-            results.times,
-            results.circulations,
-        )
-
-    return out_vec
+    points = np.asarray(positions, np.float64).reshape((-1, 3))
+    ind_mat = state.geometry.mesh.induction_matrix(
+        state.settings.model_settings.vortex_limit,
+        points,
+        state.positions,
+    )
+    return np.vecdot(ind_mat, state.circulation[None, :, None], axis=1)  # type: ignore
