@@ -8,3 +8,4 @@ build/
 __pycache__/
 .coverage
 test/pytests/test_outputs/
+doc/_build
