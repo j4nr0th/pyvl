@@ -1,6 +1,6 @@
 """Tests for Line object."""
 
-from pydust import Line
+from pyvl import Line
 
 
 def test_creation():

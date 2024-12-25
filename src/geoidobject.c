@@ -6,25 +6,25 @@
 
 PyObject *geoid_repr(PyObject *self)
 {
-    const PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    const PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     return PyUnicode_FromFormat("GeoID(%u, %u)", (unsigned)this->id.value, (unsigned)this->id.orientation);
 }
 
 PyObject *geoid_str(PyObject *self)
 {
-    const PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    const PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     return PyUnicode_FromFormat("%c%u", (unsigned)this->id.orientation ? '-' : '+', (unsigned)this->id.value);
 }
 
 static PyObject *geoid_get_orientation(PyObject *self, void *Py_UNUSED(closure))
 {
-    const PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    const PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     return PyBool_FromLong(this->id.orientation);
 }
 
 static int geoid_set_orientation(PyObject *self, PyObject *value, void *Py_UNUSED(closure))
 {
-    PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     const int val = PyObject_IsTrue(value);
     if (val < 0)
     {
@@ -36,13 +36,13 @@ static int geoid_set_orientation(PyObject *self, PyObject *value, void *Py_UNUSE
 
 static PyObject *geoid_get_index(PyObject *self, void *Py_UNUSED(closure))
 {
-    const PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    const PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     return PyLong_FromUnsignedLong(this->id.value);
 }
 
 static int geoid_set_index(PyObject *self, PyObject *value, void *Py_UNUSED(closure))
 {
-    PyDust_GeoIDObject *this = (PyDust_GeoIDObject *)self;
+    PyVL_GeoIDObject *this = (PyVL_GeoIDObject *)self;
     const unsigned v = PyLong_AsUnsignedLong(value);
     if (PyErr_Occurred())
     {
@@ -76,7 +76,7 @@ static PyObject *geoid_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return nullptr;
     }
 
-    PyDust_GeoIDObject *const this = (PyDust_GeoIDObject *)type->tp_alloc(type, 0);
+    PyVL_GeoIDObject *const this = (PyVL_GeoIDObject *)type->tp_alloc(type, 0);
     if (!this)
         return nullptr;
 
@@ -92,12 +92,12 @@ static PyObject *geoid_rich_compare(PyObject *self, PyObject *other, const int o
     {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    const PyDust_GeoIDObject *const this = (PyDust_GeoIDObject *)self;
-    if (!PyObject_TypeCheck(other, &pydust_geoid_type))
+    const PyVL_GeoIDObject *const this = (PyVL_GeoIDObject *)self;
+    if (!PyObject_TypeCheck(other, &pyvl_geoid_type))
     {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    const PyDust_GeoIDObject *const that = (PyDust_GeoIDObject *)other;
+    const PyVL_GeoIDObject *const that = (PyVL_GeoIDObject *)other;
     const bool val = this->id.orientation == that->id.orientation && this->id.value == that->id.value;
     if (op == Py_NE)
     {
@@ -108,9 +108,9 @@ static PyObject *geoid_rich_compare(PyObject *self, PyObject *other, const int o
 
 constexpr PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
 
-PyTypeObject pydust_geoid_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "cdust.GeoID",
-    .tp_basicsize = sizeof(PyDust_GeoIDObject),
+PyTypeObject pyvl_geoid_type = {
+    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pyvl.cvl.GeoID",
+    .tp_basicsize = sizeof(PyVL_GeoIDObject),
     .tp_itemsize = 0,
     .tp_getset = geoid_getset,
     .tp_repr = geoid_repr,

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pydust.reference_frames import RotorReferenceFrame
+from pyvl.reference_frames import RotorReferenceFrame
 from scipy.integrate import quad
 
 

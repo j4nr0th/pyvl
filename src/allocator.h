@@ -8,10 +8,10 @@
 #include "core/common.h"
 #include "module.h"
 
-CDUST_INTERNAL
-extern const allocator_t CDUST_MEM_ALLOCATOR;
+CVL_INTERNAL
+extern const allocator_t CVL_MEM_ALLOCATOR;
 
-CDUST_INTERNAL
-extern const allocator_t CDUST_OBJ_ALLOCATOR;
+CVL_INTERNAL
+extern const allocator_t CVL_OBJ_ALLOCATOR;
 
 #endif // ALLOCATOR_H

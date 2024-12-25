@@ -5,9 +5,9 @@ from pathlib import Path
 
 import meshio as mio
 import numpy as np
-from pydust import Geometry, ReferenceFrame, TranslatingReferenceFrame, mesh_from_mesh_io
-from pydust import fio as fio
-from pydust.geometry import rf_from_serial, rf_to_serial
+from pyvl import Geometry, ReferenceFrame, TranslatingReferenceFrame, mesh_from_mesh_io
+from pyvl import fio as fio
+from pyvl.geometry import rf_from_serial, rf_to_serial
 
 
 def test_rf_serialization1() -> None:

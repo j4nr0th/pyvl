@@ -1,6 +1,6 @@
 """Tests related to GeoID class."""
 
-from pydust import GeoID
+from pyvl import GeoID
 
 
 def test_creation() -> None:

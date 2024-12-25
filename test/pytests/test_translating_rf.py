@@ -1,7 +1,7 @@
 """Test more reference frame classes."""
 
 import numpy as np
-from pydust.reference_frames import TranslatingReferenceFrame
+from pyvl.reference_frames import TranslatingReferenceFrame
 
 
 def test_motion_1():

@@ -8,8 +8,8 @@ from typing import Self, final
 import numpy as np
 from numpy import typing as npt
 
-from pydust._typing import VecLike3
-from pydust.fio.io_common import HirearchicalMap
+from pyvl._typing import VecLike3
+from pyvl.fio.io_common import HirearchicalMap
 
 INVALID_ID: int = ...
 """Value of ID indicating an invalid object.

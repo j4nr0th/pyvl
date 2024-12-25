@@ -9,9 +9,9 @@ import numpy as np
 import numpy.typing as npt
 from scipy.integrate import quad
 
-from pydust._typing import VecLike3
-from pydust.cdust import ReferenceFrame
-from pydust.fio.io_common import HirearchicalMap
+from pyvl._typing import VecLike3
+from pyvl.cvl import ReferenceFrame
+from pyvl.fio.io_common import HirearchicalMap
 
 
 class TranslatingReferenceFrame(ReferenceFrame):

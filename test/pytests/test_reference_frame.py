@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pydust import ReferenceFrame
+from pyvl import ReferenceFrame
 
 
 def test_creation_and_getset():

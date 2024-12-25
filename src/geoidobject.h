@@ -11,12 +11,12 @@
 typedef struct
 {
     PyObject_HEAD geo_id_t id;
-} PyDust_GeoIDObject;
+} PyVL_GeoIDObject;
 
-CDUST_INTERNAL
-extern PyTypeObject pydust_geoid_type;
+CVL_INTERNAL
+extern PyTypeObject pyvl_geoid_type;
 
-CDUST_INTERNAL
-PyDust_GeoIDObject *pydust_geoid_from_value(geo_id_t id);
+CVL_INTERNAL
+PyVL_GeoIDObject *pyvl_geoid_from_value(geo_id_t id);
 
 #endif // GEOIDOBJECT_H

@@ -8,15 +8,15 @@
 #include "core/transformation.h"
 #include "module.h"
 
-typedef struct PyDust_ReferenceFrame PyDust_ReferenceFrame;
+typedef struct PyVL_ReferenceFrame PyVL_ReferenceFrame;
 
-typedef struct PyDust_ReferenceFrame
+typedef struct PyVL_ReferenceFrame
 {
     PyObject_HEAD transformation_t transformation;
-    PyDust_ReferenceFrame *parent;
-} PyDust_ReferenceFrame;
+    PyVL_ReferenceFrame *parent;
+} PyVL_ReferenceFrame;
 
-CDUST_INTERNAL
-extern PyTypeObject pydust_reference_frame_type;
+CVL_INTERNAL
+extern PyTypeObject pyvl_reference_frame_type;
 
 #endif // REFERENCEFRAMEOBJECT_H

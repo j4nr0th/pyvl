@@ -6,9 +6,9 @@ from typing import Self
 import numpy as np
 import numpy.typing as npt
 
-from pydust.fio.io_common import HirearchicalMap
-from pydust.flow_conditions import FlowConditions
-from pydust.wake import WakeModel
+from pyvl.fio.io_common import HirearchicalMap
+from pyvl.flow_conditions import FlowConditions
+from pyvl.wake import WakeModel
 
 
 @dataclass(frozen=True)

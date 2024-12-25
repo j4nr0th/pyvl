@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
-from pydust.cdust import INVALID_ID, Mesh, ReferenceFrame
-from pydust.fio.io_common import HirearchicalMap
+from pyvl.cvl import INVALID_ID, Mesh, ReferenceFrame
+from pyvl.fio.io_common import HirearchicalMap
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:

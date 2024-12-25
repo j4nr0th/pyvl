@@ -11,12 +11,12 @@ typedef struct
 {
     PyObject_HEAD unsigned begin;
     unsigned end;
-} PyDust_LineObject;
+} PyVL_LineObject;
 
-CDUST_INTERNAL
-extern PyTypeObject pydust_line_type;
+CVL_INTERNAL
+extern PyTypeObject pyvl_line_type;
 
-CDUST_INTERNAL
-PyDust_LineObject *pydust_line_from_indices(unsigned begin, unsigned end);
+CVL_INTERNAL
+PyVL_LineObject *pyvl_line_from_indices(unsigned begin, unsigned end);
 
 #endif // LINEOBJECT_H

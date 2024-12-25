@@ -28,8 +28,8 @@ static void mem_deallocate(void *state, void *ptr)
     PyMem_Free(ptr);
 }
 
-CDUST_INTERNAL
-const allocator_t CDUST_MEM_ALLOCATOR = {
+CVL_INTERNAL
+const allocator_t CVL_MEM_ALLOCATOR = {
     .allocate = mem_allocate,
     .deallocate = mem_deallocate,
     .reallocate = mem_reallocate,
@@ -54,8 +54,8 @@ static void obj_deallocate(void *state, void *ptr)
     PyObject_Free(ptr);
 }
 
-CDUST_INTERNAL
-const allocator_t CDUST_OBJ_ALLOCATOR = {
+CVL_INTERNAL
+const allocator_t CVL_OBJ_ALLOCATOR = {
     .allocate = obj_allocate,
     .deallocate = obj_deallocate,
     .reallocate = obj_reallocate,

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.29)
 
 if (NOT DEFINED SKBUILD_PROJECT_NAME)
-    set(SKBUILD_PROJECT_NAME "cdust")
+    set(SKBUILD_PROJECT_NAME "cvl")
 endif ()
 
 project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
@@ -21,7 +21,7 @@ execute_process(
 )
 
 list(
-        APPEND CDUST_MODULE_SOURCE_FILES
+        APPEND CVL_MODULE_SOURCE_FILES
         src/module.c
         src/allocator.c
         src/geoidobject.c
@@ -32,7 +32,7 @@ list(
 )
 
 list(
-        APPEND CDUST_MODULE_HEADER_FILES
+        APPEND CVL_MODULE_HEADER_FILES
         src/module.h
         src/allocator.h
         src/geoidobject.h
@@ -44,7 +44,7 @@ list(
 )
 
 list(
-        APPEND CDUST_CORE_SOURCE_FILES
+        APPEND CVL_CORE_SOURCE_FILES
         src/core/solver_state.c
         src/core/common.c
         src/core/mesh.c
@@ -54,7 +54,7 @@ list(
 )
 
 list(
-        APPEND CDUST_CORE_HEADER_FILES
+        APPEND CVL_CORE_HEADER_FILES
         src/core/solver_state.h
         src/core/common.h
         src/core/mesh.h
@@ -63,35 +63,35 @@ list(
         src/core/transformation.h
 )
 
-add_library(static_cdust
-        ${CDUST_CORE_SOURCE_FILES}
-        ${CDUST_CORE_HEADER_FILES}
+add_library(static_cvl
+        ${CVL_CORE_SOURCE_FILES}
+        ${CVL_CORE_HEADER_FILES}
 )
 
-Python_add_library(cdust MODULE ${CDUST_CORE_SOURCE_FILES} ${CDUST_CORE_HEADER_FILES} ${CDUST_MODULE_SOURCE_FILES}
-        ${CDUST_MODULE_HEADER_FILES} WITH_SOABI)
-install(TARGETS cdust DESTINATION ${SKBUILD_PROJECT_NAME})
+Python_add_library(cvl MODULE ${CVL_CORE_SOURCE_FILES} ${CVL_CORE_HEADER_FILES} ${CVL_MODULE_SOURCE_FILES}
+        ${CVL_MODULE_HEADER_FILES} WITH_SOABI)
+install(TARGETS cvl DESTINATION ${SKBUILD_PROJECT_NAME})
 
 
-target_compile_definitions(cdust PRIVATE CDUST_ASSERTS)
+target_compile_definitions(cvl PRIVATE CVL_ASSERTS)
 
 if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
     message( FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
-target_include_directories(cdust PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
+target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
 
-target_compile_options(cdust PRIVATE ${OpenMP_C_FLAGS})
-target_link_libraries(cdust PRIVATE ${OpenMP_C_LIBRARIES})
+target_compile_options(cvl PRIVATE ${OpenMP_C_FLAGS})
+target_link_libraries(cvl PRIVATE ${OpenMP_C_LIBRARIES})
 
-target_compile_options(cdust PRIVATE ${OpenACC_C_FLAGS})
-target_link_libraries(cdust PRIVATE ${OpenACC_C_LIBRARIES})
+target_compile_options(cvl PRIVATE ${OpenACC_C_FLAGS})
+target_link_libraries(cvl PRIVATE ${OpenACC_C_LIBRARIES})
 
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(cdust PRIVATE -Wall -Wextra -Werror -lto=auto -g -fopt-info-optimized-omp -fno-omit-frame-pointer)
+    target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -g -fopt-info-optimized-omp -fno-omit-frame-pointer)
 endif ()
 
-#get_target_property(MAIN_CFLAGS cdust COMPILE_OPTIONS)
+#get_target_property(MAIN_CFLAGS cvl COMPILE_OPTIONS)
 #message("Compile options are: ${MAIN_CFLAGS}")
 
 enable_testing()
