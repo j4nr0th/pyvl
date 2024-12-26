@@ -27,27 +27,24 @@ pv.set_jupyter_backend("html")
 # Geometry Setup
 # --------------
 #
-# The first step is to set up the :class:`Geometry` of the simulation. For more
-# complicated meshes it can be loaded from a file, but for a simple case such as this,
-# it can also be manually assembled.
+# The first step is to set up the :class:`Geometry` of the simulation. PyVL is not
+# intended to be a mesh generator. As such, the geometry can be loaded either using
+# :mod:`pyvista` or `MeshIO <https://pypi.org/project/meshio/>` modules.
+#
+# For this case, :mod:`pyvista` will be used to make a simple flat plate.
 
-points = np.array(
-    (
-        (-0.5, -0.5, 0.0),
-        (+0.5, -0.5, 0.0),
-        (+0.5, +0.5, 0.0),
-        (-0.5, +0.5, 0.0),
-    ),
-    np.float64,
+plate = pv.Plane()
+assert isinstance(plate, pv.PolyData)
+
+geo = pyvl.Geometry.from_polydata(
+    label="plate",
+    reference_frame=pyvl.ReferenceFrame(),
+    pd=plate,
 )
-
-mesh = pyvl.Mesh(4, ((0, 1, 2, 3),))
-
-geo = pyvl.Geometry("plate", pyvl.ReferenceFrame(), mesh, points)
 
 plt = pv.Plotter()
 plt.add_mesh(geo.as_polydata())
-_ = plt.show(return_cpos=True, interactive=False)
+plt.show(interactive=False)
 plt.close()
 
 # %%

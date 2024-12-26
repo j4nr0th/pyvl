@@ -37,7 +37,7 @@ class SolverState:
         self.positions = np.empty((geometry.n_points, 3), np.float64)
         self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
-        self.circulation = np.empty((geometry.n_surfaces, 3), np.float64)
+        self.circulation = np.empty((geometry.n_surfaces,), np.float64)
         self.settings = settings
 
     def save(self) -> HirearchicalMap:

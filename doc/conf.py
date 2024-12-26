@@ -44,6 +44,7 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    "pyvista": ("https://docs.pyvista.org/" , None),
 }
 
 # -- Options for Napoleon ----------------------------------------------------
@@ -63,8 +64,8 @@ napoleon_attr_annotations = True
 
 autodoc_member_order = "groupwise"
 autodoc_type_aliases = {
-    "npt.ArrayLike": "ArrayLike",
-    "npt.NDArray": "NDArray",
+    "npt.ArrayLike": "array_like",
+    "npt.NDArray": "ndarray",
 }
 
 # -- Options for Sphinx Gallery ----------------------------------------------

@@ -1,5 +1,7 @@
 """Implementation of Geometry related operations."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
