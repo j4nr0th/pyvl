@@ -1,6 +1,7 @@
 """Implementation of the flow solver."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Callable, Literal, Self
 
@@ -36,6 +37,7 @@ class SolverState:
         self.positions = np.empty((geometry.n_points, 3), np.float64)
         self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
+        self.circulation = np.empty((geometry.n_surfaces, 3), np.float64)
         self.settings = settings
 
     def save(self) -> HirearchicalMap:
@@ -68,18 +70,17 @@ class SolverState:
 
 
 OutputFileType = Literal["HDF5", "JSON"]
-NamingFunction = Callable[[int, float], str]
 
 
 @dataclass(init=False, eq=False, frozen=True)
 class OutputSettings:
     """Settings to control the output from a solver."""
 
-    naming_callback: Callable[[int, float], str]
+    naming_callback: Callable[[int, float], str | Path]
     serialization_fn: SerializationFunction
 
     def __init__(
-        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str]
+        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str | Path]
     ) -> None:
         serialization_fn: SerializationFunction
         match ftype:

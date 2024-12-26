@@ -47,6 +47,7 @@ dev = [
 docs = [
     "sphinx",
     "pydata-sphinx-theme",
+    "python-docs-theme",
     "sphinx-favicon",
     "sphinx-design",
     "sphinx-gallery",

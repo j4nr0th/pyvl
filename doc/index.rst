@@ -6,11 +6,15 @@
 PyVL documentation
 ==================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+This is the documentation for the Python Vortex Lattice module (abbreviated as PyVL or ``PyVL``).
 
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: API Reference:
+
+   tutorials/index
+   public_python/index
+   private_python/index
+   private_c/index
+   auto_examples/index

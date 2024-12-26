@@ -31,6 +31,7 @@ from pyvl.settings import SolverSettings as SolverSettings
 from pyvl.settings import TimeSettings as TimeSettings
 
 # Solver
+from pyvl.solver import OutputSettings as OutputSettings
 from pyvl.solver import compute_induced_velocities as compute_induced_velocities
 from pyvl.solver import run_solver as run_solver
 
