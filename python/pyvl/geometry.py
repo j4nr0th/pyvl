@@ -87,9 +87,29 @@ def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
     return cls.load(group=data, parent=parent)
 
 
-@dataclass(init=False, frozen=True)
+@dataclass(init=False, frozen=True, eq=False)
 class Geometry:
-    """Class which describes a geometry compoenent."""
+    """Class used to describe a geometry component.
+
+    These objects are intended to be created by calling its class methods,
+    such as :meth:`Geometry.from_meshio` or :meth:`Geometry.from_polydata`.
+
+    Parameters
+    ----------
+    label : str
+        Label by which to identify the geometry by in plotting and analysis.
+
+    reference_frame : ReferenceFrame
+        The frame of reference in which describes how the geometry's coordinate
+        system is oriented in relation to the global coordinate system.
+
+    mesh : Mesh
+        The connectivity information about the geometry. Typically generated
+        by :func:`classmethod` constructors.
+
+    positions : (N, 3) array_like
+        An array of position vectors for coordinates of each point in the mesh.
+    """
 
     label: str
     reference_frame: ReferenceFrame
@@ -130,7 +150,28 @@ class Geometry:
     def from_meshio(
         cls, label: str, reference_frame: ReferenceFrame, mesh: mio.Mesh
     ) -> Self:
-        """Create a Geometry from a MeshIO Mesh object."""
+        """Create a Geometry from a MeshIO Mesh object.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        reference_frame : ReferenceFrame
+            The frame of reference in which describes how the geometry's coordinate
+            system is oriented in relation to the global coordinate system.
+
+        mesh : meshio.Mesh
+            ``Mesh`` object, which contains the geometry to load. From it only
+            cell blocks with cells of topological dimension 2 will be loaded.
+            Any other type of cells will be ignored and a :class:`UserWarning`
+            will be issued.
+
+        Returns
+        -------
+        Geometry
+            Newly created geometry.
+        """
         p, m = mesh_from_mesh_io(mesh)
         return cls(label=label, reference_frame=reference_frame, mesh=m, positions=p)
 
@@ -138,35 +179,62 @@ class Geometry:
     def from_polydata(
         cls, label: str, reference_frame: ReferenceFrame, pd: pv.PolyData
     ) -> Self:
-        """Create a Geometry from a PyVista's PolyData object."""
+        """Create a Geometry from a PyVista's PolyData object.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        reference_frame : ReferenceFrame
+            The frame of reference in which describes how the geometry's coordinate
+            system is oriented in relation to the global coordinate system.
+
+        mesh : PolyData
+            :class:`pyvista.PolyData` object, which contains the geometry to load.
+            From it, all the faces will be extracted.
+
+        Returns
+        -------
+        Geometry
+            Newly created geometry.
+        """
         return cls(
             label=label,
             reference_frame=reference_frame,
-            mesh=Mesh(pd.points.shape[0], pd.irregular_faces),
+            mesh=Mesh(
+                pd.points.shape[0],
+                tuple(np.astype(x, np.uint32) for x in pd.irregular_faces),
+            ),
             positions=pd.points,
         )
 
     def as_polydata(self) -> pv.PolyData:
-        """Convert geometry into PyVista's PolyData."""
+        """Convert geometry into PyVista's PolyData.
+
+        This is inverse to the :meth:`Geometry.from_polydata`, as it takes a
+        :class:`Geometry` object and produces a :class:`pyvista.PolyData`.
+
+        Returns
+        -------
+        pyvista.PolyData
+            PolyData, which represents the geometry.
+        """
         positions = self.reference_frame.from_parent_with_offset(self.positions)
         faces = mesh_to_polydata_faces(self.msh)
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
 
-    @property
-    def normals(self) -> npt.NDArray[np.float64]:
-        """Compute normals to mesh surfaces."""
-        n = self.msh.surface_normal(self.positions)
-        return self.reference_frame.from_parent_without_offset(n, n)
-
-    @property
-    def centers(self) -> npt.NDArray[np.float64]:
-        """Compute centers of mesh sufraces."""
-        n = self.msh.surface_average_vec3(self.positions)
-        return self.reference_frame.from_parent_with_offset(n, n)
-
     def save(self) -> HirearchicalMap:
-        """Save geometry into a HirearchicalMap."""
+        """Save geometry into a HirearchicalMap.
+
+        This method is used for serialization of the object.
+
+        Returns
+        -------
+        HirearchicalMap
+            The contents of the class serialized into a :class:`HirearchicalMap`.
+        """
         out = HirearchicalMap()
         out.insert_array("positions", self.positions)
         mesh_group = mesh_to_serial(self.msh)
@@ -177,7 +245,24 @@ class Geometry:
 
     @classmethod
     def load(cls, label: str, group: HirearchicalMap) -> Self:
-        """Load the geometry from a HirearchicalMap."""
+        """Load the geometry from a HirearchicalMap.
+
+        This method is used for de-serialization.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        group : HirearchicalMap
+            A :class:`HirearchicalMap` object, which contains the data created
+            by a call to :meth:`Geometry.save`.
+
+        Returns
+        -------
+        Self
+            Geometry object which has been de-serialized.
+        """
         positions = group.get_array("positions")
         mesh_group = group.get_hirearchical_map("mesh")
         rf_group = group.get_hirearchical_map("reference_frame")
@@ -185,10 +270,13 @@ class Geometry:
         msh = mesh_from_serial(mesh_group)
         rf = rf_from_serial(rf_group)
 
-        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
+        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions)
 
     def __eq__(self, other) -> bool:
-        """Check for equality."""
+        """Check for equality with another object.
+
+        If the other object is not a :class:`Geometry`, false is returned.
+        """
         if not isinstance(other, Geometry):
             return False
         return (
@@ -196,6 +284,50 @@ class Geometry:
             and self.msh == other.msh
             and np.allclose(self.positions, other.positions)
         )
+
+    @property
+    def normals(self) -> npt.NDArray[np.float64]:
+        r"""Normals to geometry surfaces in the global reference frame.
+
+        This property computes the unit normal vectors to each surface. The normal
+        vector is computed as:
+
+        .. math::
+
+            \vec{n} = \sum\limits_{i = 0}^N \left( \vec{r}_{\mod(i + 1, N)} - \vec{r}_{i}
+            \right) \times \left( \vec{r}_{i} - \vec{r}_{\mod(i - 1, N)} \right)
+
+        This vector is then normalized. In essence this means, that for any element, which
+        is not a triangle, the normal is not guaranteed to be accurate at all points if
+        the element is not planar.
+
+        Returns
+        -------
+        (N, 3) array
+            Array of unit normal vectors for surfaces of the geometry in the global
+            reference frame.
+        """
+        n = self.msh.surface_normal(self.positions)
+        return self.reference_frame.from_parent_without_offset(n, n)
+
+    @property
+    def centers(self) -> npt.NDArray[np.float64]:
+        r"""Compute centers of geometry sufraces in the global reference frame.
+
+        These are computed by simply finding the average position vector:
+
+        .. math::
+
+            \vec{r}_C = \frac{1}{N} \sum\limits_{i = 0}^N \vec{r}_i
+
+        Returns
+        -------
+        (N, 3) array
+            Array of position vectors of surface centers in  in the global reference
+            frame.
+        """
+        n = self.msh.surface_average_vec3(self.positions)
+        return self.reference_frame.from_parent_with_offset(n, n)
 
 
 @dataclass(frozen=True, eq=False)
