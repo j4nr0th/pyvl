@@ -1,5 +1,7 @@
 """Implementations of some basic wake models."""
 
+from __future__ import annotations
+
 from typing import Self
 
 import numpy as np
@@ -86,7 +88,26 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         circulation: npt.NDArray[np.float64],
         flow: FlowConditions,
     ) -> None:
-        """Update the wake model."""
+        """Update the wake model.
+
+        .. deprecated:: 0.0.1
+
+            The ``positions`` argument will be removed, since information is already
+            passed through the ``geometry`` argument.
+
+        Parameters
+        ----------
+        time : float
+            The time at which the wake model should now be at.
+        geometry : SimulationGeometry
+            The state of the :class:`SimulationGeometry` at the current time step.
+        positions : (N, 3) array
+            Positions of the mesh points.
+        circulation : (N,) array
+            Circulation values of vortex ring elements.
+        flow : FlowConditions
+            Flow conditions of the simulation.
+        """
         dt = time - self.current_time
         self.current_time = time
         if self.step_count == 0:
@@ -139,7 +160,13 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         self,
         positions: npt.NDArray[np.float64],
     ) -> npt.NDArray[np.float64]:
-        """Compute velocity induced by wake at requested positions."""
+        """Compute velocity induced by wake at requested positions.
+
+        Parameters
+        ----------
+        positions : (N, 3) array
+            Array of positions where the velocity should be computed.
+        """
         ind_mat = self.wake_mesh.induction_matrix(
             self.vortex_tol,
             self.wake_positions.reshape((-1, 3)),
@@ -154,7 +181,21 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         mat_in: npt.NDArray[np.float64],
         rhs_in: npt.NDArray[np.float64],
     ) -> None:
-        """Return implicit and explicit corrections for the no-prenetration conditions."""
+        """Return implicit and explicit corrections for the no-prenetration conditions.
+
+        Parameters
+        ----------
+        control_pts : (N, 3) array
+            Positions where the no-penetration condition will be applied.
+        normals : (N, 3) array
+            Surface normals at the control points.
+        mat_in : (N, N) array
+            Left-hand side of the circulation equation. Describes normal velocity
+            induction at the control points due to unknown circulations.
+        rhs_in : (N,) array
+            Right-hand side of the circulation equation. Describes the normal velocity
+            induction at the control points due to know sources and free-stream.
+        """
         ind_mat = self.wake_mesh.induction_matrix3(
             self.vortex_tol, self.wake_positions.reshape((-1, 3)), control_pts, normals
         ).reshape((control_pts.shape[0], self.shedding_lines.size, self.line_rows, 3))
@@ -186,7 +227,13 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         return pd
 
     def save(self) -> HirearchicalMap:
-        """Serialize state into a HirearchicalMap."""
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`WakeModelLineExplicitUnsteady` object.
+        """
         out = HirearchicalMap()
         out.insert_array("bordering_nodes", self.bordering_nodes)
         out.insert_array("adjacent_surfaces", self.adjacent_surfaces)
@@ -201,7 +248,19 @@ class WakeModelLineExplicitUnsteady(WakeModel):
 
     @classmethod
     def load(cls, group: HirearchicalMap) -> Self:
-        """Create instance of the wake model from the data in the HDF5 group."""
+        """Deserialize the object from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`WakeModelLineExplicitUnsteady`
+            object created by a call to :meth:`WakeModelLineExplicitUnsteady.save`.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`WakeModelLineExplicitUnsteady` object.
+        """
         bordering_nodes = group.get_array("bordering_nodes")
         shedding_lines = group.get_array("shedding_lines")
         adjacent_surfaces = group.get_array("adjacent_surfaces")

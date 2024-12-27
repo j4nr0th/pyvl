@@ -39,7 +39,26 @@ class WakeModel(ABC):
         circulation: npt.NDArray[np.float64],
         flow: FlowConditions,
     ) -> None:
-        """Update the wake model."""
+        """Update the wake model.
+
+        .. deprecated:: 0.0.1
+
+            The ``positions`` argument will be removed, since information is already
+            passed through the ``geometry`` argument.
+
+        Parameters
+        ----------
+        time : float
+            The time at which the wake model should now be at.
+        geometry : SimulationGeometry
+            The state of the :class:`SimulationGeometry` at the current time step.
+        positions : (N, 3) array
+            Positions of the mesh points.
+        circulation : (N,) array
+            Circulation values of vortex ring elements.
+        flow : FlowConditions
+            Flow conditions of the simulation.
+        """
         ...
 
     def apply_corrections(
@@ -49,7 +68,21 @@ class WakeModel(ABC):
         mat_in: npt.NDArray[np.float64],
         rhs_in: npt.NDArray[np.float64],
     ) -> None:
-        """Return implicit and explicit corrections for the no-prenetration conditions."""
+        """Return implicit and explicit corrections for the no-prenetration conditions.
+
+        Parameters
+        ----------
+        control_pts : (N, 3) array
+            Positions where the no-penetration condition will be applied.
+        normals : (N, 3) array
+            Surface normals at the control points.
+        mat_in : (N, N) array
+            Left-hand side of the circulation equation. Describes normal velocity
+            induction at the control points due to unknown circulations.
+        rhs_in : (N,) array
+            Right-hand side of the circulation equation. Describes the normal velocity
+            induction at the control points due to know sources and free-stream.
+        """
         ...
 
     @abstractmethod
@@ -57,34 +90,40 @@ class WakeModel(ABC):
         self,
         positions: npt.NDArray[np.float64],
     ) -> npt.NDArray[np.float64]:
-        """Compute velocity induced by wake at requested positions."""
+        """Compute velocity induced by wake at requested positions.
+
+        Parameters
+        ----------
+        positions : (N, 3) array
+            Array of positions where the velocity should be computed.
+        """
         ...
 
     @abstractmethod
     def save(self) -> HirearchicalMap:
-        """Save current state into a HirearchicalMap."""
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`WakeModel` object.
+        """
         ...
 
     @classmethod
     @abstractmethod
     def load(cls, group: HirearchicalMap) -> Self:
-        """Load the wake model state from a HirearchicalMap."""
+        """Deserialize the object from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`WakeModel` object created by a call
+            to :meth:`WakeModel.save`.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`WakeModel` object.
+        """
         ...
-
-
-def _load_wake_model(group: HirearchicalMap) -> WakeModel:
-    """Load the wake model from a HirearchicalMap."""
-    cls: type[WakeModel] = group.get_type("type")
-    # Create the type and pass the state to construct it from
-    data = group.get_hirearchical_map("data")
-    return cls.load(data)
-
-
-def _store_wake_model(wm: WakeModel) -> HirearchicalMap:
-    """Store the wake model into a HirearchicalMap."""
-    out = HirearchicalMap()
-    out.insert_type("type", type(wm))
-    # Create the type and pass the state to construct it from
-    data_group = wm.save()
-    out.insert_hirearchycal_map("data", data_group)
-    return out

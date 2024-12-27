@@ -80,6 +80,14 @@ line vortex velocity is set to zero instead of its usual :math:`\frac{1}{r}` sca
 
 More details about these can be read about :ref:`here <pyvl.model_settings>`
 
+Defining the Wake
+~~~~~~~~~~~~~~~~~
+
+One of the most important things to model is the wake. The approach that `pyvl` has to modeling
+wake is that any object which inherits from :class:`WakeModel` can be used. As such, it is possible
+to define a custom wake model if that is required, however, that might not be needed at all for most
+cases, as the most common wake models are already implemented. For a more in-depth details about the
+different wake models available, see :ref:`this <pyvl.wake_models>`.
 
 
 .. toctree::
@@ -92,3 +100,4 @@ More details about these can be read about :ref:`here <pyvl.model_settings>`
     time_settings
     model_settings
     solver_settings
+    wake_models
