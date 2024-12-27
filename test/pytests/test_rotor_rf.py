@@ -50,6 +50,7 @@ def test_rotor_3():
     np.random.seed(128094)
 
     def rotate_function(t):
+        """Return non-constant rotation velocity."""
         return 3 * np.sin(np.pi * t**2) - t / (3 + t**2)
 
     offsets = np.random.random_sample(3)

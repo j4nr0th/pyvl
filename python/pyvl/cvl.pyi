@@ -237,7 +237,42 @@ class Mesh:
         ...
 
 class ReferenceFrame:
-    """Class which is used to define position and orientation of geometry."""
+    r"""Class which is used to define position and orientation of geometry.
+
+    This class represents a translation, followed by and orthonormal rotation. This
+    transformation from a position vector :math:`\vec{r}` in the parent reference
+    frame to a vector :math:`\vec{r}^\prime` in child reference frame can
+    be written in four steps:
+
+    .. math::
+
+        \vec{r}_1 = \begin{bmatrix} 1 & 0 & 0 \\\ 0 & \cos\theta_x & \sin\theta_x \\\
+        0 & -\sin\theta_x & \cos\theta_x \end{bmatrix} \vec{r}
+
+    .. math::
+
+        \vec{r}_2 = \begin{bmatrix} -\sin\theta_y & 0 & \cos\theta_y \\\ 0 & 1 & 0 \\\
+        \cos\theta_y & 0 & \sin\theta_y \end{bmatrix} \vec{r}_1
+
+    .. math::
+
+        \vec{r}^3 = \begin{bmatrix} \cos\theta_z & \sin\theta_z & 0 \\\
+        -\sin\theta_z & \cos\theta_z & 0 \\\ 0 & 0 & 1 \end{bmatrix} \vec{r}_2
+
+    .. math::
+
+        \vec{r}^\prime = \vec{r}_3 + \vec{d}
+
+    Parameters
+    ----------
+    offset : VecLike3, default: (0, 0, 0)
+        Position of the reference frame's origin expressed in the parent's reference
+        frame.
+
+    theta : VecLike3, default: (0, 0, 0)
+        Rotation of the reference frame relative to its parent. The rotations are applied
+        around the x, y, and z axis in that order.
+    """
 
     def __new__(
         cls,
@@ -277,71 +312,252 @@ class ReferenceFrame:
     def from_parent_with_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Apply transformation to the reference frame from parent with offset."""
+        r"""Map position vector from parent reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in parent reference frame.
+        out : (N, 3) array, optional"
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the child reference frame. If the ``out`` parameter
+            was specified, this return value will be the same object. If ``out`` was not
+            specified, then a new array will be allocated.
+        """
         ...
 
     def from_parent_without_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Apply transformation to the reference frame from parent without offset."""
+        r"""Map direction vector from parent reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in parent reference frame.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Direction vectors mapped to the child reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated.
+        """
         ...
 
     def to_parent_with_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Reverse transformation from the reference frame to parent with offset."""
+        r"""Map position vector from child reference frame to the parent reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        out : (N, 3) array, optional"
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the parent reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If
+            ``out`` was not specified, then a new array will be allocated.
+        """
         ...
 
     def to_parent_without_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Reverse transformation from the reference frame to parent without offset."""
+        r"""Map direction vector from child reference frame to the parent reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Direction vectors mapped to the parent reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated.
+        """
         ...
 
     def from_global_with_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Apply transformation to the reference frame from global with offset."""
+        r"""Map position vector from global reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in global reference frame.
+        out : (N, 3) array, optional"
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the child reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated."
+        """
         ...
 
     def from_global_without_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Apply transformation to the reference frame from global without offset."""
+        r"""Map direction vector from global reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in global reference frame.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Direction vectors mapped to the child reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated."
+        """
         ...
 
     def to_global_with_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Reverse transformation from the reference frame to global with offset."""
+        r"""Map position vector from child reference frame to the parent reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        out : (N, 3) array, optional"
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the global reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated."
+        """
         ...
 
     def to_global_without_offset(
         self, r: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
     ) -> npt.NDArray[np.float64]:
-        """Reverse transformation from the reference frame to global without offset."""
+        r"""Map direction vector from child reference frame to the global reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Direction vectors mapped to the global reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated."
+        """
         ...
 
     def rotate_x(self, theta: float) -> ReferenceFrame:
-        """Create a copy of the frame rotated around the x-axis."""
+        """Create a copy of the frame rotated around the x-axis.
+
+        Parameters
+        ----------
+        theta_x : float
+            Angle by which to rotate the reference frame by.
+
+        Returns
+        -------
+        Self
+            Reference frame rotated around the x-axis by the specified angle.
+        """
         ...
 
     def rotate_y(self, theta: float) -> ReferenceFrame:
-        """Create a copy of the frame rotated around the y-axis."""
+        """Create a copy of the frame rotated around the y-axis.
+
+        Parameters
+        ----------
+        theta_y : float
+            Angle by which to rotate the reference frame by.
+
+        Returns
+        -------
+        Self
+            Reference frame rotated around the y-axis by the specified angle.
+        """
         ...
 
     def rotate_z(self, theta: float) -> ReferenceFrame:
-        """Create a copy of the frame rotated around the z-axis."""
+        """Create a copy of the frame rotated around the z-axis.
+
+        Parameters
+        ----------
+        theta_z : float
+            Angle by which to rotate the reference frame by.
+
+        Returns
+        -------
+        Self
+            Reference frame rotated around the z-axis by the specified angle.
+        """
         ...
 
     def with_offset(self, new_offset: npt.ArrayLike) -> ReferenceFrame:
-        """Create a copy of the frame with different offset value."""
+        """Create a copy of the frame with different offset value.
+
+        Parameters
+        ----------
+        offset : VecLike3
+            Offset to add to the reference frame relative to its parent.
+
+        Returns
+        -------
+        ReferenceFrame
+            A copy of itself which is translated by the value of ``offset`` in
+            the parent's reference frame.
+        """
         ...
 
-    def at_time(self, t: float) -> ReferenceFrame:
+    def at_time(self, t: float) -> Self:
         """Compute reference frame at the given time.
 
-        This is useful when the reference frame is moving or rotating in space.
+        This is used when the reference frame is moving or rotating in space.
 
         Parameters
         ----------
@@ -350,21 +566,54 @@ class ReferenceFrame:
 
         Returns
         -------
-        ReferenceFrame
-            New reference frame.
+        Self
+            New reference frame at the given time.
         """
         ...
 
     @staticmethod
     def angles_from_rotation(rotation_matrix: npt.ArrayLike) -> npt.NDArray[np.double]:
-        """Compute rotation angles from a transformation matrix."""
+        """Compute rotation angles from a transformation matrix.
+
+        Parameters
+        ----------
+        mat : (3, 3) array
+            Rotation matrix to convert to the rotation angles. This is done assuming that
+            the matrix is orthogonal.
+
+        Returns
+        -------
+        (3,) array"
+            Rotation angles around the x-, y-, and z-axis which result in a transformation
+            with equal rotation matrix.
+        """
         ...
 
-    def save(self, group: HirearchicalMap, /) -> None:
-        """Serialize the ReferenceFrame into a HDF5 group."""
+    def save(self, hmap: HirearchicalMap, /) -> None:
+        """Serialize the ReferenceFrame into a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap: HirearchicalMap
+            :class:`HirearchicalMap` in which to save the reference frame into.
+        """
         ...
 
     @classmethod
     def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
-        """Load the ReferenceFrame from a HDF5 group."""
+        """Load the ReferenceFrame from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            A :class:`HirearchicalMap`, which was created with a call to
+            :meth:`ReferenceFrame.save`.
+        parent : ReferenceFrame, optional
+            Parent of the reference frame.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`ReferenceFrame`.
+        """
         ...

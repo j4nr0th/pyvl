@@ -7,4 +7,10 @@ build/
 .mypy_cache/
 __pycache__/
 .coverage
+.ruff_cache/
+.pytest_cache/
+.nox/
 test/pytests/test_outputs/
+doc/_build/
+doc/auto_examples/
+doc/sg_execution_times.rst

@@ -1,5 +1,7 @@
 """Implementation of Geometry related operations."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ItemsView, KeysView, Self, ValuesView
@@ -85,9 +87,57 @@ def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
     return cls.load(group=data, parent=parent)
 
 
-@dataclass(init=False, frozen=True)
+@dataclass(init=False, frozen=True, eq=False)
 class Geometry:
-    """Class which describes a geometry compoenent."""
+    """Class used to describe a geometry component.
+
+    These objects are intended to be created by calling its class methods,
+    such as :meth:`Geometry.from_meshio` or :meth:`Geometry.from_polydata`.
+
+    Parameters
+    ----------
+    label : str
+        Label by which to identify the geometry by in plotting and analysis.
+
+    reference_frame : ReferenceFrame
+        The frame of reference in which describes how the geometry's coordinate
+        system is oriented in relation to the global coordinate system.
+
+    mesh : Mesh
+        The connectivity information about the geometry. Typically generated
+        by :func:`classmethod` constructors.
+
+    positions : (N, 3) array_like
+        An array of position vectors for coordinates of each point in the mesh.
+
+    Examples
+    --------
+    As an example, load the data from the ``examples`` submodule.
+
+    .. jupyter-execute::
+
+        >>> from pyvl.examples import example_file_name
+        >>> from pyvl import ReferenceFrame, Geometry
+        >>> import pyvista as pv
+        >>> pv.set_plot_theme("document")
+        >>> pv.set_jupyter_backend("html")
+        >>> pv.global_theme.show_edges = True
+
+        >>> import meshio as mio
+        >>> msh = mio.read(example_file_name("wing1.obj"))
+        >>> geo = Geometry.from_meshio(
+        ...     "example_wing",
+        ...     ReferenceFrame(),
+        ...     msh,
+        ... )
+
+    The :class:`Geometry` can now be plotted:
+
+    .. jupyter-execute::
+
+        >>> geo.as_polydata().plot(interactive=False)
+
+    """
 
     label: str
     reference_frame: ReferenceFrame
@@ -128,7 +178,28 @@ class Geometry:
     def from_meshio(
         cls, label: str, reference_frame: ReferenceFrame, mesh: mio.Mesh
     ) -> Self:
-        """Create a Geometry from a MeshIO Mesh object."""
+        """Create a Geometry from a MeshIO Mesh object.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        reference_frame : ReferenceFrame
+            The frame of reference in which describes how the geometry's coordinate
+            system is oriented in relation to the global coordinate system.
+
+        mesh : meshio.Mesh
+            ``Mesh`` object, which contains the geometry to load. From it only
+            cell blocks with cells of topological dimension 2 will be loaded.
+            Any other type of cells will be ignored and a :class:`UserWarning`
+            will be issued.
+
+        Returns
+        -------
+        Geometry
+            Newly created geometry.
+        """
         p, m = mesh_from_mesh_io(mesh)
         return cls(label=label, reference_frame=reference_frame, mesh=m, positions=p)
 
@@ -136,35 +207,62 @@ class Geometry:
     def from_polydata(
         cls, label: str, reference_frame: ReferenceFrame, pd: pv.PolyData
     ) -> Self:
-        """Create a Geometry from a PyVista's PolyData object."""
+        """Create a Geometry from a PyVista's PolyData object.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        reference_frame : ReferenceFrame
+            The frame of reference in which describes how the geometry's coordinate
+            system is oriented in relation to the global coordinate system.
+
+        mesh : PolyData
+            :class:`pyvista.PolyData` object, which contains the geometry to load.
+            From it, all the faces will be extracted.
+
+        Returns
+        -------
+        Geometry
+            Newly created geometry.
+        """
         return cls(
             label=label,
             reference_frame=reference_frame,
-            mesh=Mesh(pd.points.shape[0], pd.irregular_faces),
+            mesh=Mesh(
+                pd.points.shape[0],
+                tuple(np.astype(x, np.uint32) for x in pd.irregular_faces),
+            ),
             positions=pd.points,
         )
 
     def as_polydata(self) -> pv.PolyData:
-        """Convert geometry into PyVista's PolyData."""
+        """Convert geometry into PyVista's PolyData.
+
+        This is inverse to the :meth:`Geometry.from_polydata`, as it takes a
+        :class:`Geometry` object and produces a :class:`pyvista.PolyData`.
+
+        Returns
+        -------
+        pyvista.PolyData
+            PolyData, which represents the geometry.
+        """
         positions = self.reference_frame.from_parent_with_offset(self.positions)
         faces = mesh_to_polydata_faces(self.msh)
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
 
-    @property
-    def normals(self) -> npt.NDArray[np.float64]:
-        """Compute normals to mesh surfaces."""
-        n = self.msh.surface_normal(self.positions)
-        return self.reference_frame.from_parent_without_offset(n, n)
-
-    @property
-    def centers(self) -> npt.NDArray[np.float64]:
-        """Compute centers of mesh sufraces."""
-        n = self.msh.surface_average_vec3(self.positions)
-        return self.reference_frame.from_parent_with_offset(n, n)
-
     def save(self) -> HirearchicalMap:
-        """Save geometry into a HirearchicalMap."""
+        """Save geometry into a HirearchicalMap.
+
+        This method is used for serialization of the object.
+
+        Returns
+        -------
+        HirearchicalMap
+            The contents of the class serialized into a :class:`HirearchicalMap`.
+        """
         out = HirearchicalMap()
         out.insert_array("positions", self.positions)
         mesh_group = mesh_to_serial(self.msh)
@@ -175,7 +273,24 @@ class Geometry:
 
     @classmethod
     def load(cls, label: str, group: HirearchicalMap) -> Self:
-        """Load the geometry from a HirearchicalMap."""
+        """Load the geometry from a HirearchicalMap.
+
+        This method is used for de-serialization.
+
+        Parameters
+        ----------
+        label : str
+            Label by which to identify the geometry by in plotting and analysis.
+
+        group : HirearchicalMap
+            A :class:`HirearchicalMap` object, which contains the data created
+            by a call to :meth:`Geometry.save`.
+
+        Returns
+        -------
+        Self
+            Geometry object which has been de-serialized.
+        """
         positions = group.get_array("positions")
         mesh_group = group.get_hirearchical_map("mesh")
         rf_group = group.get_hirearchical_map("reference_frame")
@@ -183,10 +298,13 @@ class Geometry:
         msh = mesh_from_serial(mesh_group)
         rf = rf_from_serial(rf_group)
 
-        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions[()])
+        return cls(label=label, reference_frame=rf, mesh=msh, positions=positions)
 
     def __eq__(self, other) -> bool:
-        """Check for equality."""
+        """Check for equality with another object.
+
+        If the other object is not a :class:`Geometry`, false is returned.
+        """
         if not isinstance(other, Geometry):
             return False
         return (
@@ -194,6 +312,50 @@ class Geometry:
             and self.msh == other.msh
             and np.allclose(self.positions, other.positions)
         )
+
+    @property
+    def normals(self) -> npt.NDArray[np.float64]:
+        r"""Normals to geometry surfaces in the global reference frame.
+
+        This property computes the unit normal vectors to each surface. The normal
+        vector is computed as:
+
+        .. math::
+
+            \vec{n} = \sum\limits_{i = 0}^N \left( \vec{r}_{\mod(i + 1, N)} - \vec{r}_{i}
+            \right) \times \left( \vec{r}_{i} - \vec{r}_{\mod(i - 1, N)} \right)
+
+        This vector is then normalized. In essence this means, that for any element, which
+        is not a triangle, the normal is not guaranteed to be accurate at all points if
+        the element is not planar.
+
+        Returns
+        -------
+        (N, 3) array
+            Array of unit normal vectors for surfaces of the geometry in the global
+            reference frame.
+        """
+        n = self.msh.surface_normal(self.positions)
+        return self.reference_frame.from_parent_without_offset(n, n)
+
+    @property
+    def centers(self) -> npt.NDArray[np.float64]:
+        r"""Compute centers of geometry sufraces in the global reference frame.
+
+        These are computed by simply finding the average position vector:
+
+        .. math::
+
+            \vec{r}_C = \frac{1}{N} \sum\limits_{i = 0}^N \vec{r}_i
+
+        Returns
+        -------
+        (N, 3) array
+            Array of position vectors of surface centers in  in the global reference
+            frame.
+        """
+        n = self.msh.surface_average_vec3(self.positions)
+        return self.reference_frame.from_parent_with_offset(n, n)
 
 
 @dataclass(frozen=True, eq=False)
@@ -225,7 +387,54 @@ class GeometryInfo:
 
 @dataclass(frozen=True)
 class SimulationGeometry(Mapping):
-    """Class which is the result of combining multiple geometries together."""
+    """Class which is the result of combining multiple geometries together.
+
+    Parameters
+    ----------
+    *geometries: Geometry
+        The individual geometries to add in the :class:`SimulationGeometry`.
+
+    Examples
+    --------
+    This example simply loads the example wing and fuselage, then puts them together
+    into a single :class:`SimulationGeometry` object.
+
+    .. jupyter-execute::
+
+        >>> import meshio as mio
+        >>> import pyvista as pv
+        >>> import pyvl
+        >>> from pyvl.examples import example_file_name
+        >>>
+        >>> pv.set_plot_theme("document")
+        >>> pv.set_jupyter_backend("html")
+        >>> pv.global_theme.show_edges = True
+
+    First, the wing is loaded:
+
+    .. jupyter-execute::
+
+        >>> m_wing = mio.read(example_file_name("wing1.obj"))
+        >>> rf_wing = pyvl.ReferenceFrame((-5, 0, 1.5))
+        >>> geo_wing = pyvl.Geometry.from_meshio("wing", rf_wing, m_wing)
+
+    Next, the fuselage:
+
+    .. jupyter-execute::
+
+        >>> m_fus = mio.read(example_file_name("fus1.obj"))
+        >>> rf_fus = pyvl.ReferenceFrame()
+        >>> geo_fus = pyvl.Geometry.from_meshio("fuselage", rf_fus, m_fus)
+
+    Lastly, the two are combined, and the :class:`SimulationGeometry` is displayed
+    afterwards.
+
+    .. jupyter-execute::
+
+        >>> sim_geo = pyvl.SimulationGeometry(geo_wing, geo_fus)
+        >>> sim_geo.polydata_at_time(0.0).plot(interactive=False)
+
+    """
 
     _info: dict[str, GeometryInfo]
     mesh: Mesh
@@ -279,7 +488,7 @@ class SimulationGeometry(Mapping):
         object.__setattr__(self, "n_surfaces", n_surfaces)
 
     def __getitem__(self, key: str) -> GeometryInfo:
-        """Return the geometry corresponding to the key."""
+        """Return the Geometry corresponding to the key."""
         return self._info[key]
 
     def __iter__(self) -> Iterator[str]:
@@ -307,7 +516,21 @@ class SimulationGeometry(Mapping):
         return self._info.values()
 
     def positions_at_time(self, t: float) -> npt.NDArray[np.float64]:
-        """Return the point positions at the specified time."""
+        """Return the point positions at the specified time.
+
+        This uses the different reference frames of the individual :class:`Geometry`
+        objects to determine their positions in the global reference frame.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the positions at.
+
+        Returns
+        -------
+        (N, 3) array
+            Array of position vectors of positions of individual points of the geometries.
+        """
         pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
@@ -316,14 +539,45 @@ class SimulationGeometry(Mapping):
         return pos
 
     def polydata_at_time(self, t: float) -> pv.PolyData:
-        """Return the geometry as polydata at the specified time."""
+        """Return the geometry as polydata at the specified time.
+
+        This uses the :meth:`SimulationGeometry.positions_at_time` to determine
+        the positions of individual mesh points.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the mesh at.
+
+        Returns
+        -------
+        pyvista.PolyData
+            :class:`pyvista.PolyData` object which represents the surface mesh.
+        """
         pos = self.positions_at_time(t)
         faces = mesh_to_polydata_faces(self.mesh)
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
 
     def te_normal_criterion(self, crit: float) -> npt.NDArray[np.uint]:
-        """Identify edges, for which the normals of neighbouring surfaces meet dp crit."""
+        """Identify edges, for which the normals of neighbouring surfaces meet dp crit.
+
+        This function returns the array with indices of all mesh edges which meet the
+        specific criterion. In this case, this criterion is that the edge should border
+        two surfaces, whose unit normals have dot product less than the value specified
+        by ``crit``. This can be used to identify closed trailing edges.
+
+        Parameters
+        ----------
+        crit : float
+            Minimum value of dot product of neighbouring surface unit normal vectors
+            before an edge is considered.
+
+        Returns
+        -------
+        array
+            Array of sorted indices of edges which meet the criterion.
+        """
         normals = np.empty((self.n_surfaces, 3), np.float64)
         for name in self._info:
             info = self._info[name]
@@ -331,13 +585,39 @@ class SimulationGeometry(Mapping):
         return self.dual.dual_normal_criterion(crit, normals)
 
     def te_free_criterion(self) -> npt.NDArray[np.uint]:
-        """Identify edges, which have only one surface attached."""
+        """Identify edges, which have only one surface attached.
+
+        This function returns the array with indices of all mesh edges which meet the
+        specific criterion. In this case, this criterion is that the edge should be a
+        part of one and only one surface.
+
+        Returns
+        -------
+        array
+            Array of sorted indices of edges which meet the criterion.
+        """
         return self.dual.dual_free_edges()
 
     def line_adjecency_information(
         self, lines: Sequence[int] | npt.NDArray[np.integer]
     ) -> tuple[npt.NDArray[np.uint], npt.NDArray[np.uint]]:
-        """Return line information in terms of adjacent points and surfaces."""
+        """Return the arrays of indices of nodes and surfaces related with the edges.
+
+        The first array returned is the array of bordering nodes for each edge specified.
+        Along with it, an array with indices of surfaces bordering the line is returned.
+
+        Parameters
+        ----------
+        lines : Sequence of N int or (N,) array
+            Lines for which the information should be returned.
+
+        Returns
+        -------
+        (N, 2) array
+            Array with indices of nodes which the lines connect.
+        (N, 2) array
+            Array with indices of surfaces which the lines border.
+        """
         bordering_nodes = np.empty((len(lines), 2), np.uint)
         adjacent_surfaces = np.empty((len(lines), 2), np.uint)
         for i, line_id in enumerate(lines):
@@ -348,7 +628,13 @@ class SimulationGeometry(Mapping):
         return (bordering_nodes, adjacent_surfaces)
 
     def save(self) -> HirearchicalMap:
-        """Save the simulation geometry into a HirearchicalMap."""
+        """Save the simulation geometry into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            State serialized into a :class:`HirearchicalMap` object.
+        """
         out = HirearchicalMap()
         for geo_name in self._info:
             info = self._info[geo_name]
@@ -358,7 +644,18 @@ class SimulationGeometry(Mapping):
 
     @classmethod
     def load(cls, group: HirearchicalMap) -> Self:
-        """Load the simulation geometry from a HirearchicalMap."""
+        """Load the simulation geometry from a HirearchicalMap.
+
+        Parameters
+        ----------
+        group : HirearchicalMap
+            Serialized state created by a call to :meth:`SimulationGeometry.save`.
+
+        Returns
+        -------
+        Self
+            De-serialized :class:`SimulationGeometry` object.
+        """
         geometries: list[Geometry] = []
         for geo_name in group:
             sub_group = group.get_hirearchical_map(geo_name)

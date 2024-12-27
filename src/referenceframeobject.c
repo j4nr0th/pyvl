@@ -249,32 +249,32 @@ static PyGetSetDef pyvl_reference_frame_getset[] = {
     {.name = "parent",
      .get = pyvl_reference_frame_get_parent,
      .set = nullptr,
-     .doc = "What frame it is relative to.",
+     .doc = "ReferenceFrame | None : Return what reference frame the current one is defined relative to.\n",
      .closure = nullptr},
     {.name = "offset",
      .get = pyvl_reference_frame_get_offset,
      .set = nullptr,
-     .doc = "Vector determining the offset of the reference frame in parent's frame.",
+     .doc = "array : Vector determining the offset of the reference frame in relative to its parent.",
      .closure = nullptr},
     {.name = "angles",
      .get = pyvl_reference_frame_get_angles,
      .set = nullptr,
-     .doc = "Vector determining the offset of the reference frame in parent's frame.",
+     .doc = "array : Vector determining the rotation of the reference frame in parent's frame.",
      .closure = nullptr},
     {.name = "rotation_matrix",
      .get = pyvl_reference_frame_get_rotation_matrix,
      .set = nullptr,
-     .doc = "Matrix representing rotation of the reference frame.",
+     .doc = "array : Matrix representing rotation of the reference frame.\n",
      .closure = nullptr},
     {.name = "rotation_matrix_inverse",
      .get = pyvl_reference_frame_get_rotation_matrix_inverse,
      .set = nullptr,
-     .doc = "Matrix representing inverse rotation of the reference frame.",
+     .doc = "array : Matrix representing inverse rotation of the reference frame.",
      .closure = nullptr},
     {.name = "parents",
      .get = pyvl_reference_frame_get_parents,
      .set = nullptr,
-     .doc = "Tuple of all parents of this reference frame.",
+     .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
      .closure = nullptr},
     {},
 };
@@ -930,57 +930,227 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
     {.ml_name = "from_parent_with_offset",
      .ml_meth = (void *)pyvl_reference_frame_from_parent_with_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation to the reference frame from parent with offset."},
+     .ml_doc = "from_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map position vector from parent reference frame to the child reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
+               "out : (N, 3) array, optional"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "from_parent_without_offset",
      .ml_meth = (void *)pyvl_reference_frame_from_parent_without_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation to the reference frame from parent without offset."},
+     .ml_doc = "from_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map direction vector from parent reference frame to the child reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
+               "out : (N, 3) array, optional\n"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "to_parent_with_offset",
      .ml_meth = (void *)pyvl_reference_frame_to_parent_with_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation from the reference frame to parent with offset."},
+     .ml_doc = "to_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map position vector from child reference frame to the parent reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+               "out : (N, 3) array, optional"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Position vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "to_parent_without_offset",
      .ml_meth = (void *)pyvl_reference_frame_to_parent_without_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation from the reference frame to parent without offset."},
+     .ml_doc = "to_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map direction vector from child reference frame to the parent reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+               "out : (N, 3) array, optional\n"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Direction vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "from_global_with_offset",
      .ml_meth = (void *)pyvl_reference_frame_from_global_with_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation to the reference frame from global with offset."},
+     .ml_doc = "from_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map position vector from global reference frame to the child reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
+               "out : (N, 3) array, optional"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "from_global_without_offset",
      .ml_meth = (void *)pyvl_reference_frame_from_global_without_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation to the reference frame from global without offset."},
+     .ml_doc = "from_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map direction vector from global reference frame to the child reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
+               "out : (N, 3) array, optional\n"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "to_global_with_offset",
      .ml_meth = (void *)pyvl_reference_frame_to_global_with_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation from the reference frame to global with offset."},
+     .ml_doc = "to_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map position vector from child reference frame to the parent reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+               "out : (N, 3) array, optional"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Position vectors mapped to the global reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "to_global_without_offset",
      .ml_meth = (void *)pyvl_reference_frame_to_global_without_offset,
      .ml_flags = METH_FASTCALL,
-     .ml_doc = "Apply transformation from the reference frame to global without offset."},
+     .ml_doc = "to_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+               "Map direction vector from child reference frame to the global reference frame.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "x : (N, 3) array\n"
+               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+               "out : (N, 3) array, optional\n"
+               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+               "    C-contiguous, and writable.\n"
+               "Returns\n"
+               "-------\n"
+               "(N, 3) array\n"
+               "    Direction vectors mapped to the global reference frame. If the ``out`` parameter was\n"
+               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+               "    then a new array will be allocated."},
     {.ml_name = "rotate_x",
      .ml_meth = pyvl_reference_frame_rotate_x,
      .ml_flags = METH_O,
-     .ml_doc = "Create a copy of the frame rotated around the x-axis."},
+     .ml_doc = "rotate_x(theta_x: float, /) -> Self\n"
+               "Create a copy of the frame rotated around the x-axis.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "theta_x : float\n"
+               "    Angle by which to rotate the reference frame by.\n"
+               "Returns\n"
+               "-------\n"
+               "Self\n"
+               "    Reference frame rotated around the x-axis by the specified angle.\n"},
     {.ml_name = "rotate_y",
      .ml_meth = pyvl_reference_frame_rotate_y,
      .ml_flags = METH_O,
-     .ml_doc = "Create a copy of the frame rotated around the y-axis."},
+     .ml_doc = "rotate_y(theta_y: float, /) -> Self\n"
+               "Create a copy of the frame rotated around the y-axis.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "theta_y : float\n"
+               "    Angle by which to rotate the reference frame by.\n"
+               "Returns\n"
+               "-------\n"
+               "Self\n"
+               "    Reference frame rotated around the y-axis by the specified angle.\n"},
     {.ml_name = "rotate_z",
      .ml_meth = pyvl_reference_frame_rotate_z,
      .ml_flags = METH_O,
-     .ml_doc = "Create a copy of the frame rotated around the z-axis."},
+     .ml_doc = "rotate_z(theta_z: float, /) -> Self\n"
+               "Create a copy of the frame rotated around the z-axis.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "theta_z : float\n"
+               "    Angle by which to rotate the reference frame by.\n"
+               "Returns\n"
+               "-------\n"
+               "Self\n"
+               "    Reference frame rotated around the z-axis by the specified angle.\n"},
     {.ml_name = "with_offset",
      .ml_meth = pyvl_reference_frame_with_offset,
      .ml_flags = METH_O,
-     .ml_doc = "Create a copy of the frame with different offset value."},
+     .ml_doc = "with_offset(offset: VecLike3, /) -> ReferenceFrame\n"
+               "Create a copy of the frame with different offset value.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "offset : VecLike3\n"
+               "    Offset to add to the reference frame relative to its parent.\n"
+               "Returns\n"
+               "-------\n"
+               "ReferenceFrame\n"
+               "    A copy of itself which is translated by the value of ``offset`` in\n"
+               "    the parent's reference frame.\n"},
     {.ml_name = "at_time",
      .ml_meth = pyvl_reference_frame_at_time,
      .ml_flags = METH_O,
-     .ml_doc = "Compute reference frame at the given time.\n"
+     .ml_doc = "at_time(t: float, /) -> Self\n"
+               "Compute reference frame at the given time.\n"
                "\n"
-               "This is useful when the reference frame is moving or rotating in space.\n"
+               "This is used when the reference frame is moving or rotating in space.\n"
                "\n"
                "Parameters\n"
                "----------\n"
@@ -989,25 +1159,92 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                "\n"
                "Returns\n"
                "-------\n"
-               "ReferenceFrame\n"
-               "    New reference frame."},
+               "Self\n"
+               "    New reference frame at the given time.\n"},
     {.ml_name = "angles_from_rotation",
      .ml_meth = pyvl_matrix_to_angles,
      .ml_flags = METH_O | METH_STATIC,
-     .ml_doc = "Compute rotation angles from a transformation matrix."},
+     .ml_doc = "angles_from_rotation(mat: array, /) -> array\n"
+               "Compute rotation angles from a transformation matrix.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "mat : (3, 3) array\n"
+               "    Rotation matrix to convert to the rotation angles. This is done assuming that the\n"
+               "    matrix is orthogonal.\n"
+               "Returns\n"
+               "-------\n"
+               "(3,) array"
+               "    Rotation angles around the x-, y-, and z-axis which result in a transformation\n"
+               "    with equal rotation matrix.\n"},
     {.ml_name = "save",
      .ml_meth = pyvl_reference_frame_save,
      .ml_flags = METH_O,
-     .ml_doc = "Serialize the ReferenceFrame into a HDF5 group."},
+     .ml_doc = "save(hmap: HirearchicalMap, /)\n"
+               "Serialize the ReferenceFrame into a HirearchicalMap.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "hmap : HirearchicalMap\n"
+               "    :class:`HirearchicalMap` in which to save the reference frame into."},
     {.ml_name = "load",
      .ml_meth = (void *)pyvl_reference_frame_load,
      .ml_flags = METH_VARARGS | METH_KEYWORDS | METH_CLASS,
-     .ml_doc = "Load the ReferenceFrame from a HDF5 group."},
+     .ml_doc = "load(self, hmap: HirearchicalMap, parent: ReferenceFrame | None = None/) -> Self\n"
+               "Load the ReferenceFrame from a HirearchicalMap.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "hmap : HirearchicalMap\n"
+               "    A :class:`HirearchicalMap`, which was created with a call to :meth:`ReferenceFrame.save`.\n"
+               "parent : ReferenceFrame, optional\n"
+               "    Parent of the reference frame.\n"
+               "Returns\n"
+               "-------\n"
+               "Self\n"
+               "    Deserialized :class:`ReferenceFrame`.\n"},
     {},
 };
 
-constexpr PyDoc_STRVAR(pyvl_reference_frame_type_docstring,
-                       "Class which is used to define position and orientation of geometry.");
+constexpr PyDoc_STRVAR(
+    pyvl_reference_frame_type_docstring,
+    "ReferenceFrame(offset: VecLike3 = (0, 0, 0), theta:VecLike3 = (0, 0, 0), parent: ReferenceFrame | None = None)\n"
+    "Class which is used to define position and orientation of geometry.\n"
+    "\n"
+    "This class represents a translation, followed by and orthonormal rotation. This transformation from a position "
+    "vector"
+    " :math:`\\vec{r}` in the parent reference frame to a vector :math:`\\vec{r}^\\prime` in child reference frame can"
+    " be written in four steps:\n"
+    "\n"
+    ".. math::\n"
+    "\n"
+    "    \\vec{r}_1 = \\begin{bmatrix} 1 & 0 & 0 \\\\ 0 & \\cos\\theta_x & \\sin\\theta_x \\\\ 0 & -\\sin\\theta_x & "
+    "\\cos\\theta_x \\end{bmatrix} \\vec{r}\n"
+    "\n"
+    ".. math::\n"
+    "\n"
+    "    \\vec{r}_2 = \\begin{bmatrix} -\\sin\\theta_y & 0 & \\cos\\theta_y \\\\ 0 & 1 & 0 \\\\ \\cos\\theta_y & 0 & "
+    "\\sin\\theta_y \\end{bmatrix} \\vec{r}_1\n"
+    "\n"
+    ".. math::\n"
+    "\n"
+    "    \\vec{r}^3 = \\begin{bmatrix} \\cos\\theta_z & \\sin\\theta_z & 0 \\\\ -\\sin\\theta_z & \\cos\\theta_z "
+    "& "
+    "0 \\\\ 0 & 0 & 1 \\end{bmatrix} \\vec{r}_2\n"
+    ".. math::\n"
+    "\n"
+    "    \\vec{r}^\\prime = \\vec{r}_3 + \\vec{d}\n"
+    "\n"
+    "\n"
+    "Parameters\n"
+    "----------\n"
+    "offset : VecLike3, default: (0, 0, 0)\n"
+    "    Position of the reference frame's origin expressed in the parent's reference frame.\n"
+    "\n"
+    "theta : VecLike3, default: (0, 0, 0)\n"
+    "    Rotation of the reference frame relative to its parent. The rotations are applied\n"
+    "    around the x, y, and z axis in that order.\n"
+    "\n");
 
 CVL_INTERNAL
 PyTypeObject pyvl_reference_frame_type = {

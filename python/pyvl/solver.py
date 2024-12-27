@@ -1,6 +1,7 @@
 """Implementation of the flow solver."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Callable, Literal, Self
 
@@ -36,6 +37,7 @@ class SolverState:
         self.positions = np.empty((geometry.n_points, 3), np.float64)
         self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
+        self.circulation = np.empty((geometry.n_surfaces,), np.float64)
         self.settings = settings
 
     def save(self) -> HirearchicalMap:
@@ -68,18 +70,26 @@ class SolverState:
 
 
 OutputFileType = Literal["HDF5", "JSON"]
-NamingFunction = Callable[[int, float], str]
 
 
 @dataclass(init=False, eq=False, frozen=True)
 class OutputSettings:
-    """Settings to control the output from a solver."""
+    """Settings to control the output from a solver.
 
-    naming_callback: Callable[[int, float], str]
+    Parameters
+    ----------
+    ftype : "JSON" or "HDF5"
+        File format to write the output as.
+    naming_callback : (int, float) -> str | Path
+        Callback to use to determine the name of the next file
+        to write based on the iteration number and the simulation time.
+    """
+
+    naming_callback: Callable[[int, float], str | Path]
     serialization_fn: SerializationFunction
 
     def __init__(
-        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str]
+        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str | Path]
     ) -> None:
         serialization_fn: SerializationFunction
         match ftype:
@@ -98,7 +108,17 @@ def run_solver(
     settings: SolverSettings,
     output_settings: OutputSettings,
 ) -> None:
-    """Run the flow solver to obtain specified circulations."""
+    """Run the flow solver to obtain specified circulations.
+
+    Parameters
+    ----------
+    geometry : SimulationGeometry
+        Geometry to solver for.
+    settings : SolverSettings
+        Settings of the solver.
+    outpu_settings : OutputSettings
+        Settings related to file IO.
+    """
     times: npt.NDArray[np.float64]
     if settings.time_settings is None:
         times = np.array((0,), np.float64)

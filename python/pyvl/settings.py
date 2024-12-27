@@ -13,7 +13,20 @@ from pyvl.wake import WakeModel
 
 @dataclass(frozen=True)
 class TimeSettings:
-    """Dataclass containing time setting options."""
+    """Dataclass containing time setting options.
+
+    Parameters
+    ----------
+    nt : int
+        Number of steps to run the simulations for.
+
+    dt : float
+        The increment for each time step.
+
+    output_interval : int, optional
+        If specified, simulation output will be save only after this many
+        iterations have passed since the last output.
+    """
 
     nt: int
     dt: float
@@ -34,7 +47,13 @@ class TimeSettings:
         )  # type: ignore
 
     def save(self) -> HirearchicalMap:
-        """Serialize the object into a HirearchicalMap."""
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`TimeSettings` object.
+        """
         hm = HirearchicalMap()
         hm.insert_int("nt", self.nt)
         hm.insert_scalar("dt", self.dt)
@@ -44,7 +63,19 @@ class TimeSettings:
 
     @classmethod
     def load(cls, hmap: HirearchicalMap) -> Self:
-        """Deserialize the object from a HirearchicalMap."""
+        """Deserialize the object from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`TimeSettings` object created by a call
+            to :meth:`TimeSettings.save`.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`TimeSettings` object.
+        """
         nt = hmap.get_int("nt")
         dt = hmap.get_scalar("dt")
         if "output_interval" in hmap:
@@ -54,19 +85,69 @@ class TimeSettings:
 
 @dataclass
 class ModelSettings:
-    """Class for specifying model settings."""
+    """Class for specifying model settings.
+
+    Parameters
+    ----------
+    vortex_limit : float
+        Minimum distance at which the vortex line induces and velocity.
+    """
 
     vortex_limit: float
+    """This sets the minimum distance at which any velocity is still induced.
+
+    Examples
+    --------
+    The effect of this value can be best shown using the following snippet:
+
+    .. jupyter-execute::
+
+        >>> import numpy as np
+        >>> from matplotlib import pyplot as plt
+        >>>
+        >>> vortex_limit = 2e-1
+        >>> x = np.linspace(0.1, 2, 1001)
+        >>> y = 1 / x
+        >>>
+        >>> plt.plot(x, y, label="no limit", linestyle="dashed")
+        >>> plt.plot(x, y * (x >= vortex_limit), label="limit = $0.2$")
+        >>> plt.legend()
+        >>> plt.grid()
+        >>> plt.xlim(0.1, 1)
+        >>> plt.ylim(0, 10)
+        >>> plt.show()
+
+    This becomes important if the two panels of either geometry or wake approach each
+    other, as the induction might become too large and make the results unstable.
+    """
 
     def save(self) -> HirearchicalMap:
-        """Serialize the object into a HirearchicalMap."""
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`ModelSettings` object.
+        """
         hm = HirearchicalMap()
         hm.insert_scalar("vortex_limit", self.vortex_limit)
         return hm
 
     @classmethod
     def load(cls, hmap: HirearchicalMap) -> Self:
-        """Deserialize the object from a HirearchicalMap."""
+        """Deserialize the object from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`ModelSettings` object created by a call
+            to :meth:`ModelSettings.save`.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`ModelSettings` object.
+        """
         return cls(vortex_limit=hmap.get_scalar("vortex_limit"))
 
 
@@ -75,7 +156,24 @@ class ModelSettings:
 
 @dataclass(frozen=True)
 class SolverSettings:
-    """Dataclass for solver settings."""
+    """Dataclass for solver settings.
+
+    Parameters
+    ----------
+    flow_conditions : FlowConditions
+        Flow conditions to use for the solver.
+
+    model_settings : ModelSettings
+        Settings for the models used by the solver.
+
+    time_setting : TimeSettings, default : TimeSettings(1, 1, None)
+        Time iterations at which to run the solver. By default, a single iteration
+        at time :math:`t = 0` will be run and the result recorded.
+
+    wake_model : WakeModel, optional
+        Model used to correct for the shedding of a wake from the geometry as
+        a result of circulation. If not provided, no model will be used.
+    """
 
     flow_conditions: FlowConditions
     model_settings: ModelSettings
@@ -83,7 +181,13 @@ class SolverSettings:
     wake_model: WakeModel | None = None
 
     def save(self) -> HirearchicalMap:
-        """Serialize the object into a HirearchicalMap."""
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`SolverSettings` object.
+        """
         hm = HirearchicalMap()
         # Flow conditiotns
         fc = HirearchicalMap()
@@ -104,7 +208,19 @@ class SolverSettings:
 
     @classmethod
     def load(cls, hmap: HirearchicalMap) -> Self:
-        """Deserialize the object from a HirearchicalMap."""
+        """Deserialize the object from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`SolverSettings` object created by a call
+            to :meth:`SolverSettings.save`.
+
+        Returns
+        -------
+        Self
+            Deserialized :class:`SolverSettings` object.
+        """
         # Flow conditiotns
         fc = hmap.get_hirearchical_map("flow_conditions")
         flow_conditions_type: type[FlowConditions] = fc.get_type("type")
