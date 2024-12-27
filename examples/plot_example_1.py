@@ -1,7 +1,6 @@
-r""".. pyvl.examples.1:.
-
-Flat Plate
+r"""Flat Plate
 ==========
+
 
 The first case which is typically analyzed in aerodynamics is the simple flat plate.
 This can also serve as validation for any solver, as for incompressible, non-viscous,
@@ -11,9 +10,7 @@ on the inflow angle of attack :math:`\alpha` :
 .. math::
 
     C_l = 2 \pi \sin{\alpha}
-
-.. currentmodule:: pyvl
-"""
+"""  # noqa: D205, D400
 
 import numpy as np
 import pyvista as pv
@@ -29,7 +26,7 @@ pv.set_jupyter_backend("html")
 #
 # The first step is to set up the :class:`Geometry` of the simulation. PyVL is not
 # intended to be a mesh generator. As such, the geometry can be loaded either using
-# :mod:`pyvista` or `MeshIO <https://pypi.org/project/meshio/>` modules.
+# :mod:`pyvista` or `MeshIO <https://pypi.org/project/meshio/>`_ modules.
 #
 # For this case, :mod:`pyvista` will be used to make a simple flat plate.
 
@@ -68,7 +65,7 @@ sim_geo = pyvl.SimulationGeometry(geo)
 
 # %%
 #
-# First, there's the :class:`FlowConditions`. This is an :class:`ABC` intended to be
+# First, there's the :class:`FlowConditions`. This is an :class:`abc.ABC` intended to be
 # subclassed in case anything more specific is required. If a constant free-stream
 # velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
 # be used for constant free-stream.
