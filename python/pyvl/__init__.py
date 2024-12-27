@@ -1,5 +1,8 @@
 """PyVL is a package used for potential flow analysis for geometries."""
 
+# Examples
+from pyvl import examples as examples
+
 # C types
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Line as Line

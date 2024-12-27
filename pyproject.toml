@@ -51,6 +51,7 @@ docs = [
     "sphinx-favicon",
     "sphinx-design",
     "sphinx-gallery",
+    "jupyter_sphinx",
     "pyvista[jupyter,trame]",
     "pypandoc",
     "pytest-sphinx",

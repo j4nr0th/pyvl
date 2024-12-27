@@ -109,6 +109,34 @@ class Geometry:
 
     positions : (N, 3) array_like
         An array of position vectors for coordinates of each point in the mesh.
+
+    Examples
+    --------
+    As an example, load the data from the ``examples`` submodule.
+
+    .. jupyter-execute::
+
+        >>> from pyvl.examples import example_file_name
+        >>> from pyvl import ReferenceFrame, Geometry
+        >>> import pyvista as pv
+        >>> pv.set_plot_theme("document")
+        >>> pv.set_jupyter_backend("html")
+        >>> pv.global_theme.show_edges = True
+
+        >>> import meshio as mio
+        >>> msh = mio.read(example_file_name("wing1.obj"))
+        >>> geo = Geometry.from_meshio(
+        ...     "example_wing",
+        ...     ReferenceFrame(),
+        ...     msh,
+        ... )
+
+    The :class:`Geometry` can now be plotted:
+
+    .. jupyter-execute::
+
+        >>> geo.as_polydata().plot(interactive=False)
+
     """
 
     label: str
