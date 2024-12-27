@@ -387,7 +387,54 @@ class GeometryInfo:
 
 @dataclass(frozen=True)
 class SimulationGeometry(Mapping):
-    """Class which is the result of combining multiple geometries together."""
+    """Class which is the result of combining multiple geometries together.
+
+    Parameters
+    ----------
+    *geometries: Geometry
+        The individual geometries to add in the :class:`SimulationGeometry`.
+
+    Examples
+    --------
+    This example simply loads the example wing and fuselage, then puts them together
+    into a single :class:`SimulationGeometry` object.
+
+    .. jupyter-execute::
+
+        >>> import meshio as mio
+        >>> import pyvista as pv
+        >>> import pyvl
+        >>> from pyvl.examples import example_file_name
+        >>>
+        >>> pv.set_plot_theme("document")
+        >>> pv.set_jupyter_backend("html")
+        >>> pv.global_theme.show_edges = True
+
+    First, the wing is loaded:
+
+    .. jupyter-execute::
+
+        >>> m_wing = mio.read(example_file_name("wing1.obj"))
+        >>> rf_wing = pyvl.ReferenceFrame((-5, 0, 1.5))
+        >>> geo_wing = pyvl.Geometry.from_meshio("wing", rf_wing, m_wing)
+
+    Next, the fuselage:
+
+    .. jupyter-execute::
+
+        >>> m_fus = mio.read(example_file_name("fus1.obj"))
+        >>> rf_fus = pyvl.ReferenceFrame()
+        >>> geo_fus = pyvl.Geometry.from_meshio("fuselage", rf_fus, m_fus)
+
+    Lastly, the two are combined, and the :class:`SimulationGeometry` is displayed
+    afterwards.
+
+    .. jupyter-execute::
+
+        >>> sim_geo = pyvl.SimulationGeometry(geo_wing, geo_fus)
+        >>> sim_geo.polydata_at_time(0.0).plot(interactive=False)
+
+    """
 
     _info: dict[str, GeometryInfo]
     mesh: Mesh
@@ -441,7 +488,7 @@ class SimulationGeometry(Mapping):
         object.__setattr__(self, "n_surfaces", n_surfaces)
 
     def __getitem__(self, key: str) -> GeometryInfo:
-        """Return the geometry corresponding to the key."""
+        """Return the Geometry corresponding to the key."""
         return self._info[key]
 
     def __iter__(self) -> Iterator[str]:
@@ -469,7 +516,21 @@ class SimulationGeometry(Mapping):
         return self._info.values()
 
     def positions_at_time(self, t: float) -> npt.NDArray[np.float64]:
-        """Return the point positions at the specified time."""
+        """Return the point positions at the specified time.
+
+        This uses the different reference frames of the individual :class:`Geometry`
+        objects to determine their positions in the global reference frame.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the positions at.
+
+        Returns
+        -------
+        (N, 3) array
+            Array of position vectors of positions of individual points of the geometries.
+        """
         pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
@@ -478,14 +539,45 @@ class SimulationGeometry(Mapping):
         return pos
 
     def polydata_at_time(self, t: float) -> pv.PolyData:
-        """Return the geometry as polydata at the specified time."""
+        """Return the geometry as polydata at the specified time.
+
+        This uses the :meth:`SimulationGeometry.positions_at_time` to determine
+        the positions of individual mesh points.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the mesh at.
+
+        Returns
+        -------
+        pyvista.PolyData
+            :class:`pyvista.PolyData` object which represents the surface mesh.
+        """
         pos = self.positions_at_time(t)
         faces = mesh_to_polydata_faces(self.mesh)
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
 
     def te_normal_criterion(self, crit: float) -> npt.NDArray[np.uint]:
-        """Identify edges, for which the normals of neighbouring surfaces meet dp crit."""
+        """Identify edges, for which the normals of neighbouring surfaces meet dp crit.
+
+        This function returns the array with indices of all mesh edges which meet the
+        specific criterion. In this case, this criterion is that the edge should border
+        two surfaces, whose unit normals have dot product less than the value specified
+        by ``crit``. This can be used to identify closed trailing edges.
+
+        Parameters
+        ----------
+        crit : float
+            Minimum value of dot product of neighbouring surface unit normal vectors
+            before an edge is considered.
+
+        Returns
+        -------
+        array
+            Array of sorted indices of edges which meet the criterion.
+        """
         normals = np.empty((self.n_surfaces, 3), np.float64)
         for name in self._info:
             info = self._info[name]
@@ -493,13 +585,39 @@ class SimulationGeometry(Mapping):
         return self.dual.dual_normal_criterion(crit, normals)
 
     def te_free_criterion(self) -> npt.NDArray[np.uint]:
-        """Identify edges, which have only one surface attached."""
+        """Identify edges, which have only one surface attached.
+
+        This function returns the array with indices of all mesh edges which meet the
+        specific criterion. In this case, this criterion is that the edge should be a
+        part of one and only one surface.
+
+        Returns
+        -------
+        array
+            Array of sorted indices of edges which meet the criterion.
+        """
         return self.dual.dual_free_edges()
 
     def line_adjecency_information(
         self, lines: Sequence[int] | npt.NDArray[np.integer]
     ) -> tuple[npt.NDArray[np.uint], npt.NDArray[np.uint]]:
-        """Return line information in terms of adjacent points and surfaces."""
+        """Return the arrays of indices of nodes and surfaces related with the edges.
+
+        The first array returned is the array of bordering nodes for each edge specified.
+        Along with it, an array with indices of surfaces bordering the line is returned.
+
+        Parameters
+        ----------
+        lines : Sequence of N int or (N,) array
+            Lines for which the information should be returned.
+
+        Returns
+        -------
+        (N, 2) array
+            Array with indices of nodes which the lines connect.
+        (N, 2) array
+            Array with indices of surfaces which the lines border.
+        """
         bordering_nodes = np.empty((len(lines), 2), np.uint)
         adjacent_surfaces = np.empty((len(lines), 2), np.uint)
         for i, line_id in enumerate(lines):
@@ -510,7 +628,13 @@ class SimulationGeometry(Mapping):
         return (bordering_nodes, adjacent_surfaces)
 
     def save(self) -> HirearchicalMap:
-        """Save the simulation geometry into a HirearchicalMap."""
+        """Save the simulation geometry into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            State serialized into a :class:`HirearchicalMap` object.
+        """
         out = HirearchicalMap()
         for geo_name in self._info:
             info = self._info[geo_name]
@@ -520,7 +644,18 @@ class SimulationGeometry(Mapping):
 
     @classmethod
     def load(cls, group: HirearchicalMap) -> Self:
-        """Load the simulation geometry from a HirearchicalMap."""
+        """Load the simulation geometry from a HirearchicalMap.
+
+        Parameters
+        ----------
+        group : HirearchicalMap
+            Serialized state created by a call to :meth:`SimulationGeometry.save`.
+
+        Returns
+        -------
+        Self
+            De-serialized :class:`SimulationGeometry` object.
+        """
         geometries: list[Geometry] = []
         for geo_name in group:
             sub_group = group.get_hirearchical_map(geo_name)

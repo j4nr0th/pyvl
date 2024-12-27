@@ -191,7 +191,7 @@ class RotorReferenceFrame(ReferenceFrame):
         )
 
     def save(self, group: HirearchicalMap) -> None:
-        """Serialze the reference frame into the HDF5 group."""
+        """Serialize the reference frame into the HDF5 group."""
         raise NotImplementedError
 
     @classmethod

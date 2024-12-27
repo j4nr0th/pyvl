@@ -1,9 +1,7 @@
 .. _pyvl.public_python:
 
-.. toctree::
-    :hidden:
+.. currentmodule:: pyvl
 
-    reference_frame
 
 Public Python API
 =================
@@ -33,12 +31,18 @@ Defining Geometry
 The most basic building block is the :class:`Geometry` object. Since
 ``PyVL`` is not a meshing library, the expectation is that the mesh will
 be created with some other program, then loaded by either using
-:class:`pyvista.PolyData` or :class:`meshio.Mesh`.
+:class:`pyvista.PolyData` or :class:`meshio.Mesh`. More information about the
+:class:`Geometry` type can be found :ref:`here <pyvl.geometry>`.
 
-The class itself is defined as such:
+One or more :class:`Geometry` objects constitute a :class:`SimulationGeometry`. This
+is an object, which can be passed to the solver and computes additional information about
+the individual geometrical objects, such as the dual mesh.
 
 
-.. autoclass:: pyvl.Geometry
-    :members:
-    :member-order: bysource
-    :exclude-members: save, load
+
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+
+    reference_frame
+    geometry

@@ -107,6 +107,6 @@ console_output_style = "count"
 [tool.interrogate]
 ignore-init-method = true
 fail-under = 100
-exclude = ["sandbox", "docs", "build", ".*/", "cmake-*/"]
+exclude = ["sandbox", "doc", "build", ".*/", "cmake-*/"]
 style = "sphinx"
 verbose = 1

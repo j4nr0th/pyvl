@@ -33,12 +33,6 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 html_theme = 'pydata_sphinx_theme'
 html_static_path = ['_static']
-html_theme_options = {
-    'collapsiblesidebar': True,
-    'issues_url': '/bugs.html',
-    'license_url': '/license.html',
-    'root_include_title': True,
-}
 
 # -- Options for Intersphinx -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/extensions/intersphinx.html
