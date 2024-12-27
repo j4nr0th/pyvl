@@ -246,22 +246,22 @@ class ReferenceFrame:
 
     .. math::
 
-        \vec{r}_1 = \vec{r} + \vec{d}
+        \vec{r}_1 = \begin{bmatrix} 1 & 0 & 0 \\\ 0 & \cos\theta_x & \sin\theta_x \\\
+        0 & -\sin\theta_x & \cos\theta_x \end{bmatrix} \vec{r}
 
     .. math::
 
-        \vec{r}_2 = \begin{bmatrix} 1 & 0 & 0 \\\ 0 & \cos\theta_x & \sin\theta_x \\\
-        0 & -\sin\theta_x & \cos\theta_x \end{bmatrix} \vec{r}_1
+        \vec{r}_2 = \begin{bmatrix} -\sin\theta_y & 0 & \cos\theta_y \\\ 0 & 1 & 0 \\\
+        \cos\theta_y & 0 & \sin\theta_y \end{bmatrix} \vec{r}_1
 
     .. math::
 
-        \vec{r}_3 = \begin{bmatrix} -\sin\theta_y & 0 & \cos\theta_y \\\ 0 & 1 & 0 \\\
-        \cos\theta_y & 0 & \sin\theta_y \end{bmatrix} \vec{r}_2
+        \vec{r}^3 = \begin{bmatrix} \cos\theta_z & \sin\theta_z & 0 \\\
+        -\sin\theta_z & \cos\theta_z & 0 \\\ 0 & 0 & 1 \end{bmatrix} \vec{r}_2
 
     .. math::
 
-        \vec{r}^\prime = \begin{bmatrix} \cos\theta_z & \sin\theta_z & 0 \\\
-        -\sin\theta_z & \cos\theta_z & 0 \\\ 0 & 0 & 1 \end{bmatrix} \vec{r}_3
+        \vec{r}^\prime = \vec{r}_3 + \vec{d}
 
     Parameters
     ----------
@@ -554,7 +554,7 @@ class ReferenceFrame:
         """
         ...
 
-    def at_time(self, t: float) -> ReferenceFrame:
+    def at_time(self, t: float) -> Self:
         """Compute reference frame at the given time.
 
         This is used when the reference frame is moving or rotating in space.
@@ -566,7 +566,7 @@ class ReferenceFrame:
 
         Returns
         -------
-        ReferenceFrame
+        Self
             New reference frame at the given time.
         """
         ...
@@ -589,15 +589,13 @@ class ReferenceFrame:
         """
         ...
 
-    def save(self, group: HirearchicalMap, /) -> None:
-        """
-        Serialize the ReferenceFrame into a HirearchicalMap.
+    def save(self, hmap: HirearchicalMap, /) -> None:
+        """Serialize the ReferenceFrame into a HirearchicalMap.
 
-        Returns
-        -------
-        HirearchicalMap
-            Contents of the reference frame frame serialized into a
-            :class:`HirearchicalMap`.
+        Parameters
+        ----------
+        hmap: HirearchicalMap
+            :class:`HirearchicalMap` in which to save the reference frame into.
         """
         ...
 
@@ -610,6 +608,8 @@ class ReferenceFrame:
         hmap : HirearchicalMap
             A :class:`HirearchicalMap`, which was created with a call to
             :meth:`ReferenceFrame.save`.
+        parent : ReferenceFrame, optional
+            Parent of the reference frame.
 
         Returns
         -------

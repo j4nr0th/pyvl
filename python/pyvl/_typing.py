@@ -10,4 +10,5 @@ VecLike3 = (
     tuple[FloatLike, FloatLike, FloatLike]
     | Sequence[FloatLike]
     | npt.NDArray[np.floating]
+    | npt.NDArray[np.integer]
 )

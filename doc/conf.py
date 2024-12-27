@@ -66,6 +66,7 @@ autodoc_member_order = "groupwise"
 autodoc_type_aliases = {
     "npt.ArrayLike": "array_like",
     "npt.NDArray": "ndarray",
+    "VecLike3" : "Vec3",
 }
 
 # -- Options for Sphinx Gallery ----------------------------------------------

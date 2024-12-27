@@ -1,5 +1,10 @@
 .. _pyvl.public_python:
 
+.. toctree::
+    :hidden:
+
+    reference_frame
+
 Public Python API
 =================
 
@@ -18,13 +23,8 @@ for a plane ought to be pointing towards the ground, while the x-axis is positiv
 the tail towards the plane's nose.
 
 To be able to co-exist with such savages, the :class:`ReferenceFrame` object can be used.
-
-.. autoclass:: pyvl.ReferenceFrame
-    :members:
-    :exclude-members: save, load
-
-
-
+The :class:`ReferenceFrame` can also be subclassed to allow for translational and rotational
+motion. This is described more in depth on :ref:`this page <pyvl.reference_frame>`.
 
 
 Defining Geometry
