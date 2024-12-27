@@ -38,7 +38,14 @@ One or more :class:`Geometry` objects constitute a :class:`SimulationGeometry`. 
 is an object, which can be passed to the solver and computes additional information about
 the individual geometrical objects, such as the dual mesh.
 
+Describing Flow
+---------------
 
+Besides geometry, the flow conditions need to be described. This is done by by using a sub-type
+of :class:`FlowConditions`. This is an abstract base class (inherits from :class:`abc.ABC`), which
+means it defines methods which must be implemented. For most basic cases this is un-necessary, as
+almost all common cases can be easily be represented by the sub-types implemented in the :mod:`pyvl`
+module. More information about the base class and sub-types already implemented is provided
 
 .. toctree::
     :maxdepth: 2
@@ -46,3 +53,4 @@ the individual geometrical objects, such as the dual mesh.
 
     reference_frame
     geometry
+    flow_conditions
