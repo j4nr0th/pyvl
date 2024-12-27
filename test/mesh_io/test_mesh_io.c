@@ -26,7 +26,7 @@ int main(int argc, char *argv[static restrict argc])
     if (argc < 2 || argc > 3)
         return 1;
     const char *in_mesh_path = argv[1];
-    const char *out_mesh_path = argc == 3 ? argv[2] : nullptr;
+    const char *out_mesh_path = argc == 3 ? argv[2] : NULL;
 
     FILE *f_in = fopen(in_mesh_path, "r");
     TEST_ASSERT(f_in, "Failed opening file %s, error %s", in_mesh_path, strerror(errno));

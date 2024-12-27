@@ -38,7 +38,7 @@ PyVL_LineObject *pyvl_line_from_indices(unsigned begin, unsigned end)
 {
     PyVL_LineObject *const this = (PyVL_LineObject *)pyvl_line_type.tp_alloc(&pyvl_line_type, 0);
     if (!this)
-        return nullptr;
+        return NULL;
     this->begin = begin;
     this->end = end;
 
@@ -48,9 +48,9 @@ PyVL_LineObject *pyvl_line_from_indices(unsigned begin, unsigned end)
 static PyObject *pyvl_line_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     PyObject *a1, *a2;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO", (char *[3]){"begin", "end", nullptr}, &a1, &a2))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO", (char *[3]){"begin", "end", NULL}, &a1, &a2))
     {
-        return nullptr;
+        return NULL;
     }
     unsigned begin, end;
     if (PyObject_TypeCheck(a1, &pyvl_geoid_type))
@@ -61,7 +61,7 @@ static PyObject *pyvl_line_new(PyTypeObject *type, PyObject *args, PyObject *kwa
     {
         begin = PyLong_AsUnsignedLong(a1);
         if (PyErr_Occurred())
-            return nullptr;
+            return NULL;
     }
 
     if (PyObject_TypeCheck(a2, &pyvl_geoid_type))
@@ -72,12 +72,12 @@ static PyObject *pyvl_line_new(PyTypeObject *type, PyObject *args, PyObject *kwa
     {
         end = PyLong_AsUnsignedLong(a2);
         if (PyErr_Occurred())
-            return nullptr;
+            return NULL;
     }
 
     PyVL_LineObject *const this = (PyVL_LineObject *)type->tp_alloc(type, 0);
     if (!this)
-        return nullptr;
+        return NULL;
     this->begin = begin;
     this->end = end;
 
@@ -104,10 +104,10 @@ static PyObject *pyvl_line_rich_compare(PyObject *self, PyObject *other, const i
     return PyBool_FromLong(val);
 }
 
-constexpr PyDoc_STRVAR(pyvl_line_type_docstring, "Class which describes a connection between two points.");
+PyDoc_STRVAR(pyvl_line_type_docstring, "Class which describes a connection between two points.");
 
 PyTypeObject pyvl_line_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pyvl.cvl.Line",
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0).tp_name = "pyvl.cvl.Line",
     .tp_basicsize = sizeof(PyVL_LineObject),
     .tp_itemsize = 0,
     .tp_repr = pyvl_line_repr,

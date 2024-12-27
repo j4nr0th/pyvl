@@ -57,12 +57,12 @@ static PyGetSetDef geoid_getset[] = {
      .get = geoid_get_orientation,
      .set = geoid_set_orientation,
      .doc = "Orientation of the object referenced by id.",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "index",
      .get = geoid_get_index,
      .set = geoid_set_index,
      .doc = "Index of the object referenced by id.",
-     .closure = nullptr},
+     .closure = NULL},
     {}, // sentinel
 };
 
@@ -70,15 +70,15 @@ static PyObject *geoid_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     unsigned long value;
     int orientation = 0;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "I|p", (char *[3]){"index", "orientation", nullptr}, &value,
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "I|p", (char *[3]){"index", "orientation", NULL}, &value,
                                      &orientation))
     {
-        return nullptr;
+        return NULL;
     }
 
     PyVL_GeoIDObject *const this = (PyVL_GeoIDObject *)type->tp_alloc(type, 0);
     if (!this)
-        return nullptr;
+        return NULL;
 
     this->id.orientation = orientation;
     this->id.value = value;
@@ -106,10 +106,10 @@ static PyObject *geoid_rich_compare(PyObject *self, PyObject *other, const int o
     return PyBool_FromLong(val);
 }
 
-constexpr PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
+PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
 
 PyTypeObject pyvl_geoid_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pyvl.cvl.GeoID",
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0).tp_name = "pyvl.cvl.GeoID",
     .tp_basicsize = sizeof(PyVL_GeoIDObject),
     .tp_itemsize = 0,
     .tp_getset = geoid_getset,
