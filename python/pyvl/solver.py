@@ -108,7 +108,17 @@ def run_solver(
     settings: SolverSettings,
     output_settings: OutputSettings,
 ) -> None:
-    """Run the flow solver to obtain specified circulations."""
+    """Run the flow solver to obtain specified circulations.
+
+    Parameters
+    ----------
+    geometry : SimulationGeometry
+        Geometry to solver for.
+    settings : SolverSettings
+        Settings of the solver.
+    outpu_settings : OutputSettings
+        Settings related to file IO.
+    """
     times: npt.NDArray[np.float64]
     if settings.time_settings is None:
         times = np.array((0,), np.float64)

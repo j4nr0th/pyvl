@@ -67,7 +67,7 @@ how often output of the simulation is saved. If it is not specified, each step w
 otherwise, it will only be saved one every ``n`` step.
 
 It can also be used to run multiple steady-state simulations in series, depending on the choice
-of :ref:`flow conditions <pyvl.flow_conditions>` and (TODO: wake model). More details about the class
+of :ref:`flow conditions <pyvl.flow_conditions>` and :ref:`wake model <pyvl.wake_models>`. More details about the class
 can be found :ref:`here <pyvl.time_settings>`.
 
 Specifying Models
@@ -90,7 +90,7 @@ cases, as the most common wake models are already implemented. For a more in-dep
 different wake models available, see :ref:`this <pyvl.wake_models>`.
 
 Controlling the Output
----------------------
+----------------------
 
 While controlling the frequency of output is up to :class:`TimeSettings`, the manner in which it is done
 is controlled by :class:`OutputSettings`. Simulation results can theoretically be written to any file type
@@ -98,6 +98,13 @@ which supports hierarchical data storage along with number arrays.
 
 Currently, IO can be done with the `JSON <https://www.json.org/>`_ and `HDF5 <https://www.hdfgroup.org/solutions/hdf5/>`_
 file formats. More specific information about these files can be found :ref:`here <pyvl.output_settings>`
+
+Running the Solver
+------------------
+
+After the geometry is defined and all the settings have been assembled, the simulation can be run
+using the :func:`run_solver`. More information about it and using the solver is provided
+:ref:`here <pyvl.solver>`.
 
 .. toctree::
     :maxdepth: 2
@@ -111,3 +118,4 @@ file formats. More specific information about these files can be found :ref:`her
     solver_settings
     wake_models
     output_settings
+    solver
