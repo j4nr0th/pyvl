@@ -74,7 +74,16 @@ OutputFileType = Literal["HDF5", "JSON"]
 
 @dataclass(init=False, eq=False, frozen=True)
 class OutputSettings:
-    """Settings to control the output from a solver."""
+    """Settings to control the output from a solver.
+
+    Parameters
+    ----------
+    ftype : "JSON" or "HDF5"
+        File format to write the output as.
+    naming_callback : (int, float) -> str | Path
+        Callback to use to determine the name of the next file
+        to write based on the iteration number and the simulation time.
+    """
 
     naming_callback: Callable[[int, float], str | Path]
     serialization_fn: SerializationFunction
