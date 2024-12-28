@@ -41,6 +41,9 @@ def compute_velocities(
         )
         np.vecdot(ind_mat, circulation[None, :, None], axis=1, out=output_array[i, :, :])  # type: ignore
         output_array[i, :, :] += results.settings.flow_conditions.get_velocity(t, cpts)
+        wm = results.wake_models[i]
+        if wm is not None:
+            output_array[i, :, :] += wm.get_velocity(cpts)
     return output_array
 
 
@@ -80,4 +83,7 @@ def compute_velocities_variable(
         )
         out_list.append(np.vecdot(ind_mat, circulation[None, :, None], axis=1))  # type: ignore
         out_list[-1] += results.settings.flow_conditions.get_velocity(t, cpts)
+        wm = results.wake_models[i]
+        if wm is not None:
+            out_list[-1] += wm.get_velocity(cpts)
     return out_list
