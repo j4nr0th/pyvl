@@ -3,6 +3,9 @@
 # Examples
 from pyvl import examples as examples
 
+# Post processing
+from pyvl import postprocess as postprocess
+
 # C types
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Line as Line
@@ -10,7 +13,7 @@ from pyvl.cvl import Mesh as Mesh
 from pyvl.cvl import ReferenceFrame as ReferenceFrame
 from pyvl.cvl import Surface as Surface
 
-# IO
+# File IO
 from pyvl.fio.io_common import HirearchicalMap as HirearchicalMap
 
 # Flow Conditions

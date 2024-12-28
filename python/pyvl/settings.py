@@ -8,7 +8,6 @@ import numpy.typing as npt
 
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.flow_conditions import FlowConditions
-from pyvl.wake import WakeModel
 
 
 @dataclass(frozen=True)
@@ -178,7 +177,6 @@ class SolverSettings:
     flow_conditions: FlowConditions
     model_settings: ModelSettings
     time_settings: TimeSettings = TimeSettings(1, 1, None)
-    wake_model: WakeModel | None = None
 
     def save(self) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
@@ -198,12 +196,6 @@ class SolverSettings:
         hm.insert_hirearchycal_map("model_settings", self.model_settings.save())
         # Time settings
         hm.insert_hirearchycal_map("time_settings", self.time_settings.save())
-        # Wake model
-        if self.wake_model is not None:
-            wm = HirearchicalMap()
-            wm.insert_type("type", type(self.wake_model))
-            wm.insert_hirearchycal_map("data", self.wake_model.save())
-            hm.insert_hirearchycal_map("wake_model", wm)
         return hm
 
     @classmethod
@@ -232,15 +224,8 @@ class SolverSettings:
         model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))
         # Time settings
         time_settings = TimeSettings.load(hmap.get_hirearchical_map("time_settings"))
-        # Wake model
-        wake_model = None
-        if "wake_model" in hmap:
-            wm = hmap.get_hirearchical_map("wake_model")
-            wm_type: type[WakeModel] = wm.get_type("type")
-            wake_model = wm_type.load(wm.get_hirearchical_map("data"))
         return cls(
             flow_conditions=flow_conditions,
             model_settings=model_settings,
             time_settings=time_settings,
-            wake_model=wake_model,
         )
