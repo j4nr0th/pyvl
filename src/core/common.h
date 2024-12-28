@@ -22,8 +22,8 @@ typedef double real_t;
 
 typedef struct
 {
-    uint32_t orientation : 1;
     uint32_t value : 31;
+    uint32_t orientation : 1;
 } geo_id_t;
 
 enum : uint32_t

@@ -781,8 +781,8 @@ static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize
         {
             const line_t *p_line = m->mesh.lines + il;
             *l = (line_t){
-                .p1 = (geo_id_t){.orientation = p_line->p1.orientation, p_line->p1.value + cnt_pts},
-                .p2 = (geo_id_t){.orientation = p_line->p2.orientation, p_line->p2.value + cnt_pts},
+                .p1 = (geo_id_t){.orientation = p_line->p1.orientation, .value = p_line->p1.value + cnt_pts},
+                .p2 = (geo_id_t){.orientation = p_line->p2.orientation, .value = p_line->p2.value + cnt_pts},
             };
             l += 1;
         }
