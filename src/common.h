@@ -11,7 +11,7 @@ static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, c
     if (!PyArray_Check(arr))
     {
         PyErr_Format(PyExc_TypeError, "%s was not an array, but was instead %R", array_name, PyObject_Type(arr));
-        return nullptr;
+        return NULL;
     }
 
     PyArrayObject *const this = (PyArrayObject *)arr;
@@ -21,7 +21,7 @@ static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, c
         {
             PyErr_Format(PyExc_ValueError, "%s did not have the expected number of axis (%u required, %u found).",
                          array_name, n_dims, (unsigned)PyArray_NDIM(this));
-            return nullptr;
+            return NULL;
         }
         const npy_intp *real_dims = PyArray_DIMS(this);
         for (unsigned i = 0; i < n_dims; ++i)
@@ -32,7 +32,7 @@ static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, c
                              "%s did not have the expected shape (axis %u should have the size"
                              " of %u, but was instead %u).",
                              array_name, i, dims[i], (unsigned)real_dims[i]);
-                return nullptr;
+                return NULL;
             }
         }
     }
@@ -42,23 +42,23 @@ static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, c
         if ((flags & NPY_ARRAY_C_CONTIGUOUS) && !(real_flags & NPY_ARRAY_C_CONTIGUOUS))
         {
             PyErr_Format(PyExc_ValueError, "%s was not C-contiguous.", array_name);
-            return nullptr;
+            return NULL;
         }
         if ((flags & NPY_ARRAY_WRITEABLE) && !(real_flags & NPY_ARRAY_WRITEABLE))
         {
             PyErr_Format(PyExc_ValueError, "%s was not writable.", array_name);
-            return nullptr;
+            return NULL;
         }
         if ((flags & NPY_ARRAY_ALIGNED) && !(real_flags & NPY_ARRAY_ALIGNED))
         {
             PyErr_Format(PyExc_ValueError, "%s was not aligned.", array_name);
-            return nullptr;
+            return NULL;
         }
     }
     if (type > 0 && PyArray_TYPE(this) != type)
     {
         PyErr_Format(PyExc_ValueError, "%s did not have the correct data type.", array_name);
-        return nullptr;
+        return NULL;
     }
 
     return this;

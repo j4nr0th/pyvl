@@ -6,7 +6,7 @@ endif ()
 
 project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 
-set(CMAKE_C_STANDARD 23)
+set(CMAKE_C_STANDARD 17)
 
 find_package(OpenMP REQUIRED)
 find_package(OpenACC REQUIRED)
@@ -88,7 +88,9 @@ target_link_libraries(cvl PRIVATE ${OpenACC_C_LIBRARIES})
 
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -g -fopt-info-optimized-omp -fno-omit-frame-pointer)
+    target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -std=c17 -fopt-info-optimized-omp -fno-omit-frame-pointer)
+elseif (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(cvl PRIVATE )
 endif ()
 
 #get_target_property(MAIN_CFLAGS cvl COMPILE_OPTIONS)

@@ -27,7 +27,7 @@ static int string_stream_write_fmt(string_stream *stream, const char *fmt, ...)
     va_list args, cpy;
     va_start(args, fmt);
     va_copy(cpy, args);
-    int cnt = vsnprintf(nullptr, 0, fmt, cpy);
+    int cnt = vsnprintf(NULL, 0, fmt, cpy);
     va_end(cpy);
     if (cnt < 0)
     {
@@ -73,7 +73,7 @@ static int unpack_id(const geo_id_t id)
 char *serialize_mesh(const mesh_t *this, const real3_t *positions, const allocator_t *allocator)
 {
     string_stream out_stream = {
-        .buffer = nullptr,
+        .buffer = NULL,
         .allocator = allocator,
         .used = 0,
         .capacity = 0,
@@ -125,7 +125,7 @@ char *serialize_mesh(const mesh_t *this, const real3_t *positions, const allocat
 
 failed:
     allocator->deallocate(allocator->state, out_stream.buffer);
-    return nullptr;
+    return NULL;
 }
 
 static geo_id_t pack_id(const int i)
@@ -161,10 +161,10 @@ static const char *skip_forward(const char *str)
 int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, const allocator_t *allocator)
 {
     mesh_t this;
-    real3_t *positions = nullptr;
-    this.lines = nullptr;
-    this.surface_offsets = nullptr;
-    this.surface_lines = nullptr;
+    real3_t *positions = NULL;
+    this.lines = NULL;
+    this.surface_offsets = NULL;
+    this.surface_lines = NULL;
 
     char *ptr = (char *)str;
     //  Parse version of file

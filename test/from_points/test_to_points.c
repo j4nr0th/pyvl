@@ -38,9 +38,9 @@ static void load_points(const char *path, unsigned *n_out, unsigned **n_per_elem
     char *const str = read_file_to_string(path, 4096);
     TEST_ASSERT(str, "Could not read file %s", path);
     unsigned size1 = 0, capacity1 = 0;
-    unsigned *ptr1 = nullptr;
+    unsigned *ptr1 = NULL;
     unsigned size2 = 0, capacity2 = 0;
-    unsigned *ptr2 = nullptr;
+    unsigned *ptr2 = NULL;
 
     char *p = str;
     unsigned current_cnt = 0;

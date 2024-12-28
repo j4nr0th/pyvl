@@ -13,11 +13,11 @@ static PyModuleDef cvl_module = {
     .m_name = "cvl",
     .m_doc = "The C implementation part of PyVL",
     .m_size = -1,
-    .m_methods = nullptr,
-    .m_slots = nullptr,
-    .m_traverse = nullptr,
-    .m_clear = nullptr,
-    .m_free = nullptr,
+    .m_methods = NULL,
+    .m_slots = NULL,
+    .m_traverse = NULL,
+    .m_clear = NULL,
+    .m_free = NULL,
 };
 
 PyMODINIT_FUNC PyInit_cvl(void)
@@ -25,7 +25,7 @@ PyMODINIT_FUNC PyInit_cvl(void)
     // TODO: as a low priority, maybe add Perf maps for each subfile.
     import_array();
     if (PyArray_ImportNumPyAPI() < 0)
-        return nullptr;
+        return NULL;
 
     PyObject *const mod = PyModule_Create(&cvl_module);
     if (!mod)
@@ -47,5 +47,5 @@ PyMODINIT_FUNC PyInit_cvl(void)
     return mod;
 failed:
     Py_XDECREF(mod);
-    return nullptr;
+    return NULL;
 }

@@ -6,8 +6,16 @@
 #define COMMON_H
 
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef M_1_PI
+#define M_1_PI 0.31830988618379067154 /* 1/pi */
+#endif
 
 typedef double real_t;
 // typedef uint32_t id_t;

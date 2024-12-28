@@ -9,20 +9,20 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
     double theta_x = 0, theta_y = 0, theta_z = 0;
     double offset_x = 0, offset_y = 0, offset_z = 0;
     PyVL_ReferenceFrame *parent;
-    PyObject *p = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|(ddd)(ddd)O", (char *[4]){"offset", "theta", "parent", nullptr},
+    PyObject *p = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|(ddd)(ddd)O", (char *[4]){"offset", "theta", "parent", NULL},
                                      &offset_x, &offset_y, &offset_z, &theta_x, &theta_y, &theta_z, &p))
     {
-        return nullptr;
+        return NULL;
     }
-    if (p == nullptr || Py_IsNone(p))
+    if (p == NULL || Py_IsNone(p))
     {
-        parent = nullptr;
+        parent = NULL;
     }
     else if (!PyObject_TypeCheck(p, &pyvl_reference_frame_type))
     {
         PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R", Py_TYPE(p));
-        return nullptr;
+        return NULL;
     }
     else
     {
@@ -35,7 +35,7 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
     PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)type->tp_alloc(type, 0);
     if (!this)
     {
-        return nullptr;
+        return NULL;
     }
     Py_XINCREF(parent);
 
@@ -60,17 +60,17 @@ static PyObject *pyvl_reference_frame_repr(PyObject *self)
     // the parent in Python code.
 
     // const int repr_res = Py_ReprEnter(self);
-    // if (repr_res < 0) return nullptr;
+    // if (repr_res < 0) return NULL;
     // if (repr_res > 0) return PyUnicode_FromString("...");
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     PyObject *out;
-    unsigned len = snprintf(nullptr, 0, "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
+    unsigned len = snprintf(NULL, 0, "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
                             this->transformation.angles.y, this->transformation.angles.z, this->transformation.offset.x,
                             this->transformation.offset.y, this->transformation.offset.z);
     char *buffer = PyMem_Malloc((len + 1) * sizeof *buffer);
     if (!buffer)
-        return nullptr;
+        return NULL;
     (void)snprintf(buffer, (len + 1) * sizeof(*buffer), "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
                    this->transformation.angles.y, this->transformation.angles.z, this->transformation.offset.x,
                    this->transformation.offset.y, this->transformation.offset.z);
@@ -101,17 +101,17 @@ static PyObject *pyvl_reference_frame_get_parent(PyObject *self, void *Py_UNUSED
 
 static PyObject *pyvl_reference_frame_get_offset(PyObject *self, void *Py_UNUSED(closure))
 {
-    constexpr npy_intp dim = 3;
+    static const npy_intp dim = 3;
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(1, &dim, NPY_DOUBLE);
     if (!out)
-        return nullptr;
+        return NULL;
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     double *const p_out = PyArray_DATA(out);
     if (!p_out)
     {
         // I don't think this would ever even happen.
         Py_DECREF(out);
-        return nullptr;
+        return NULL;
     }
     p_out[0] = this->transformation.offset.x;
     p_out[1] = this->transformation.offset.y;
@@ -121,17 +121,17 @@ static PyObject *pyvl_reference_frame_get_offset(PyObject *self, void *Py_UNUSED
 
 static PyObject *pyvl_reference_frame_get_angles(PyObject *self, void *Py_UNUSED(closure))
 {
-    constexpr npy_intp dim = 3;
+    static const npy_intp dim = 3;
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(1, &dim, NPY_DOUBLE);
     if (!out)
-        return nullptr;
+        return NULL;
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     double *const p_out = PyArray_DATA(out);
     if (!p_out)
     {
         // I don't think this would ever even happen.
         Py_DECREF(out);
-        return nullptr;
+        return NULL;
     }
     p_out[0] = this->transformation.angles.x;
     p_out[1] = this->transformation.angles.y;
@@ -141,17 +141,17 @@ static PyObject *pyvl_reference_frame_get_angles(PyObject *self, void *Py_UNUSED
 
 static PyObject *pyvl_reference_frame_get_rotation_matrix(PyObject *self, void *Py_UNUSED(closure))
 {
-    constexpr npy_intp dims[2] = {3, 3};
+    static const npy_intp dims[2] = {3, 3};
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_DOUBLE);
     if (!out)
-        return nullptr;
+        return NULL;
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     double *const p_out = PyArray_DATA(out);
     if (!p_out)
     {
         // I don't think this would ever even happen.
         Py_DECREF(out);
-        return nullptr;
+        return NULL;
     }
     const real3x3_t mat = real3x3_from_angles(this->transformation.angles);
     for (unsigned i = 0; i < 9; ++i)
@@ -163,17 +163,17 @@ static PyObject *pyvl_reference_frame_get_rotation_matrix(PyObject *self, void *
 
 static PyObject *pyvl_reference_frame_get_rotation_matrix_inverse(PyObject *self, void *Py_UNUSED(closure))
 {
-    constexpr npy_intp dims[2] = {3, 3};
+    static const npy_intp dims[2] = {3, 3};
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(2, dims, NPY_DOUBLE);
     if (!out)
-        return nullptr;
+        return NULL;
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     double *const p_out = PyArray_DATA(out);
     if (!p_out)
     {
         // I don't think this would ever even happen.
         Py_DECREF(out);
-        return nullptr;
+        return NULL;
     }
     const real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
     for (unsigned i = 0; i < 9; ++i)
@@ -202,7 +202,7 @@ static PyObject *pyvl_reference_frame_get_parents(PyObject *self, void *Py_UNUSE
 
 static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *other, const int op)
 {
-    constexpr real_t tol = 1e-10;
+    static const real_t tol = 1e-10;
     if (op != Py_EQ && op != Py_NE)
     {
         Py_RETURN_NOTIMPLEMENTED;
@@ -248,34 +248,34 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
 static PyGetSetDef pyvl_reference_frame_getset[] = {
     {.name = "parent",
      .get = pyvl_reference_frame_get_parent,
-     .set = nullptr,
+     .set = NULL,
      .doc = "ReferenceFrame | None : Return what reference frame the current one is defined relative to.\n",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "offset",
      .get = pyvl_reference_frame_get_offset,
-     .set = nullptr,
+     .set = NULL,
      .doc = "array : Vector determining the offset of the reference frame in relative to its parent.",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "angles",
      .get = pyvl_reference_frame_get_angles,
-     .set = nullptr,
+     .set = NULL,
      .doc = "array : Vector determining the rotation of the reference frame in parent's frame.",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "rotation_matrix",
      .get = pyvl_reference_frame_get_rotation_matrix,
-     .set = nullptr,
+     .set = NULL,
      .doc = "array : Matrix representing rotation of the reference frame.\n",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "rotation_matrix_inverse",
      .get = pyvl_reference_frame_get_rotation_matrix_inverse,
-     .set = nullptr,
+     .set = NULL,
      .doc = "array : Matrix representing inverse rotation of the reference frame.",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "parents",
      .get = pyvl_reference_frame_get_parents,
-     .set = nullptr,
+     .set = NULL,
      .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
-     .closure = nullptr},
+     .closure = NULL},
     {},
 };
 
@@ -293,7 +293,7 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const args[st
         return false;
     }
     PyArrayObject *const in_array = (PyArrayObject *)PyArray_FromAny(args[0], PyArray_DescrFromType(NPY_FLOAT64), 1, 0,
-                                                                     NPY_ARRAY_C_CONTIGUOUS, nullptr);
+                                                                     NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!in_array)
     {
         return false;
@@ -347,7 +347,7 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const args[st
     }
     else
     {
-        out_array = (PyArrayObject *)PyArray_NewLikeArray(in_array, NPY_CORDER, nullptr, 0);
+        out_array = (PyArrayObject *)PyArray_NewLikeArray(in_array, NPY_CORDER, NULL, 0);
         if (!out_array)
         {
             Py_DECREF(in_array);
@@ -368,7 +368,7 @@ static PyObject *pyvl_reference_frame_from_parent_with_offset(PyObject *self, Py
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -397,7 +397,7 @@ static PyObject *pyvl_reference_frame_from_parent_without_offset(PyObject *self,
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -425,7 +425,7 @@ static PyObject *pyvl_reference_frame_to_parent_with_offset(PyObject *self, PyOb
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -453,7 +453,7 @@ static PyObject *pyvl_reference_frame_to_parent_without_offset(PyObject *self, P
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -481,7 +481,7 @@ static PyObject *pyvl_reference_frame_from_global_with_offset(PyObject *self, Py
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
@@ -517,7 +517,7 @@ static PyObject *pyvl_reference_frame_from_global_without_offset(PyObject *self,
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -550,7 +550,7 @@ static PyObject *pyvl_reference_frame_to_global_with_offset(PyObject *self, PyOb
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
@@ -585,7 +585,7 @@ static PyObject *pyvl_reference_frame_to_global_without_offset(PyObject *self, P
     const npy_intp *dims_in;
     if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
     {
-        return nullptr;
+        return NULL;
     }
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
@@ -616,12 +616,12 @@ static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyObject *arg)
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
     if (PyErr_Occurred())
-        return nullptr;
+        return NULL;
 
     PyVL_ReferenceFrame *const new =
         (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
     if (!new)
-        return nullptr;
+        return NULL;
     new->transformation = this->transformation;
     new->parent = this->parent;
     Py_XINCREF(this->parent);
@@ -634,12 +634,12 @@ static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyObject *arg)
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
     if (PyErr_Occurred())
-        return nullptr;
+        return NULL;
 
     PyVL_ReferenceFrame *const new =
         (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
     if (!new)
-        return nullptr;
+        return NULL;
     new->transformation = this->transformation;
     new->parent = this->parent;
     Py_XINCREF(this->parent);
@@ -652,12 +652,12 @@ static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyObject *arg)
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     const double theta = PyFloat_AsDouble(arg);
     if (PyErr_Occurred())
-        return nullptr;
+        return NULL;
 
     PyVL_ReferenceFrame *const new =
         (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
     if (!new)
-        return nullptr;
+        return NULL;
     new->transformation = this->transformation;
     new->parent = this->parent;
     Py_XINCREF(this->parent);
@@ -668,16 +668,16 @@ static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyObject *arg)
 static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyObject *arg)
 {
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(arg, PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
-                                                                      NPY_ARRAY_C_CONTIGUOUS, nullptr);
+    PyArrayObject *const off_array =
+        (PyArrayObject *)PyArray_FromAny(arg, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!off_array)
-        return nullptr;
+        return NULL;
     const npy_intp *p_n = PyArray_DIMS(off_array);
     if (*p_n != 3)
     {
         PyErr_Format(PyExc_ValueError, "Input array must have 3 element, instead %u were given.", (unsigned)*p_n);
         Py_DECREF(off_array);
-        return nullptr;
+        return NULL;
     }
     const npy_float64 *p_in = PyArray_DATA(off_array);
     const real3_t new_offset = {.v0 = p_in[0], .v1 = p_in[1], .v2 = p_in[2]};
@@ -686,7 +686,7 @@ static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyObject *arg)
     PyVL_ReferenceFrame *const new =
         (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
     if (!new)
-        return nullptr;
+        return NULL;
     new->transformation = this->transformation;
     new->parent = this->parent;
     Py_XINCREF(this->parent);
@@ -698,12 +698,12 @@ static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyObject *arg)
 {
     const double time = PyFloat_AsDouble(arg);
     if (PyErr_Occurred())
-        return nullptr;
+        return NULL;
     (void)time;
     PyVL_ReferenceFrame *const new =
         (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
     if (!new)
-        return nullptr;
+        return NULL;
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     new->transformation = this->transformation;
     if (this->parent)
@@ -713,7 +713,7 @@ static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyObject *arg)
     }
     else
     {
-        new->parent = nullptr;
+        new->parent = NULL;
     }
     return (PyObject *)new;
 }
@@ -722,19 +722,19 @@ static PyObject *pyvl_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *ar
 {
     PyArrayObject *const array = (PyArrayObject *)PyArray_FROMANY(arg, NPY_DOUBLE, 2, 2, NPY_ARRAY_C_CONTIGUOUS);
     if (!array)
-        return nullptr;
+        return NULL;
     const npy_intp *const dims = PyArray_DIMS(array);
     if (dims[0] != 3 || dims[1] != 3)
     {
         PyErr_Format(PyExc_ValueError, "Array was not a (3, 3) array, instead it was (%u, %u).", (unsigned)dims[0],
                      (unsigned)dims[1]);
-        return nullptr;
+        return NULL;
     }
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(1, (const npy_intp[1]){3}, NPY_DOUBLE);
     if (!out)
     {
         Py_DECREF(array);
-        return nullptr;
+        return NULL;
     }
     const double *restrict mat = PyArray_DATA(array);
     double *const restrict angles = PyArray_DATA(out);
@@ -764,15 +764,15 @@ static PyObject *pyvl_reference_frame_save(PyObject *self, PyObject *arg)
     if (!PyMapping_Check(arg))
     {
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
-        return nullptr;
+        return NULL;
     }
-    PyObject *const off_array = pyvl_reference_frame_get_offset(self, nullptr);
-    PyObject *const rot_array = pyvl_reference_frame_get_angles(self, nullptr);
+    PyObject *const off_array = pyvl_reference_frame_get_offset(self, NULL);
+    PyObject *const rot_array = pyvl_reference_frame_get_angles(self, NULL);
     if (!off_array || !rot_array)
     {
         Py_XDECREF(off_array);
         Py_XDECREF(rot_array);
-        return nullptr;
+        return NULL;
     }
     // if (this->parent)
     // {
@@ -781,78 +781,78 @@ static PyObject *pyvl_reference_frame_save(PyObject *self, PyObject *arg)
     //     {
     //         Py_DECREF(off_array);
     //         Py_DECREF(rot_array);
-    //         return nullptr;
+    //         return NULL;
     //     }
     //     PyObject *const res = pyvl_reference_frame_save((PyObject *)this->parent, out_group);
     //     Py_DECREF(out_group);
     //     Py_XDECREF(res);
     //     if (!res)
-    //         return nullptr;
+    //         return NULL;
     // }
     const int res1 = PyMapping_SetItemString(arg, "offset", off_array);
     Py_DECREF(off_array);
     const int res2 = PyMapping_SetItemString(arg, "angles", rot_array);
     Py_DECREF(rot_array);
     if (res1 < 0 || res2 < 0)
-        return nullptr;
+        return NULL;
     PyObject *type_name = PyUnicode_FromString(pyvl_reference_frame_type.tp_name);
     if (!type_name)
-        return nullptr;
+        return NULL;
     const int res3 = PyMapping_SetItemString(arg, "type", type_name);
     Py_DECREF(type_name);
     if (res3 < 0)
-        return nullptr;
+        return NULL;
     Py_RETURN_NONE;
 }
 
 static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-    PyObject *group, *parent = nullptr;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char *[3]){"group", "parent", nullptr}, &group, &parent))
+    PyObject *group, *parent = NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char *[3]){"group", "parent", NULL}, &group, &parent))
     {
-        return nullptr;
+        return NULL;
     }
     if (parent)
     {
         if (Py_IsNone(parent))
         {
-            parent = nullptr;
+            parent = NULL;
         }
         else if (!PyObject_TypeCheck(parent, &pyvl_reference_frame_type))
         {
             PyErr_Format(PyExc_TypeError, "Parent was neither None nor a ReferenceFrame (instead it was %R).",
                          Py_TYPE(parent));
-            return nullptr;
+            return NULL;
         }
     }
     if (!PyMapping_Check(group))
     {
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
-        return nullptr;
+        return NULL;
     }
     // PyObject *const type_name = PyMapping_GetItemString(group, "type");
     // if (!type_name)
-    //     return nullptr;
+    //     return NULL;
     // Py_ssize_t len;
     // const char *const full_name = PyUnicode_AsUTF8AndSize(type_name, &len);
     // if (!full_name)
     // {
     //     Py_DECREF(type_name);
-    //     return nullptr;
+    //     return NULL;
     // }
     // const char *const split = strrchr(full_name, '.');
     // if (!split)
     // {
     //     Py_DECREF(type_name);
     //     PyErr_Format(PyExc_ValueError, "The type name did not contain any \".\" characters.");
-    //     return nullptr;
+    //     return NULL;
     // }
     // const unsigned mod_len = split - full_name;
     // char *const buffer = PyMem_Malloc(sizeof(*buffer) * (mod_len));
     // if (!buffer)
     // {
     //     Py_DECREF(type_name);
-    //     return nullptr;
+    //     return NULL;
     // }
     // memcpy(buffer, full_name, mod_len - 1);
     // buffer[mod_len - 1] = 0;
@@ -861,37 +861,37 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
     // if (!module)
     // {
     //     Py_DECREF(type_name);
-    //     return nullptr;
+    //     return NULL;
     // }
     PyTypeObject *type = (PyTypeObject *)self; // PyObject_GetAttrString(module, split + 1);
     // Py_DECREF(type_name);
     // if (!type)
-    //     return nullptr;
+    //     return NULL;
 
     PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)type->tp_alloc(type, 0);
     // Py_DECREF(type);
     if (!this)
-        return nullptr;
+        return NULL;
     PyObject *const off_val = PyMapping_GetItemString(group, "offset");
     PyObject *const rot_val = PyMapping_GetItemString(group, "angles");
     if (!off_val || !rot_val)
     {
         Py_XDECREF(off_val);
         Py_XDECREF(rot_val);
-        return nullptr;
+        return NULL;
     }
-    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(
-        off_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, nullptr);
+    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(off_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
+                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
     Py_DECREF(off_val);
-    PyArrayObject *const rot_array = (PyArrayObject *)PyArray_FromAny(
-        rot_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, nullptr);
+    PyArrayObject *const rot_array = (PyArrayObject *)PyArray_FromAny(rot_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
+                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
     Py_DECREF(rot_val);
     if (!off_array || !rot_array)
     {
         Py_XDECREF(off_array);
         Py_XDECREF(rot_array);
         Py_DECREF(this);
-        return nullptr;
+        return NULL;
     }
     if (PyArray_SIZE(off_array) != 3)
     {
@@ -900,7 +900,7 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
         Py_DECREF(off_array);
         Py_DECREF(rot_array);
         Py_DECREF(this);
-        return nullptr;
+        return NULL;
     }
     if (PyArray_SIZE(rot_array) != 3)
     {
@@ -909,7 +909,7 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
         Py_DECREF(off_array);
         Py_DECREF(rot_array);
         Py_DECREF(this);
-        return nullptr;
+        return NULL;
     }
 
     const npy_float64 *const offset_ptr = PyArray_DATA(off_array);
@@ -1206,7 +1206,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
     {},
 };
 
-constexpr PyDoc_STRVAR(
+PyDoc_STRVAR(
     pyvl_reference_frame_type_docstring,
     "ReferenceFrame(offset: VecLike3 = (0, 0, 0), theta:VecLike3 = (0, 0, 0), parent: ReferenceFrame | None = None)\n"
     "Class which is used to define position and orientation of geometry.\n"
@@ -1248,7 +1248,7 @@ constexpr PyDoc_STRVAR(
 
 CVL_INTERNAL
 PyTypeObject pyvl_reference_frame_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pyvl.cvl.ReferenceFrame",
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0).tp_name = "pyvl.cvl.ReferenceFrame",
     .tp_basicsize = sizeof(PyVL_ReferenceFrame),
     .tp_itemsize = 0,
     .tp_repr = pyvl_reference_frame_repr,

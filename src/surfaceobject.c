@@ -10,17 +10,17 @@ static PyObject *pyvl_surface_repr(PyObject *self)
 {
     const PyVL_SurfaceObject *this = (PyVL_SurfaceObject *)self;
     size_t len = 0;
-    len += snprintf(nullptr, 0, "Surface((");
+    len += snprintf(NULL, 0, "Surface((");
     for (unsigned i = 0; i < this->n_lines; ++i)
     {
-        len += snprintf(nullptr, 0, " Line(%u, %u),", this->lines[i].p1.value, this->lines[i].p2.value);
+        len += snprintf(NULL, 0, " Line(%u, %u),", this->lines[i].p1.value, this->lines[i].p2.value);
     }
-    len += snprintf(nullptr, 0, "))");
+    len += snprintf(NULL, 0, "))");
     char *const buffer = PyMem_Malloc(len + 1);
     size_t used = 0;
     if (!buffer)
     {
-        return nullptr;
+        return NULL;
     }
     used += snprintf(buffer + used, len - used + 1, "Surface((");
     for (unsigned i = 0; i < this->n_lines; ++i)
@@ -38,22 +38,22 @@ static PyObject *pyvl_surface_str(PyObject *self)
 {
     const PyVL_SurfaceObject *this = (PyVL_SurfaceObject *)self;
     size_t len = 0;
-    len += snprintf(nullptr, 0, "(");
+    len += snprintf(NULL, 0, "(");
     for (unsigned i = 0; i < this->n_lines - 1; ++i)
     {
-        len += snprintf(nullptr, 0, "(%u -> %u) -> ", this->lines[i].p1.value, this->lines[i].p2.value);
+        len += snprintf(NULL, 0, "(%u -> %u) -> ", this->lines[i].p1.value, this->lines[i].p2.value);
     }
     if (this->n_lines != 0)
     {
-        len += snprintf(nullptr, 0, "(%u -> %u)", this->lines[this->n_lines - 1].p1.value,
+        len += snprintf(NULL, 0, "(%u -> %u)", this->lines[this->n_lines - 1].p1.value,
                         this->lines[this->n_lines - 1].p2.value);
     }
-    len += snprintf(nullptr, 0, ")");
+    len += snprintf(NULL, 0, ")");
     char *const buffer = PyMem_Malloc(len + 1);
     size_t used = 0;
     if (!buffer)
     {
-        return nullptr;
+        return NULL;
     }
     used += snprintf(buffer + used, len - used + 1, "(");
     for (unsigned i = 0; i < this->n_lines - 1; ++i)
@@ -72,7 +72,7 @@ static PyObject *pyvl_surface_str(PyObject *self)
     return ret;
 }
 
-constexpr PyDoc_STRVAR(pyvl_surface_type_docstring, "Surface bound by a set of lines.");
+PyDoc_STRVAR(pyvl_surface_type_docstring, "Surface bound by a set of lines.");
 
 static PyObject *pyvl_surface_rich_compare(PyObject *self, PyObject *other, const int op)
 {
@@ -121,14 +121,14 @@ end:
 static PyObject *pyvl_surface_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     PyObject *arg;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char *[2]){"lines", nullptr}, &arg))
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", (char *[2]){"lines", NULL}, &arg))
     {
-        return nullptr;
+        return NULL;
     }
 
     PyObject *const seq = PySequence_Fast(arg, "Argument was not a sequence.");
     if (!seq)
-        return nullptr;
+        return NULL;
     const unsigned len = PySequence_Fast_GET_SIZE(seq);
     for (unsigned i = 0; i < len; ++i)
     {
@@ -174,7 +174,7 @@ static PyObject *pyvl_surface_new(PyTypeObject *type, PyObject *args, PyObject *
     return (PyObject *)this;
 failed:
     Py_DECREF(seq);
-    return nullptr;
+    return NULL;
 }
 
 CVL_INTERNAL
@@ -183,7 +183,7 @@ PyVL_SurfaceObject *pyvl_surface_from_points(unsigned n_points, const unsigned p
     PyVL_SurfaceObject *const this =
         (PyVL_SurfaceObject *)pyvl_surface_type.tp_alloc(&pyvl_surface_type, (Py_ssize_t)n_points);
     if (!this)
-        return nullptr;
+        return NULL;
     this->n_lines = n_points;
     for (unsigned i = 0; i < n_points - 1; ++i)
     {
@@ -201,7 +201,7 @@ PyVL_SurfaceObject *pyvl_surface_from_lines(unsigned n, const line_t lines[stati
     PyVL_SurfaceObject *const this =
         (PyVL_SurfaceObject *)pyvl_surface_type.tp_alloc(&pyvl_surface_type, (Py_ssize_t)n);
     if (!this)
-        return nullptr;
+        return NULL;
     this->n_lines = n;
     for (unsigned i = 0; i < n; ++i)
     {
@@ -218,7 +218,7 @@ PyVL_SurfaceObject *pyvl_surface_from_mesh_surface(const mesh_t *msh, geo_id_t i
     PyVL_SurfaceObject *const this =
         (PyVL_SurfaceObject *)pyvl_surface_type.tp_alloc(&pyvl_surface_type, (Py_ssize_t)(i1 - i0));
     if (!this)
-        return nullptr;
+        return NULL;
     for (unsigned i = 0; i < i1 - i0; ++i)
     {
         const geo_id_t lid = msh->surface_lines[i + i0];
@@ -244,7 +244,7 @@ static PyObject *pyvl_surface_get_lines(PyObject *self, void *Py_UNUSED(closure)
         if (!ln)
         {
             Py_DECREF(out);
-            return nullptr;
+            return NULL;
         }
         PyTuple_SET_ITEM(out, i, ln);
     }
@@ -261,20 +261,20 @@ static PyObject *pyvl_surface_get_n_lines(PyObject *self, void *Py_UNUSED(closur
 static PyGetSetDef pyvl_surface_getset[] = {
     {.name = "lines",
      .get = pyvl_surface_get_lines,
-     .set = nullptr,
+     .set = NULL,
      .doc = "Lines that make up the surface.",
-     .closure = nullptr},
+     .closure = NULL},
     {.name = "n_lines",
      .get = pyvl_surface_get_n_lines,
-     .set = nullptr,
+     .set = NULL,
      .doc = "Number of the lines that make up the surface.",
-     .closure = nullptr},
+     .closure = NULL},
     {},
 };
 
 CVL_INTERNAL
 PyTypeObject pyvl_surface_type = {
-    .ob_base = PyVarObject_HEAD_INIT(nullptr, 0).tp_name = "pyvl.cvl.Surface",
+    .ob_base = PyVarObject_HEAD_INIT(NULL, 0).tp_name = "pyvl.cvl.Surface",
     .tp_basicsize = sizeof(PyVL_SurfaceObject),
     .tp_itemsize = sizeof(line_t),
     .tp_repr = pyvl_surface_repr,

@@ -75,8 +75,8 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
     dual.n_lines = primal->n_lines;
     dual.n_surfaces = primal->n_points;
 
-    dual.surface_offsets = nullptr;
-    dual.surface_lines = nullptr;
+    dual.surface_offsets = NULL;
+    dual.surface_lines = NULL;
 
     dual.lines = allocator->allocate(allocator->state, sizeof(*dual.lines) * dual.n_lines);
 
