@@ -559,6 +559,28 @@ class SimulationGeometry(Mapping):
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
 
+    def polydata_edges_at_time(self, t: float) -> pv.PolyData:
+        """Return the edges of geometry as polydata at the specified time.
+
+        This uses the :meth:`SimulationGeometry.positions_at_time` to determine
+        the positions of individual mesh points.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the mesh at.
+
+        Returns
+        -------
+        pyvista.PolyData
+            :class:`pyvista.PolyData` object which represents the line mesh.
+        """
+        pos = self.positions_at_time(t)
+        lines = self.mesh.line_data
+        cell = pv.CellArray.from_regular_cells(lines)
+        pd = pv.PolyData(pos, lines=cell)
+        return pd
+
     def te_normal_criterion(self, crit: float) -> npt.NDArray[np.uint]:
         """Identify edges, for which the normals of neighbouring surfaces meet dp crit.
 

@@ -263,6 +263,11 @@ class Mesh:
         """
         ...
 
+    @property
+    def line_data(self) -> npt.NDArray[np.uint]:
+        """Line connectivity of the mesh."""
+        ...
+
 class ReferenceFrame:
     r"""Class which is used to define position and orientation of geometry.
 

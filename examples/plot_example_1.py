@@ -1,6 +1,7 @@
 r"""Flat Plate
 ==========
 
+.. currentmodule:: pyvl
 
 The first case which is typically analyzed in aerodynamics is the simple flat plate.
 This can also serve as validation for any solver, as for incompressible, non-viscous,
@@ -138,6 +139,24 @@ for i in range(velocities.shape[0]):
     sg = sim_geo.polydata_at_time(0.0)
 
     plotter.add_mesh(mesh.glyph(factor=0.01))
+    plotter.add_mesh(sg, label="Geometry", color="Red")
+
+    plotter.show(interactive=False)
+
+# %%
+#
+# Another quantity of interest is the force distribution over the
+# mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
+
+forces = pyvl.postprocess.circulatory_forces(results)
+
+for field in forces:
+    sg = sim_geo.polydata_edges_at_time(0.0)
+    sg.cell_data["Forces"] = field
+    print(f"Total force: {np.sum(field, axis=0)} Newtons")
+    plotter = pv.Plotter()
+
+    plotter.add_mesh(sg.glyph(factor=1))
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)

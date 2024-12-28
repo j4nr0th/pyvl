@@ -240,8 +240,9 @@ def run_solver(
             wm = state.wake_model
 
             if wm is not None:
-                assert results.wake_models is not None
                 results.wake_models.append(type(wm).load(wm.save()))
+            else:
+                results.wake_models.append(None)
 
             if output_settings is not None:
                 output_settings.serialization_fn(

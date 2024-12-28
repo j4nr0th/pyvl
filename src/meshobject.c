@@ -152,6 +152,33 @@ static PyObject *pyvl_mesh_get_n_surfaces(PyObject *self, void *Py_UNUSED(closur
     return PyLong_FromUnsignedLong(this->mesh.n_surfaces);
 }
 
+static PyObject *pyvl_mesh_get_line_data(PyObject *self, void *Py_UNUSED(closere))
+{
+    const PyVL_MeshObject *const this = (PyVL_MeshObject *)self;
+    _Static_assert(sizeof(*this->mesh.lines) == 2 * sizeof(npy_uint32));
+    const npy_intp dims[2] = {this->mesh.n_lines, 2};
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNewFromData(2, dims, NPY_UINT32, this->mesh.lines);
+    if (!out)
+    {
+        return NULL;
+    }
+    if (PyArray_SetBaseObject(out, (PyObject *)this))
+    {
+        Py_DECREF(out);
+        return NULL;
+    }
+    Py_INCREF(this);
+
+    // npy_uint32 *const p_out = PyArray_DATA(out);
+    // for (unsigned i = 0; i < this->mesh.n_lines; ++i)
+    // {
+    //     p_out[2 * i + 0] = this->mesh.lines[i].p1.value;
+    //     p_out[2 * i + 1] = this->mesh.lines[i].p2.value;
+    // }
+
+    return (PyObject *)out;
+}
+
 static PyGetSetDef pyvl_mesh_getset[] = {
     {.name = "n_points",
      .get = pyvl_mesh_get_n_points,
@@ -168,6 +195,12 @@ static PyGetSetDef pyvl_mesh_getset[] = {
      .set = NULL,
      .doc = "Number of surfaces in the mesh",
      .closure = NULL},
+    {
+        .name = "line_data",
+        .get = pyvl_mesh_get_line_data,
+        .set = NULL,
+        .doc = "Line connectivity of the mesh.",
+    },
     {},
 };
 
@@ -1333,11 +1366,11 @@ static PyObject *pyvl_mesh_line_forces(PyObject *Py_UNUSED(null), PyObject *args
         real_t line_circ = 0;
         if (dual_line.p1.value != INVALID_ID)
         {
-            line_circ -= cir[dual_line.p1.value];
+            line_circ += cir[dual_line.p1.value];
         }
         if (dual_line.p2.value != INVALID_ID)
         {
-            line_circ += cir[dual_line.p2.value];
+            line_circ -= cir[dual_line.p2.value];
         }
 
         const real3_t avg_vel_circ =
