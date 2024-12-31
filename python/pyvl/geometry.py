@@ -603,7 +603,7 @@ class SimulationGeometry(Mapping):
         normals = np.empty((self.n_surfaces, 3), np.float64)
         for name in self._info:
             info = self._info[name]
-            normals[info.points] = info.msh.surface_normal(info.pos)
+            normals[info.surfaces] = info.msh.surface_normal(info.pos)
         return self.dual.dual_normal_criterion(crit, normals)
 
     def te_free_criterion(self) -> npt.NDArray[np.uint]:
