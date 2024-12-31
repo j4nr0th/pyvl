@@ -80,6 +80,36 @@ class FlowConditions(ABC):
         ...
 
     @abstractmethod
+    def get_pressure(
+        self,
+        time: float,
+        positions: npt.NDArray[np.float64],
+        out_array: npt.NDArray[np.float64] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Return pressure at the specified positions at given time.
+
+        Parameters
+        ----------
+        time : float
+            Time at which the pressure field should be computed.
+
+        positions : (N, 3) array
+            Array of positions where the flow field should be computed.
+
+        out_array : (N,) array, optional
+            If specified, this array should receive the output values, along with being
+            returned by the function.
+
+        Returns
+        -------
+        (N,) array
+            Array of :math:`N` pressure values at the specified positions and time. If
+            the parameter ``out_array`` was specified, it should also be the return value
+            of this function.
+        """
+        ...
+
+    @abstractmethod
     def save(self) -> HirearchicalMap:
         """Serialize itself into a HirearchicalMap.
 
@@ -127,6 +157,9 @@ class FlowConditionsUniform(FlowConditions):
     rho : float, default: 1.225
         Constant density of the fluid.
 
+    p_stat : float, default: 101325.0
+        Static pressure of the free-stream.
+
     Examples
     --------
     To visualize how this velocity field looks like, let's plot it with :mod:`pyvista`.
@@ -163,6 +196,7 @@ class FlowConditionsUniform(FlowConditions):
     vy: float
     vz: float
     rho: float = 1.225
+    p_stat: float = 101325
 
     def get_velocity(
         self,
@@ -229,7 +263,40 @@ class FlowConditionsUniform(FlowConditions):
         if out_array is not None:
             out_array[:, :] = self.rho
             return out_array
-        return np.full_like(positions, self.rho)
+        return np.full(positions.shape[0], self.rho)
+
+    def get_pressure(
+        self,
+        time: float,
+        positions: npt.NDArray[np.float64],
+        out_array: npt.NDArray[np.float64] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Return pressure at the specified positions at given time.
+
+        Parameters
+        ----------
+        time : float
+            Time at which the pressure field should be computed.
+
+        positions : (N, 3) array
+            Array of positions where the flow field should be computed.
+
+        out_array : (N,) array, optional
+            If specified, this array should receive the output values, along with being
+            returned by the function.
+
+        Returns
+        -------
+        (N,) array
+            Array of :math:`N` pressure values at the specified positions and time. If
+            the parameter ``out_array`` was specified, it should also be the return value
+            of this function.
+        """
+        del time
+        if out_array is not None:
+            out_array[:, :] = self.p_stat
+            return out_array
+        return np.full(positions.shape[0], self.p_stat)
 
     def save(self) -> HirearchicalMap:
         """Serialize itself into a HirearchicalMap.
@@ -296,6 +363,9 @@ class FlowConditionsRotating(FlowConditions):
     rho : float, default: 1.225
         Constant density of the fluid.
 
+    p_stat : float, default: 101325.0
+        Static pressure of the free-stream.
+
     Examples
     --------
     To visualize how this velocity field looks like, let's plot it with :mod:`pyvista`.
@@ -337,6 +407,7 @@ class FlowConditionsRotating(FlowConditions):
     omega_z: float
 
     rho: float = 1.225
+    p_stat: float = 101325.0
 
     def get_velocity(
         self,
@@ -404,7 +475,40 @@ class FlowConditionsRotating(FlowConditions):
         if out_array is not None:
             out_array[:, :] = self.rho
             return out_array
-        return np.full_like(positions, self.rho)
+        return np.full(positions.shape[0], self.rho)
+
+    def get_pressure(
+        self,
+        time: float,
+        positions: npt.NDArray[np.float64],
+        out_array: npt.NDArray[np.float64] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Return pressure at the specified positions at given time.
+
+        Parameters
+        ----------
+        time : float
+            Time at which the pressure field should be computed.
+
+        positions : (N, 3) array
+            Array of positions where the flow field should be computed.
+
+        out_array : (N,) array, optional
+            If specified, this array should receive the output values, along with being
+            returned by the function.
+
+        Returns
+        -------
+        (N,) array
+            Array of :math:`N` pressure values at the specified positions and time. If
+            the parameter ``out_array`` was specified, it should also be the return value
+            of this function.
+        """
+        del time
+        if out_array is not None:
+            out_array[:, :] = self.p_stat
+            return out_array
+        return np.full(positions.shape[0], self.p_stat)
 
     def save(self) -> HirearchicalMap:
         """Serialize itself into a HirearchicalMap.
