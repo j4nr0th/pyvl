@@ -206,7 +206,7 @@ def run_solver(
         )
 
         # Apply the wake model's effect
-        if state.wake_model is not None:
+        if state.wake_model is not None and iteration > 0:
             state.wake_model.apply_corrections(
                 state.control_points, state.normals, system_matrix, state.circulation
             )
