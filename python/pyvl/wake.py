@@ -61,6 +61,7 @@ class WakeModel(ABC):
         """
         ...
 
+    @abstractmethod
     def apply_corrections(
         self,
         control_pts: npt.NDArray[np.float64],
@@ -96,6 +97,33 @@ class WakeModel(ABC):
         ----------
         positions : (N, 3) array
             Array of positions where the velocity should be computed.
+        """
+        ...
+
+    @abstractmethod
+    def correct_forces(
+        self,
+        line_forces: npt.NDArray[np.float64],
+        geometry: SimulationGeometry,
+        positions: npt.NDArray[np.float64],
+        circulation: npt.NDArray[np.float64],
+        flow: FlowConditions,
+    ) -> None:
+        """Apply correction to force vectors at different mesh lines.
+
+        Parameters
+        ----------
+        line_forces : (N, 3) array
+            Array of force vectors at different mesh lines. Corrections should be
+            added or subtracted in-place.
+        geometry : SimulationGeometry
+            The state of the :class:`SimulationGeometry` at the current time step.
+        positions : (N, 3) array
+            Positions of the mesh points.
+        circulation : (N,) array
+            Circulation values of vortex ring elements.
+        flow : FlowConditions
+            Flow conditions of the simulation.
         """
         ...
 

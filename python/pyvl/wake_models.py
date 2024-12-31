@@ -289,3 +289,42 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         out.step_count = step_count
 
         return out
+
+    def correct_forces(
+        self,
+        line_forces: npt.NDArray[np.float64],
+        geometry: SimulationGeometry,
+        positions: npt.NDArray[np.float64],
+        circulation: npt.NDArray[np.float64],
+        flow: FlowConditions,
+    ) -> None:
+        """Apply correction to force vectors at different mesh lines.
+
+        Parameters
+        ----------
+        line_forces : (N, 3) array
+            Array of force vectors at different mesh lines. Corrections should be
+            added or subtracted in-place.
+        geometry : SimulationGeometry
+            The state of the :class:`SimulationGeometry` at the current time step.
+        positions : (N, 3) array
+            Positions of the mesh points.
+        circulation : (N,) array
+            Circulation values of vortex ring elements.
+        flow : FlowConditions
+            Flow conditions of the simulation.
+        """
+        tmp_mesh = WakeModelLineExplicitUnsteady._create_wake_mesh(
+            1, self.shedding_lines.size
+        )
+        dual = tmp_mesh.compute_dual()
+        cpts = np.ascontiguousarray(self.wake_positions[:, :, 0:2, :].reshape(-1, 3))
+        circ = np.ascontiguousarray(self.circulation[:, 0] / (2 * np.pi))
+        freestream = flow.get_velocity(self.current_time, cpts)
+        ind_mat = geometry.mesh.induction_matrix(self.vortex_tol, positions, cpts)
+        ind_v = np.vecdot(ind_mat, circulation[None, :, None], axis=1)  # type: ignore
+        self_v = self.get_velocity(cpts)
+        forces = Mesh.line_forces(tmp_mesh, dual, circ, cpts, freestream + ind_v + self_v)
+        i_line: np.uint32
+        for i, i_line in enumerate(self.shedding_lines):
+            line_forces[i_line, :] -= forces[4 * i + 1, :]

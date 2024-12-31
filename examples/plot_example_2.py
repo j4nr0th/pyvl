@@ -111,13 +111,14 @@ for i, t in enumerate(results.settings.time_settings.output_times):
 
     mesh.point_data["Velocity"] = velocities[i, :, :]
     mesh.set_active_vectors("Velocity")
-
-    wm = results.wake_models[i].as_polydata()
+    wake_mod = results.wake_models[i]
+    assert isinstance(wake_mod, pyvl.WakeModelLineExplicitUnsteady)
+    wm = wake_mod.as_polydata()
     sg = sim_geo.polydata_at_time(0.0)
     circulation = results.circulations[i, :]
     sg.cell_data["Circulation"] = circulation
     sg.set_active_scalars("Circulation")
-    wm.cell_data["Circulation"] = results.wake_models[i].circulation.flatten()
+    wm.cell_data["Circulation"] = wake_mod.circulation.flatten()
     wm.set_active_scalars("Circulation")
 
     plotter.add_mesh(mesh.glyph(factor=0.01))
@@ -125,3 +126,40 @@ for i, t in enumerate(results.settings.time_settings.output_times):
     plotter.add_mesh(wm, label="Wake")
 
     plotter.show(interactive=False)
+
+# %%
+#
+# Forces
+# ------
+#
+# Unlike as in :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, where
+# there were not total forces due to all circulation being bound on the surface of the
+# mesh, there is now a non-zero resultant force on the geometry due to circulation being
+# shed into the wake.
+#
+
+forces = pyvl.postprocess.circulatory_forces(results)
+
+for field in forces:
+    sg = sim_geo.polydata_edges_at_time(0.0)
+    sg.cell_data["Forces"] = field
+    print(f"Total force: {np.sum(field, axis=0)} Newtons")
+    plotter = pv.Plotter()
+    plotter.add_mesh(sg.glyph(factor=1))
+    plotter.add_mesh(sg, label="Geometry", color="Red")
+
+    plotter.show(interactive=False)
+
+# %%
+#
+# Notes About the Forces
+# ----------------------
+#
+# Due to the nature of the solver, the flat plate representation of a lifting surface
+# is not very accurate. This is because that is not what the solver is intended to do.
+# In contrast to this, `AVL <http://web.mit.edu/drela/Public/web/avl/>`_ does exactly
+# that by simulating wings as horseshoe elements, which have the lifting line at the
+# quarter chord line and the control point at the three quarter point.
+#
+# Instead, the :mod:`pyvl` solver works by having the control point at the center and
+# with closed vortex rings. As such, it work best with full airfoil profiles.

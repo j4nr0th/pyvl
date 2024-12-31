@@ -147,6 +147,8 @@ for i in range(velocities.shape[0]):
 #
 # Another quantity of interest is the force distribution over the
 # mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
+# Note that without any wake model, there is a total of no circulatory force produced,
+# since all rings are closed. This is among the reasons why wake models are necessary.
 
 forces = pyvl.postprocess.circulatory_forces(results)
 
