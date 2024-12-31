@@ -6,6 +6,8 @@ import numpy.typing as npt
 from pyvl.cvl import Mesh
 from pyvl.solver import SolverResults
 
+# TODO: add circulation velocity contribution (it does matter).
+
 
 def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.float64]]:
     """Compute forces resulting from the mesh circulation."""
