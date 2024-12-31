@@ -1,5 +1,5 @@
-r"""Flat Plate
-==========
+r"""Example 1: Flat Plate
+=====================
 
 .. currentmodule:: pyvl
 

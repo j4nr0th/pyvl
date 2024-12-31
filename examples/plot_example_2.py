@@ -1,5 +1,5 @@
-r"""Adding a Wake Model
-===================
+r"""Example 2: Adding a Wake Model
+==============================
 
 .. currentmodule:: pyvl
 

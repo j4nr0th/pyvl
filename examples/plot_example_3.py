@@ -1,5 +1,5 @@
-r"""Finding a Pressure Distribution
-===============================
+r"""Example 3: Finding a Pressure Distribution
+==========================================
 
 .. currentmodule:: pyvl
 
