@@ -152,6 +152,33 @@ static PyObject *pyvl_mesh_get_n_surfaces(PyObject *self, void *Py_UNUSED(closur
     return PyLong_FromUnsignedLong(this->mesh.n_surfaces);
 }
 
+static PyObject *pyvl_mesh_get_line_data(PyObject *self, void *Py_UNUSED(closere))
+{
+    const PyVL_MeshObject *const this = (PyVL_MeshObject *)self;
+    _Static_assert(sizeof(*this->mesh.lines) == 2 * sizeof(npy_uint32));
+    const npy_intp dims[2] = {this->mesh.n_lines, 2};
+    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNewFromData(2, dims, NPY_UINT32, this->mesh.lines);
+    if (!out)
+    {
+        return NULL;
+    }
+    if (PyArray_SetBaseObject(out, (PyObject *)this))
+    {
+        Py_DECREF(out);
+        return NULL;
+    }
+    Py_INCREF(this);
+
+    // npy_uint32 *const p_out = PyArray_DATA(out);
+    // for (unsigned i = 0; i < this->mesh.n_lines; ++i)
+    // {
+    //     p_out[2 * i + 0] = this->mesh.lines[i].p1.value;
+    //     p_out[2 * i + 1] = this->mesh.lines[i].p2.value;
+    // }
+
+    return (PyObject *)out;
+}
+
 static PyGetSetDef pyvl_mesh_getset[] = {
     {.name = "n_points",
      .get = pyvl_mesh_get_n_points,
@@ -168,6 +195,12 @@ static PyGetSetDef pyvl_mesh_getset[] = {
      .set = NULL,
      .doc = "Number of surfaces in the mesh",
      .closure = NULL},
+    {
+        .name = "line_data",
+        .get = pyvl_mesh_get_line_data,
+        .set = NULL,
+        .doc = "Line connectivity of the mesh.",
+    },
     {},
 };
 
@@ -781,8 +814,8 @@ static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize
         {
             const line_t *p_line = m->mesh.lines + il;
             *l = (line_t){
-                .p1 = (geo_id_t){.orientation = p_line->p1.orientation, p_line->p1.value + cnt_pts},
-                .p2 = (geo_id_t){.orientation = p_line->p2.orientation, p_line->p2.value + cnt_pts},
+                .p1 = (geo_id_t){.orientation = p_line->p1.orientation, .value = p_line->p1.value + cnt_pts},
+                .p2 = (geo_id_t){.orientation = p_line->p2.orientation, .value = p_line->p2.value + cnt_pts},
             };
             l += 1;
         }
@@ -1240,6 +1273,115 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyObject *const
     return (PyObject *)out_array;
 }
 
+static PyObject *pyvl_mesh_line_forces(PyObject *Py_UNUSED(null), PyObject *args, PyObject *kwargs)
+{
+    const PyVL_MeshObject *primal, *dual;
+    PyObject *array_circulation, *array_positions, *array_freestream, *array_out = NULL;
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "O!O!O!O!O!|O!",
+            (char *[7]){"primal", "dual", "circulation", "positions", "freestream", "out", NULL}, &pyvl_mesh_type,
+            &primal, &pyvl_mesh_type, &dual, &PyArray_Type, &array_circulation, &PyArray_Type, &array_positions,
+            &PyArray_Type, &array_freestream, &PyArray_Type, &array_out))
+    {
+        return NULL;
+    }
+    const unsigned n_lines = primal->mesh.n_lines;
+    if (primal->mesh.n_points != dual->mesh.n_surfaces || n_lines != dual->mesh.n_lines ||
+        primal->mesh.n_surfaces != dual->mesh.n_points)
+    {
+        PyErr_Format(PyExc_ValueError,
+                     "Given meshes can not be dual to each other, since the number of points,"
+                     "lines, and surfaces don't match as primal (%u, %u, %u) and dual (%u, %u, %u).",
+                     primal->mesh.n_points, n_lines, primal->mesh.n_surfaces, dual->mesh.n_points, dual->mesh.n_lines,
+                     dual->mesh.n_surfaces);
+        return NULL;
+    }
+
+    PyArrayObject *const circulation =
+        pyvl_ensure_array(array_circulation, 1, (const npy_intp[1]){primal->mesh.n_surfaces},
+                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Circulation array");
+    if (!circulation)
+    {
+        return NULL;
+    }
+
+    PyArrayObject *const positions =
+        pyvl_ensure_array(array_positions, 2, (const npy_intp[2]){primal->mesh.n_points, 3},
+                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Positions array");
+    if (!positions)
+    {
+        return NULL;
+    }
+
+    PyArrayObject *const velocity =
+        pyvl_ensure_array(array_freestream, 2, (const npy_intp[2]){primal->mesh.n_points, 3},
+                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Velocity array");
+    if (!velocity)
+    {
+        return NULL;
+    }
+
+    PyArrayObject *out;
+    const npy_intp out_dims[2] = {n_lines, 3};
+    if (array_out)
+    {
+        out =
+            pyvl_ensure_array(array_out, 2, out_dims, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE,
+                              NPY_FLOAT64, "Output array");
+        if (!out)
+        {
+            return NULL;
+        }
+        Py_INCREF(out);
+    }
+    else
+    {
+        out = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_FLOAT64);
+        if (!out)
+        {
+            return NULL;
+        }
+    }
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64));
+    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64));
+
+    const real_t *const restrict cir = PyArray_DATA(circulation);
+    const real3_t *const restrict pos = PyArray_DATA(positions);
+    const real3_t *const restrict vel = PyArray_DATA(velocity);
+    real3_t *const restrict f = PyArray_DATA(out);
+    const line_t *primal_lines = primal->mesh.lines;
+    const line_t *dual_lines = dual->mesh.lines;
+
+#pragma omp parallel for default(none) shared(n_lines, primal_lines, dual_lines, pos, cir, vel, f)
+    for (unsigned i_line = 0; i_line < n_lines; ++i_line)
+    {
+        const line_t primal_line = primal_lines[i_line];
+        const line_t dual_line = dual_lines[i_line];
+
+        const real3_t r_begin = pos[primal_line.p1.value];
+        const real3_t r_end = pos[primal_line.p2.value];
+
+        const real3_t dr = real3_sub(r_end, r_begin);
+
+        real_t line_circ = 0;
+        if (dual_line.p1.value != INVALID_ID)
+        {
+            line_circ += cir[dual_line.p1.value];
+        }
+        if (dual_line.p2.value != INVALID_ID)
+        {
+            line_circ -= cir[dual_line.p2.value];
+        }
+
+        const real3_t avg_vel_circ =
+            real3_mul1(real3_add(vel[primal_line.p1.value], vel[primal_line.p2.value]), 0.5 * line_circ);
+
+        f[i_line] = real3_cross(dr, avg_vel_circ);
+    }
+
+    return (PyObject *)out;
+}
+
 static PyMethodDef pyvl_mesh_methods[] = {
     {.ml_name = "get_line", .ml_meth = pyvl_mesh_get_line, .ml_flags = METH_O, .ml_doc = "Get the line from the mesh."},
     {.ml_name = "get_surface",
@@ -1303,6 +1445,39 @@ static PyMethodDef pyvl_mesh_methods[] = {
      .ml_meth = (void *)pyvl_mesh_line_induction_matrix,
      .ml_flags = METH_FASTCALL,
      .ml_doc = "Compute an induction matrix for the mesh based on line circulations."},
+    {.ml_name = "line_forces",
+     .ml_meth = (void *)pyvl_mesh_line_forces,
+     .ml_flags = METH_STATIC | METH_VARARGS | METH_KEYWORDS,
+     .ml_doc = "line_forces(\n"
+               "    primal: Mesh,\n"
+               "    dual: Mesh,\n"
+               "    circulation: in_array,\n"
+               "    positions: in_array,\n"
+               "    freestream: in_array,\n"
+               "    out: out_array | None = None,\n"
+               ") -> out_array\n"
+               "Compute forces due to reduced circulation filaments.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "primal : Mesh\n"
+               "    Primal mesh.\n"
+               "dual : Mesh\n"
+               "    Dual mesh, computed from the ``primal`` by a call to :meth:`Mesh.compute_dual()`.\n"
+               "circulation : (N,) in_array\n"
+               "    Array of surface circulations divided by :math:`2 \\pi`.\n"
+               "positions : (M, 3) in_array\n"
+               "    Positions of the primal mesh nodes.\n"
+               "freestream : (M, 3) in_array\n"
+               "    Free-stream velocity at the mesh nodes.\n"
+               "out : (K, 3) out_array, optional\n"
+               "    Optional array where to write the results to. Assumed it does not alias memory from any other\n"
+               "    arrays.\n"
+               "Returns\n"
+               "-------\n"
+               "(K, 3) out_array\n"
+               "    If ``out`` was given, it is returned as well. If not, the returned value is a newly allocated\n"
+               "    array of the correct size.\n"},
     {},
 };
 

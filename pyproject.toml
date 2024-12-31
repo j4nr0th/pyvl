@@ -60,6 +60,7 @@ docs = [
     "sphinx-toolbox",
     "sphinxcontrib-websupport",
     "sphinxcontrib-asciinema",
+    "threadpoolctl",
 ]
 
 

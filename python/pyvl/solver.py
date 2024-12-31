@@ -15,6 +15,28 @@ from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
 from pyvl.geometry import SimulationGeometry
 from pyvl.settings import SolverSettings
+from pyvl.wake import WakeModel
+
+
+class SolverResults:
+    """Class containing results of a solver."""
+
+    geometry: SimulationGeometry
+    circulations: npt.NDArray[np.float64]
+    wake_models: list[WakeModel | None]
+    settings: SolverSettings
+
+    def __init__(self, geo: SimulationGeometry, settings: SolverSettings):
+        self.geometry = geo
+        self.settings = SolverSettings(
+            flow_conditions=settings.flow_conditions,
+            model_settings=settings.model_settings,
+            time_settings=settings.time_settings,
+        )
+        self.wake_models = list()
+        self.circulations = np.empty(
+            (settings.time_settings.output_times.size, geo.n_surfaces), np.float64
+        )
 
 
 class SolverState:
@@ -26,12 +48,14 @@ class SolverState:
     circulation: npt.NDArray[np.float64]
     geometry: SimulationGeometry
     settings: SolverSettings
+    wake_model: WakeModel | None
     iteration: int
 
     def __init__(
         self,
         geometry: SimulationGeometry,
         settings: SolverSettings,
+        wake_model: WakeModel | None,
     ) -> None:
         self.geometry = geometry
         self.positions = np.empty((geometry.n_points, 3), np.float64)
@@ -39,6 +63,7 @@ class SolverState:
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
         self.circulation = np.empty((geometry.n_surfaces,), np.float64)
         self.settings = settings
+        self.wake_model = wake_model
 
     def save(self) -> HirearchicalMap:
         """Serialize current state to a HirearchicalMap."""
@@ -50,6 +75,11 @@ class SolverState:
         out.insert_int("iteration", self.iteration)
         out.insert_hirearchycal_map("solver_settings", self.settings.save())
         out.insert_hirearchycal_map("simulation_geometry", self.geometry.save())
+        if self.wake_model is not None:
+            wake_model = HirearchicalMap()
+            wake_model.insert_type("type", type(self.wake_model))
+            wake_model.insert_hirearchycal_map("data", self.wake_model.save())
+            out.insert_hirearchycal_map("wake_model", wake_model)
         return out
 
     @classmethod
@@ -59,7 +89,12 @@ class SolverState:
             hmap.get_hirearchical_map("simulation_geometry")
         )
         settings = SolverSettings.load(hmap.get_hirearchical_map("solver_settings"))
-        self = cls(geometry=geometry, settings=settings)
+        wake_model = None
+        if "wake_model" in hmap:
+            wm_hmap = hmap.get_hirearchical_map("wake_model")
+            wm_type: type[WakeModel] = wm_hmap.get_type("type")
+            wake_model = wm_type.load(wm_hmap.get_hirearchical_map("data"))
+        self = cls(geometry=geometry, settings=settings, wake_model=wake_model)
         self.iteration = hmap.get_int("iteration")
         self.positions[:] = hmap.get_array("positions")
         self.normals[:] = hmap.get_array("normals")
@@ -106,8 +141,9 @@ class OutputSettings:
 def run_solver(
     geometry: SimulationGeometry,
     settings: SolverSettings,
-    output_settings: OutputSettings,
-) -> None:
+    wake_model: WakeModel | None,
+    output_settings: OutputSettings | None,
+) -> SolverResults:
     """Run the flow solver to obtain specified circulations.
 
     Parameters
@@ -116,9 +152,12 @@ def run_solver(
         Geometry to solver for.
     settings : SolverSettings
         Settings of the solver.
-    outpu_settings : OutputSettings
+    wake_model : WakeModel, optional
+        Model with which to model the wake with.
+    outpu_settings : OutputSettings, optional
         Settings related to file IO.
     """
+    results = SolverResults(geometry, settings)
     times: npt.NDArray[np.float64]
     if settings.time_settings is None:
         times = np.array((0,), np.float64)
@@ -127,7 +166,7 @@ def run_solver(
 
     i_out = 0
 
-    state = SolverState(geometry, settings)
+    state = SolverState(geometry, settings, wake_model)
 
     previous_rfs: dict[str, None | ReferenceFrame] = {name: None for name in geometry}
 
@@ -167,8 +206,8 @@ def run_solver(
         )
 
         # Apply the wake model's effect
-        if settings.wake_model is not None:
-            settings.wake_model.apply_corrections(
+        if state.wake_model is not None and iteration > 0:
+            state.wake_model.apply_corrections(
                 state.control_points, state.normals, system_matrix, state.circulation
             )
 
@@ -186,8 +225,8 @@ def run_solver(
             circulation[info.surfaces] -= np.mean(circulation[info.surfaces])
 
         # update the wake model
-        if settings.wake_model is not None:
-            settings.wake_model.update(
+        if state.wake_model is not None:
+            state.wake_model.update(
                 time, geometry, state.positions, circulation, settings.flow_conditions
             )
 
@@ -197,14 +236,25 @@ def run_solver(
             or (settings.time_settings.output_interval is None)
             or (iteration % settings.time_settings.output_interval == 0)
         ):
-            output_settings.serialization_fn(
-                state.save(), output_settings.naming_callback(iteration, time)
-            )
+            results.circulations[i_out, :] = circulation
+            wm = state.wake_model
+
+            if wm is not None:
+                results.wake_models.append(type(wm).load(wm.save()))
+            else:
+                results.wake_models.append(None)
+
+            if output_settings is not None:
+                output_settings.serialization_fn(
+                    state.save(), output_settings.naming_callback(iteration, time)
+                )
             i_out += 1
         print(
             f"Finished iteration {iteration} out of {len(times)} in "
             f"{iteration_end_time - iteration_begin_time:g} seconds."
         )
+
+    return results
 
 
 def compute_induced_velocities(

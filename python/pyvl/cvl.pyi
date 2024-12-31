@@ -186,16 +186,6 @@ class Mesh:
         """Compute line velocities by averaging velocities at its end nodes."""
         ...
 
-    # @staticmethod
-    # def line_velocity_to_force(
-    #     primal_mesh: Mesh,
-    #     dual_mesh: Mesh,
-    #     surface_circulation: npt.NDArray[np.float64],
-    #     line_velocity_force: npt.NDArray[np.float64],
-    # ) -> None:
-    #     """Compute line forces due to average velocity along it inplace."""
-    #     ...
-
     @classmethod
     def merge_meshes(cls, *meshes: Mesh) -> Self:
         """Merge multiple meshes into a single mesh."""
@@ -234,6 +224,48 @@ class Mesh:
         /,
     ) -> npt.NDArray[np.float64]:
         """Compute an induction matrix for the mesh based on line circulations."""
+        ...
+
+    @staticmethod
+    def line_forces(
+        primal: Mesh,
+        dual: Mesh,
+        circulation: npt.NDArray[np.float64],
+        positions: npt.NDArray[np.float64],
+        freestream: npt.NDArray[np.float64],
+        out: npt.NDArray[np.float64] | None = None,
+    ) -> npt.NDArray[np.float64]:
+        r"""Compute forces due to reduced circulation filaments.
+
+        Parameters
+        ----------
+        primal : Mesh
+            Primal mesh.
+        dual : Mesh
+            Dual mesh, computed from the ``primal`` by a call to
+            :meth:`Mesh.compute_dual()`.
+        circulation : (N,) in_array
+            Array of surface circulations divided by :math:`2 \pi`.
+        positions : (M, 3) in_array
+            Positions of the primal mesh nodes.
+        freestream : (M, 3) in_array
+            Free-stream velocity at the mesh nodes.
+        out : (K, 3) out_array, optional
+            Optional array where to write the results to. Assumed it does not alias memory
+            from any other
+            arrays.
+
+        Returns
+        -------
+        (K, 3) out_array
+            If ``out`` was given, it is returned as well. If not, the returned value is a
+            newly allocated array of the correct size.
+        """
+        ...
+
+    @property
+    def line_data(self) -> npt.NDArray[np.uint]:
+        """Line connectivity of the mesh."""
         ...
 
 class ReferenceFrame:

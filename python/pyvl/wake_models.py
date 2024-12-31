@@ -172,7 +172,7 @@ class WakeModelLineExplicitUnsteady(WakeModel):
             self.wake_positions.reshape((-1, 3)),
             positions,
         )
-        return np.vecdot(ind_mat, self.circulation[None, :, None], axis=1)  # type: ignore
+        return np.vecdot(ind_mat, self.circulation.reshape((1, -1, 1)), axis=1)  # type: ignore
 
     def apply_corrections(
         self,
@@ -198,24 +198,28 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         """
         ind_mat = self.wake_mesh.induction_matrix3(
             self.vortex_tol, self.wake_positions.reshape((-1, 3)), control_pts, normals
-        ).reshape((control_pts.shape[0], self.shedding_lines.size, self.line_rows, 3))
+        ).reshape((control_pts.shape[0], self.shedding_lines.size, self.line_rows))
         # Split the induction matrix
         #   First row is always implicit
-        implicit = ind_mat[:, :, 0, :]
+        implicit = ind_mat[:, :, 0]
         #   Rest are explicit
-        explicit = ind_mat[:, :, 1:, :].reshape((control_pts.shape[0], -1, 3))
+        explicit = ind_mat[:, :, 1:].reshape((control_pts.shape[0], -1))
 
         # Apply implicit correction to adjacent surfaces
         for i_line in range(self.shedding_lines.size):
-            correction = implicit[:, i_line, :]
-            mat_in[:, self.adjacent_surfaces[:, 1], :] += correction
-            mat_in[:, self.adjacent_surfaces[:, 0], :] -= correction
+            correction = implicit[:, i_line]
+            s1 = self.adjacent_surfaces[i_line, 1]
+            if s1 != INVALID_ID:
+                mat_in[:, s1] -= correction
+            s2 = self.adjacent_surfaces[i_line, 0]
+            if s2 != INVALID_ID:
+                mat_in[:, s2] += correction
 
         # Compute explicit correction
         circ = self.circulation.reshape((self.shedding_lines.size, self.line_rows))[
             :, 1:
         ].reshape((-1,))
-        ev = np.vecdot(np.vecdot(explicit, circ[None, :, None], axis=1), normals, axis=-1)  # type: ignore
+        ev = np.vecdot(explicit, circ[None, :], axis=1)  # type: ignore
         rhs_in[:] += ev
 
     def as_polydata(self) -> pv.PolyData:
@@ -241,7 +245,7 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         out.insert_scalar("current_time", self.current_time)
         out.insert_int("step_count", self.step_count)
         out.insert_int("line_rows", self.line_rows)
-        out.insert_array("wake_position", self.wake_positions)
+        out.insert_array("wake_positions", self.wake_positions)
         out.insert_scalar("vortex_tol", self.vortex_tol)
         out.insert_array("circulation", self.circulation)
         return out
@@ -285,3 +289,42 @@ class WakeModelLineExplicitUnsteady(WakeModel):
         out.step_count = step_count
 
         return out
+
+    def correct_forces(
+        self,
+        line_forces: npt.NDArray[np.float64],
+        geometry: SimulationGeometry,
+        positions: npt.NDArray[np.float64],
+        circulation: npt.NDArray[np.float64],
+        flow: FlowConditions,
+    ) -> None:
+        """Apply correction to force vectors at different mesh lines.
+
+        Parameters
+        ----------
+        line_forces : (N, 3) array
+            Array of force vectors at different mesh lines. Corrections should be
+            added or subtracted in-place.
+        geometry : SimulationGeometry
+            The state of the :class:`SimulationGeometry` at the current time step.
+        positions : (N, 3) array
+            Positions of the mesh points.
+        circulation : (N,) array
+            Circulation values of vortex ring elements.
+        flow : FlowConditions
+            Flow conditions of the simulation.
+        """
+        tmp_mesh = WakeModelLineExplicitUnsteady._create_wake_mesh(
+            1, self.shedding_lines.size
+        )
+        dual = tmp_mesh.compute_dual()
+        cpts = np.ascontiguousarray(self.wake_positions[:, :, 0:2, :].reshape(-1, 3))
+        circ = np.ascontiguousarray(self.circulation[:, 0] / (2 * np.pi))
+        freestream = flow.get_velocity(self.current_time, cpts)
+        ind_mat = geometry.mesh.induction_matrix(self.vortex_tol, positions, cpts)
+        ind_v = np.vecdot(ind_mat, circulation[None, :, None], axis=1)  # type: ignore
+        self_v = self.get_velocity(cpts)
+        forces = Mesh.line_forces(tmp_mesh, dual, circ, cpts, freestream + ind_v + self_v)
+        i_line: np.uint32
+        for i, i_line in enumerate(self.shedding_lines):
+            line_forces[i_line, :] -= forces[4 * i + 1, :]

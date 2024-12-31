@@ -81,7 +81,7 @@ line vortex velocity is set to zero instead of its usual :math:`\frac{1}{r}` sca
 More details about these can be read about :ref:`here <pyvl.model_settings>`
 
 Defining the Wake
-~~~~~~~~~~~~~~~~~
+-----------------
 
 One of the most important things to model is the wake. The approach that `pyvl` has to modeling
 wake is that any object which inherits from :class:`WakeModel` can be used. As such, it is possible
@@ -106,6 +106,16 @@ After the geometry is defined and all the settings have been assembled, the simu
 using the :func:`run_solver`. More information about it and using the solver is provided
 :ref:`here <pyvl.solver>`.
 
+Post-Processing the Results
+---------------------------
+
+Running the :ref:`solver <pyvl.solver>` will only compute circulations required to satisfy the no-penetration
+condition at the center of each mesh surface. This circulation is by itself typically not what is useful.
+Typically, what is of more interest is the velocity, pressure, or force field which the circulation causes.
+
+To compute these, post-processing sub-module :mod:`pyvl.postprocess` is provided. It contains functions
+which allow for these values to be computed.
+
 .. toctree::
     :maxdepth: 2
     :hidden:
@@ -119,3 +129,4 @@ using the :func:`run_solver`. More information about it and using the solver is 
     wake_models
     output_settings
     solver
+    postprocess

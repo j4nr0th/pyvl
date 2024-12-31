@@ -1,6 +1,7 @@
-r"""Flat Plate
-==========
+r"""Example 1: Flat Plate
+=====================
 
+.. currentmodule:: pyvl
 
 The first case which is typically analyzed in aerodynamics is the simple flat plate.
 This can also serve as validation for any solver, as for incompressible, non-viscous,
@@ -18,6 +19,7 @@ import pyvl
 
 pv.set_plot_theme("document")
 pv.set_jupyter_backend("html")
+pv.global_theme.show_edges = True
 
 # %%
 #
@@ -70,10 +72,10 @@ sim_geo = pyvl.SimulationGeometry(geo)
 # velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
 # be used for constant free-stream.
 
-alpha = np.radians(5)  # 5 degrees
+alpha = np.radians(15)  # 5 degrees
 v_inf = 10  # 10 m/s
 flow_conditions = pyvl.FlowConditionsUniform(
-    v_inf * np.cos(alpha), v_inf * np.sin(alpha), 0
+    v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
 )
 
 # %%
@@ -101,21 +103,6 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
 # %%
 #
-# Besides the geometry and solver related settings, the last thing to specify are
-# the settings related to solver outputs. As the solver runs, it will output its
-# state at interval specified by :class:`TimeSettings`. In this case, it was not
-# specified, which means that each time step will be saved.
-#
-# The output settings are specified by :class:`OutputSettings`. The object is instantiated
-# by specifying two things:
-#
-# - What file format to output the data in ("JSON" or "HDF5"),
-# - How to name files based on the iteration number and time (via a callback).
-
-output_settings = pyvl.OutputSettings("JSON", lambda i, _: f"/tmp/output-{i:d}.json")
-
-# %%
-#
 # Running the Solver
 # ------------------
 #
@@ -123,4 +110,55 @@ output_settings = pyvl.OutputSettings("JSON", lambda i, _: f"/tmp/output-{i:d}.j
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and :class:`OutputSettings`.
 
 
-pyvl.run_solver(sim_geo, settings, output_settings)
+results = pyvl.run_solver(sim_geo, settings, None, None)
+
+# %%
+#
+# Post-Processing
+# ---------------
+#
+# Now that the results have been computed, post-processing can be done to obtain some
+# more useful results. In this example, this is done by creating a :mod:`pyvista` mesh,
+# then computing velocity at each point in the mesh, and plotting it by extracting glyphs
+# from it.
+
+mesh = pv.RectilinearGrid(
+    np.linspace(-1, 1, 11),
+    np.linspace(-1, 1, 11),
+    np.linspace(-1, 1, 11),
+)
+
+velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
+
+for i in range(velocities.shape[0]):
+    plotter = pv.Plotter()
+
+    mesh.point_data["Velocity"] = velocities[i, :, :]
+    mesh.set_active_vectors("Velocity")
+
+    sg = sim_geo.polydata_at_time(0.0)
+
+    plotter.add_mesh(mesh.glyph(factor=0.01))
+    plotter.add_mesh(sg, label="Geometry", color="Red")
+
+    plotter.show(interactive=False)
+
+# %%
+#
+# Another quantity of interest is the force distribution over the
+# mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
+# Note that without any wake model, there is a total of no circulatory force produced,
+# since all rings are closed. This is among the reasons why wake models are necessary.
+
+forces = pyvl.postprocess.circulatory_forces(results)
+
+for field in forces:
+    sg = sim_geo.polydata_edges_at_time(0.0)
+    sg.cell_data["Forces"] = field
+    print(f"Total force: {np.sum(field, axis=0)} Newtons")
+    plotter = pv.Plotter()
+
+    plotter.add_mesh(sg.glyph(factor=1))
+    plotter.add_mesh(sg, label="Geometry", color="Red")
+
+    plotter.show(interactive=False)
