@@ -5,8 +5,9 @@
 #ifndef PYVL_COMMON_H
 #define PYVL_COMMON_H
 
-static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims, const npy_intp dims[static n_dims],
-                                               int flags, int type, const char *array_name)
+static inline PyArrayObject *pyvl_ensure_array(PyObject *arr, unsigned n_dims,
+                                               const npy_intp CVL_ARRAY_ARG(dims, static n_dims), int flags, int type,
+                                               const char *array_name)
 {
     if (!PyArray_Check(arr))
     {

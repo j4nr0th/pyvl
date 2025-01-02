@@ -63,7 +63,7 @@ static PyGetSetDef geoid_getset[] = {
      .set = geoid_set_index,
      .doc = "Index of the object referenced by id.",
      .closure = NULL},
-    {}, // sentinel
+    {0}, // sentinel
 };
 
 static PyObject *geoid_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)

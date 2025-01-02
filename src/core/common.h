@@ -17,6 +17,29 @@
 #define M_1_PI 0.31830988618379067154 /* 1/pi */
 #endif
 
+#ifdef __GNUC__
+#define CVL_INTERNAL __attribute__((visibility("hidden")))
+#define CVL_EXTERNAL __attribute__((visibility("default")))
+#define CVL_ARRAY_ARG(arr, sz) arr[sz]
+#define CVL_EXPECT_CONDITION(x) (__builtin_expect(x, 1))
+#endif
+
+#ifndef CVL_EXPECT_CONDITION
+#define CVL_EXPECT_CONDITION(x) (x)
+#endif
+
+#ifndef CVL_INTERNAL
+#define CVL_INTERNAL
+#endif
+
+#ifndef CVL_EXTERNAL
+#define CVL_EXTERNAL
+#endif
+
+#ifndef CVL_ARRAY_ARG
+#define CVL_ARRAY_ARG(arr, sz) *arr
+#endif
+
 typedef double real_t;
 // typedef uint32_t id_t;
 
@@ -26,7 +49,7 @@ typedef struct
     uint32_t orientation : 1;
 } geo_id_t;
 
-enum : uint32_t
+enum
 {
     INVALID_ID = ((~(uint32_t)0) >> 1),                     //  ID that should not correspond to any entry
     REVERSED = ((uint32_t)1) << (8 * sizeof(uint32_t) - 1), // OR-ed with ID to indicate reverse direction

@@ -6,21 +6,24 @@
 #include "../../src/core/flow_solver.h"
 #include "../test_common.h"
 
-/*
- * Test mesh with a single line and no surfaces.
- */
-static const mesh_t TEST_MESH1 = {
-    .n_points = 2,
-    .n_lines = 1,
-    .lines = (line_t[1]){{(geo_id_t){0, 0}, (geo_id_t){0, 1}}},
-    .n_surfaces = 0,
-    .surface_offsets = NULL,
-    .surface_lines = NULL,
-};
-
-int main(int argc, char *argv[static argc])
+int main(int argc, char *CVL_ARRAY_ARG(argv, static restrict argc))
 {
-    static const real3_t positions[2] = {(real3_t){{-0.1, 0, 0.3}}, (real3_t){{1, 0, 0}}};
+    /*
+     * Test mesh with a single line and no surfaces.
+     */
+    /*
+     * Test mesh with a single line and no surfaces.
+     */
+    const mesh_t TEST_MESH1 = {
+        .n_points = 2,
+        .n_lines = 1,
+        .lines = (line_t[1]){{(geo_id_t){0, 0}, (geo_id_t){1, 0}}},
+        .n_surfaces = 0,
+        .surface_offsets = NULL,
+        .surface_lines = NULL,
+    };
+
+    const real3_t positions[2] = {(real3_t){{-0.1, 0, 0.3}}, (real3_t){{1, 0, 0}}};
     const real3_t dir = line_direction(positions, &TEST_MESH1, (geo_id_t){0, 0});
     const real3_t v = {{0.2, 0.4, -0.3}};
     const real3_t induced = compute_mesh_line_induction(positions, v, (geo_id_t){0, 0}, &TEST_MESH1, 1e-6);
