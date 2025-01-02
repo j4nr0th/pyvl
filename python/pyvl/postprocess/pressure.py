@@ -91,6 +91,9 @@ def compute_dynamic_pressure_variable(
             ind_mat, circulation[None, :, None], axis=1
         )  # type: ignore
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
+        vel = results.geometry.velocity_at_time(t)
+        cp_vel = results.geometry.mesh.surface_average_vec3(vel)
+        induced_velocity -= cp_vel
 
         wm = results.wake_models[i]
         if wm is not None:
