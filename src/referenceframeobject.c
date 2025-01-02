@@ -2,8 +2,9 @@
 // Created by jan on 29.11.2024.
 //
 #include "referenceframeobject.h"
-#include "common.h"
 #include <numpy/arrayobject.h>
+// This must be after the arrayobject
+#include "common.h"
 
 static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
