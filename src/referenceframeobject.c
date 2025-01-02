@@ -711,7 +711,14 @@ static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyObject *arg)
     if (this->parent)
     {
         //  Evolve the parent.
-        new->parent = (PyVL_ReferenceFrame *)pyvl_reference_frame_at_time((PyObject *)this->parent, arg);
+        PyVL_ReferenceFrame *new_parent =
+            (PyVL_ReferenceFrame *)PyObject_CallMethodOneArg((PyObject *)this->parent, "at_time", arg);
+        if (!new_parent)
+        {
+            Py_DECREF(new);
+            return NULL;
+        }
+        new->parent = new_parent;
     }
     else
     {
