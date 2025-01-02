@@ -1,6 +1,6 @@
 [project]
 name = "pyvl"
-version = "0.0.1"
+version = "0.0.1a"
 authors = [{ name = "Jan Roth", email = "r0th.j4n@gmail.com" }]
 description = "Panel code solver."
 requires-python = ">=3.10"
