@@ -45,6 +45,7 @@ class SolverState:
     positions: npt.NDArray[np.float64]
     normals: npt.NDArray[np.float64]
     control_points: npt.NDArray[np.float64]
+    cp_velocity: npt.NDArray[np.float64]
     circulation: npt.NDArray[np.float64]
     geometry: SimulationGeometry
     settings: SolverSettings
@@ -61,6 +62,7 @@ class SolverState:
         self.positions = np.empty((geometry.n_points, 3), np.float64)
         self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
         self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
+        self.cp_velocity = np.empty((geometry.n_surfaces, 3), np.float64)
         self.circulation = np.empty((geometry.n_surfaces,), np.float64)
         self.settings = settings
         self.wake_model = wake_model
@@ -71,6 +73,7 @@ class SolverState:
         out.insert_array("positions", self.positions)
         out.insert_array("normals", self.normals)
         out.insert_array("control_points", self.control_points)
+        out.insert_array("cp_velocity", self.cp_velocity)
         out.insert_array("circulation", self.circulation)
         out.insert_int("iteration", self.iteration)
         out.insert_hirearchycal_map("solver_settings", self.settings.save())
@@ -100,6 +103,7 @@ class SolverState:
         self.normals[:] = hmap.get_array("normals")
         self.control_points[:] = hmap.get_array("control_points")
         self.circulation[:] = hmap.get_array("circulation")
+        self.cp_velocity[:] = hmap.get_array("cp_velocity")
 
         return self
 
@@ -168,32 +172,36 @@ def run_solver(
 
     state = SolverState(geometry, settings, wake_model)
 
-    previous_rfs: dict[str, None | ReferenceFrame] = {name: None for name in geometry}
-
     for iteration, time in enumerate(times):
         state.iteration = iteration
         iteration_begin_time = perf_counter()
-        updated = 0
         for geo_name in geometry:
             info = geometry[geo_name]
             new_rf = info.rf.at_time(time)
-            if new_rf == previous_rfs[geo_name]:
-                # The geometry of that particular part did not change.
-                continue
-            updated += 1
-            previous_rfs[geo_name] = new_rf
-            state.positions[info.points] = new_rf.to_global_with_offset(info.pos)
-            state.control_points[info.surfaces] = new_rf.to_global_with_offset(
-                info.msh.surface_average_vec3(info.pos)
-            )
-            state.normals[info.surfaces] = new_rf.to_global_without_offset(
-                info.msh.surface_normal(info.pos)
-            )
+            positions = np.array(info.pos)
+            velocities = np.zeros_like(positions)
+            rf: ReferenceFrame | None = new_rf
+            while rf is not None:
+                # Transform positions to parent
+                positions = rf.to_parent_with_offset(positions, positions)
+                # Add reference frame velocity
+                rf.add_velocity(positions, velocities)
+                # Transform velocity to the parent
+                velocities = rf.to_parent_without_offset(velocities, velocities)
+                # Move to the parent
+                rf = rf.parent
+            # Update the properties in the global reference frame
+            state.positions[info.points] = positions
+            state.control_points[info.surfaces] = info.msh.surface_average_vec3(positions)
+            state.cp_velocity[info.surfaces] = info.msh.surface_average_vec3(velocities)
+            state.normals[info.surfaces] = info.msh.surface_normal(positions)
 
         # Compute flow velocity
         element_velocity = settings.flow_conditions.get_velocity(
             time, state.control_points
         )
+        # Add the control point velocities
+        element_velocity -= state.cp_velocity
         # Compute flow penetration at control points
         np.vecdot(state.normals, -element_velocity, out=state.circulation, axis=1)  # type: ignore
         # if updated != 0:

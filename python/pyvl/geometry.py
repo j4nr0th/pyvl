@@ -529,7 +529,7 @@ class SimulationGeometry(Mapping):
         Returns
         -------
         (N, 3) array
-            Array of position vectors of positions of individual points of the geometries.
+            Array of position vectors of individual points of the geometries.
         """
         pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
@@ -537,6 +537,37 @@ class SimulationGeometry(Mapping):
             new_rf = info.rf.at_time(float(t))
             pos[info.points] = new_rf.to_global_with_offset(info.pos)
         return pos
+
+    def velocity_at_time(self, t: float) -> npt.NDArray[np.float64]:
+        """Return the point velocities at the specified time.
+
+        This uses the different reference frames of the individual :class:`Geometry`
+        objects to determine their velocities in the global reference frame.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to get the velocities at.
+
+        Returns
+        -------
+        (N, 3) array
+            Array of velocity vectors of individual points of the geometries.
+        """
+        vel = np.empty((self.n_points, 3), np.float64)
+        for geo_name in self._info:
+            info = self._info[geo_name]
+            new_rf: ReferenceFrame | None = info.rf.at_time(float(t))
+            pos = np.array(info.pos)
+            v = np.zeros_like(vel[info.points])
+            while new_rf is not None:
+                new_rf.add_velocity(pos, v)
+                new_rf.to_parent_with_offset(pos, pos)
+                new_rf.to_parent_without_offset(v, v)
+                new_rf = new_rf.parent
+            del pos
+            vel[info.points] = v
+        return vel
 
     def polydata_at_time(self, t: float) -> pv.PolyData:
         """Return the geometry as polydata at the specified time.

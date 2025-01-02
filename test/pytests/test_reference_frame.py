@@ -163,3 +163,13 @@ def test_simple_transformations():
     assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
     eye2 = rf1.from_parent_without_offset(eye, eye2)
     assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_angles_from_rotation():
+    """Check that the static method angles_from_rotation recovers the angles."""
+    np.random.seed(0)
+    rf = ReferenceFrame(theta=np.random.random_sample(3))
+
+    rot_mat = rf.rotation_matrix
+    recovered = ReferenceFrame.angles_from_rotation(rot_mat)
+    assert rf.angles == pytest.approx(recovered)

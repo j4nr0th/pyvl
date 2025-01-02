@@ -41,7 +41,8 @@ The Uniformly Rotating :class:`RotorReferenceFrame`
 ---------------------------------------------------
 
 This sub-type of the :class:`ReferenceFrame` describes a coordinate system, which is
-rotating with a variable angular velocity around its z-axis.
+rotating with a constant angular velocity around its origin. This is intended to allow
+for simulation of rotors or any other rotating objects.
 
 .. autoclass:: RotorReferenceFrame
     :members:

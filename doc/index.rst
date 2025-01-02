@@ -13,8 +13,7 @@ This is the documentation for the Python Vortex Lattice module (abbreviated as P
    :maxdepth: 2
    :caption: API Reference:
 
-   tutorials/index
+   auto_examples/index
    public_python/index
    private_python/index
    private_c/index
-   auto_examples/index

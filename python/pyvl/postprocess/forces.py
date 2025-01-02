@@ -18,6 +18,7 @@ def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.float64]]:
             results.settings.model_settings.vortex_limit, positions, positions
         )
         induced = np.vecdot(ind_mat, (results.circulations[i, :])[None, :, None], axis=1)  # type: ignore
+        motion = results.geometry.velocity_at_time(t)
         wm = results.wake_models[i]
         if wm is not None:
             induced += wm.get_velocity(positions)
@@ -26,7 +27,7 @@ def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.float64]]:
             results.geometry.dual,
             reduced_c,
             positions,
-            freestream + induced,
+            freestream + induced - motion,
         )
         if wm is not None:
             wm.correct_forces(
