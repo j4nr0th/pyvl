@@ -203,8 +203,9 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
  * @param allocator Allocator used to allocate memory for the mesh.
  * @return -1 on failure, 0 on success.
  */
-int mesh_from_elements(mesh_t *p_out, unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-                       const unsigned flat_points[restrict], const allocator_t *allocator);
+int mesh_from_elements(mesh_t *p_out, unsigned n_elements,
+                       const unsigned CVL_ARRAY_ARG(point_counts, static restrict n_elements),
+                       const unsigned CVL_ARRAY_ARG(flat_points, restrict), const allocator_t *allocator);
 
 /**
  * @brief Intended to be used in order to convert the mesh into a format more common with other meshers, by just

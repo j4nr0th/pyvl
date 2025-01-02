@@ -24,7 +24,7 @@
 #include "../../src/core/mesh_io.h"
 #include "../test_common.h"
 
-int main(int argc, char *argv[static restrict argc])
+int main(int argc, char *CVL_ARRAY_ARG(argv, static restrict argc))
 {
     TEST_ASSERT(argc == 3 || argc == 4, "Wrong number of parameters %d", argc);
     const char *in_mesh_path = argv[1];

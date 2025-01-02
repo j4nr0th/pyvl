@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "geoidobject.h"
+#include <structmember.h>
 
 static PyObject *pyvl_line_repr(PyObject *self)
 {
@@ -22,16 +23,16 @@ static PyObject *pyvl_line_str(PyObject *self)
 
 static PyMemberDef line_members[] = {
     {.name = "begin",
-     .type = Py_T_UINT,
+     .type = T_UINT,
      .offset = offsetof(PyVL_LineObject, begin),
      .flags = 0,
      .doc = "Beginning point of the line."},
     {.name = "end",
-     .type = Py_T_UINT,
+     .type = T_UINT,
      .offset = offsetof(PyVL_LineObject, end),
      .flags = 0,
      .doc = "End point of the line."},
-    {},
+    {0},
 };
 
 PyVL_LineObject *pyvl_line_from_indices(unsigned begin, unsigned end)

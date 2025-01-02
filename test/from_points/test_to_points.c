@@ -74,7 +74,7 @@ static void load_points(const char *path, unsigned *n_out, unsigned **n_per_elem
     free(str);
 }
 
-int main(int argc, char *argv[static argc])
+int main(int argc, char *CVL_ARRAY_ARG(argv, static restrict argc))
 {
     TEST_ASSERT(argc == 3, "Not the correct number of arguments");
     const char *path_points = argv[1];

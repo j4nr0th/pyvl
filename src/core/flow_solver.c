@@ -21,7 +21,7 @@ real3_t compute_mesh_line_induction(const real3_t *restrict positions, const rea
     if (len < tol)
     {
         //  Filament is too short
-        return (real3_t){};
+        return (real3_t){0};
     }
 
     real_t tan_dist1 = real3_dot(direction, dr1);
@@ -31,11 +31,10 @@ real3_t compute_mesh_line_induction(const real3_t *restrict positions, const rea
     real_t norm_dist2 = sqrt(real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2));
 
     real_t norm_dist = (norm_dist1 + norm_dist2) / 2.0;
-
     if (norm_dist < tol)
     {
         //  Normal distance is too small
-        return (real3_t){};
+        return (real3_t){0};
         // continue
     }
 
@@ -84,13 +83,14 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
     }
 }
 
-void compute_line_induction(unsigned n_lines, const line_t lines[static restrict n_lines], unsigned n_positions,
-                            const real3_t positions[static restrict n_positions], unsigned n_cpts,
-                            const real3_t cpts[static restrict n_cpts], real3_t out[restrict n_lines * n_cpts],
-                            const real_t tol)
+void compute_line_induction(unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
+                            unsigned n_positions, const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
+                            unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
+                            real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), real_t tol)
 {
+    unsigned iln;
 #pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
-    for (unsigned iln = 0; iln < n_lines; ++iln)
+    for (iln = 0; iln < n_lines; ++iln)
     {
         const line_t line = lines[iln];
         const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
@@ -107,7 +107,7 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
             if (len < tol)
             {
                 //  Filament is too short
-                out[icp * n_lines + iln] = (real3_t){};
+                out[icp * n_lines + iln] = (real3_t){0};
                 continue;
             }
 
@@ -125,7 +125,7 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
             if (norm_dist_squared < tol * tol)
             {
                 //  Filament is too short
-                out[icp * n_lines + iln] = (real3_t){};
+                out[icp * n_lines + iln] = (real3_t){0};
                 continue;
             }
             const real_t norm_dist = sqrt(norm_dist_squared);
@@ -139,18 +139,20 @@ void compute_line_induction(unsigned n_lines, const line_t lines[static restrict
 }
 
 void line_induction_to_surface_induction(unsigned n_surfaces,
-                                         const unsigned surface_offsets[static restrict n_surfaces + 1],
-                                         const geo_id_t surface_lines[restrict], unsigned n_lines, unsigned n_cpts,
-                                         const real3_t line_inductions[static restrict n_lines * n_cpts],
-                                         real3_t out[restrict n_surfaces * n_cpts])
+                                         const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
+                                         const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), unsigned n_lines,
+                                         unsigned n_cpts,
+                                         const real3_t CVL_ARRAY_ARG(line_inductions, static restrict n_lines *n_cpts),
+                                         real3_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts))
 {
+    unsigned i_surf;
 #pragma omp parallel for default(none)                                                                                 \
     shared(n_surfaces, surface_offsets, n_lines, n_cpts, line_inductions, surface_lines, out)
-    for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
+    for (i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
         for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
         {
-            real3_t res = {};
+            real3_t res = {0};
             for (unsigned i_ln = surface_offsets[i_surf]; i_ln < surface_offsets[i_surf + 1]; ++i_ln)
             {
                 const geo_id_t ln_id = surface_lines[i_ln];
@@ -169,20 +171,21 @@ void line_induction_to_surface_induction(unsigned n_surfaces,
     }
 }
 
-void line_induction_to_normal_surface_induction(unsigned n_surfaces,
-                                                const unsigned surface_offsets[static restrict n_surfaces + 1],
-                                                const geo_id_t surface_lines[restrict], unsigned n_lines,
-                                                unsigned n_cpts, const real3_t normal_vectors[static restrict n_cpts],
-                                                const real3_t line_inductions[static restrict n_lines * n_cpts],
-                                                real_t out[restrict n_surfaces * n_cpts])
+void line_induction_to_normal_surface_induction(
+    unsigned n_surfaces, const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
+    const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), unsigned n_lines, unsigned n_cpts,
+    const real3_t CVL_ARRAY_ARG(normal_vectors, static restrict n_cpts),
+    const real3_t CVL_ARRAY_ARG(line_inductions, static restrict n_lines *n_cpts),
+    real_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts))
 {
+    unsigned i_surf, i_cp;
 #pragma omp parallel for default(none) collapse(2)                                                                     \
     shared(n_surfaces, surface_offsets, surface_lines, n_lines, n_cpts, line_inductions, normal_vectors, out)
-    for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
+    for (i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
-        for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
+        for (i_cp = 0; i_cp < n_cpts; ++i_cp)
         {
-            real3_t res = {};
+            real3_t res = {0};
             for (unsigned i_ln = surface_offsets[i_surf]; i_ln < surface_offsets[i_surf + 1]; ++i_ln)
             {
                 const geo_id_t ln_id = surface_lines[i_ln];
@@ -201,11 +204,14 @@ void line_induction_to_normal_surface_induction(unsigned n_surfaces,
     }
 }
 
-void line_forces_from_surface_circulation(const real3_t positions[restrict], const mesh_t *primal, const mesh_t *dual,
-                                          const real_t surface_circulations[restrict], real3_t line_forces[restrict])
+void line_forces_from_surface_circulation(const real3_t CVL_ARRAY_ARG(positions, restrict), const mesh_t *primal,
+                                          const mesh_t *dual,
+                                          const real_t CVL_ARRAY_ARG(surface_circulations, restrict),
+                                          real3_t CVL_ARRAY_ARG(line_forces, restrict))
 {
+    unsigned i_line;
 #pragma omp parallel for default(none) shared(positions, primal, dual, surface_circulations, line_forces)
-    for (unsigned i_line = 0; i_line < primal->n_lines; ++i_line)
+    for (i_line = 0; i_line < primal->n_lines; ++i_line)
     {
         const line_t *const pln = primal->lines + i_line;
         const line_t *const dln = dual->lines + i_line;

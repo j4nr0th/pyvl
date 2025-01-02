@@ -54,7 +54,7 @@ static PyObject *pyvl_mesh_new(PyTypeObject *type, PyObject *args, PyObject *kwa
         unsigned total_pts = 0;
         for (unsigned i = 0; i < n_elements; ++i)
         {
-            const ssize_t len = PySequence_Size(PySequence_Fast_GET_ITEM(seq, i));
+            const Py_ssize_t len = PySequence_Size(PySequence_Fast_GET_ITEM(seq, i));
             if (len < 0)
             {
                 PyErr_Format(PyExc_TypeError, "Element indices for element %u were not a sequence.", i);
@@ -201,7 +201,7 @@ static PyGetSetDef pyvl_mesh_getset[] = {
         .set = NULL,
         .doc = "Line connectivity of the mesh.",
     },
-    {},
+    {0},
 };
 
 static PyObject *pyvl_mesh_get_line(PyObject *self, PyObject *arg)
@@ -632,7 +632,7 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
 
     const unsigned n_lines = this->mesh.n_lines;
     const line_t *restrict lines = this->mesh.lines;
-    const unsigned n_surfaces = n_surfaces;
+    const unsigned n_surfaces = this->mesh.n_surfaces;
     const unsigned *restrict surface_offsets = this->mesh.surface_offsets;
     const geo_id_t *restrict surface_lines = this->mesh.surface_lines;
     const unsigned n_entries = this->mesh.surface_offsets[this->mesh.n_surfaces];
@@ -665,7 +665,7 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
                 if (len < tol)
                 {
                     //  Filament is too short
-                    line_buffer[icp * n_lines + iln] = (real3_t){};
+                    line_buffer[icp * n_lines + iln] = (real3_t){0};
                     continue;
                 }
 
@@ -683,7 +683,7 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
                 if (norm_dist < tol)
                 {
                     //  Filament is too short
-                    line_buffer[icp * n_lines + iln] = (real3_t){};
+                    line_buffer[icp * n_lines + iln] = (real3_t){0};
                     continue;
                 }
 
@@ -699,7 +699,7 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
         {
             for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
             {
-                real3_t res = {};
+                real3_t res = {0};
                 for (unsigned i_ln = surface_offsets[i_surf]; i_ln < surface_offsets[i_surf + 1]; ++i_ln)
                 {
                     const geo_id_t ln_id = surface_lines[i_ln];
@@ -756,8 +756,9 @@ static PyObject *pyvl_line_velocities_from_point_velocities(PyObject *self, PyOb
     real3_t const *restrict velocities_in = PyArray_DATA(point_velocities);
     real3_t *restrict velocities_out = PyArray_DATA(line_buffer);
 
+    unsigned i;
 #pragma omp parallel for default(none) shared(primal, velocities_in, velocities_out)
-    for (unsigned i = 0; i < primal->mesh.n_lines; ++i)
+    for (i = 0; i < primal->mesh.n_lines; ++i)
     {
         const line_t *ln = primal->mesh.lines + i;
         velocities_out[i] = real3_mul1(real3_add(velocities_in[ln->p1.value], velocities_in[ln->p2.value]), 0.5);
@@ -922,8 +923,9 @@ static PyObject *pyvl_mesh_line_gradient(PyObject *self, PyObject *const *args, 
     const real_t *const restrict v_in = PyArray_DATA(point_values);
     real_t *const restrict v_out = PyArray_DATA(point_values);
 
+    unsigned i;
 #pragma omp parallel for default(none) shared(lines, v_in, v_out, n_lns)
-    for (unsigned i = 0; i < n_lns; ++i)
+    for (i = 0; i < n_lns; ++i)
     {
         real_t x = 0;
         const line_t ln = lines[i];
@@ -1352,8 +1354,9 @@ static PyObject *pyvl_mesh_line_forces(PyObject *Py_UNUSED(null), PyObject *args
     const line_t *primal_lines = primal->mesh.lines;
     const line_t *dual_lines = dual->mesh.lines;
 
+    unsigned i_line;
 #pragma omp parallel for default(none) shared(n_lines, primal_lines, dual_lines, pos, cir, vel, f)
-    for (unsigned i_line = 0; i_line < n_lines; ++i_line)
+    for (i_line = 0; i_line < n_lines; ++i_line)
     {
         const line_t primal_line = primal_lines[i_line];
         const line_t dual_line = dual_lines[i_line];
@@ -1478,7 +1481,7 @@ static PyMethodDef pyvl_mesh_methods[] = {
                "(K, 3) out_array\n"
                "    If ``out`` was given, it is returned as well. If not, the returned value is a newly allocated\n"
                "    array of the correct size.\n"},
-    {},
+    {0},
 };
 
 static PyObject *pyvl_mesh_rich_compare(PyObject *self, PyObject *other, const int op)

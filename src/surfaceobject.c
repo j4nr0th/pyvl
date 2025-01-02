@@ -178,7 +178,8 @@ failed:
 }
 
 CVL_INTERNAL
-PyVL_SurfaceObject *pyvl_surface_from_points(unsigned n_points, const unsigned points[static restrict n_points])
+PyVL_SurfaceObject *pyvl_surface_from_points(unsigned n_points,
+                                             const unsigned CVL_ARRAY_ARG(points, static restrict n_points))
 {
     PyVL_SurfaceObject *const this =
         (PyVL_SurfaceObject *)pyvl_surface_type.tp_alloc(&pyvl_surface_type, (Py_ssize_t)n_points);
@@ -196,7 +197,7 @@ PyVL_SurfaceObject *pyvl_surface_from_points(unsigned n_points, const unsigned p
 }
 
 CVL_INTERNAL
-PyVL_SurfaceObject *pyvl_surface_from_lines(unsigned n, const line_t lines[static restrict n])
+PyVL_SurfaceObject *pyvl_surface_from_lines(unsigned n, const line_t CVL_ARRAY_ARG(lines, static restrict n))
 {
     PyVL_SurfaceObject *const this =
         (PyVL_SurfaceObject *)pyvl_surface_type.tp_alloc(&pyvl_surface_type, (Py_ssize_t)n);
@@ -269,7 +270,7 @@ static PyGetSetDef pyvl_surface_getset[] = {
      .set = NULL,
      .doc = "Number of the lines that make up the surface.",
      .closure = NULL},
-    {},
+    {0},
 };
 
 CVL_INTERNAL

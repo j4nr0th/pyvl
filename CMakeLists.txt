@@ -9,7 +9,6 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 set(CMAKE_C_STANDARD 17)
 
 find_package(OpenMP REQUIRED)
-find_package(OpenACC REQUIRED)
 find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
 
 # Find the NumPy headers
@@ -80,17 +79,14 @@ if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
 endif ()
 target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
 
-target_compile_options(cvl PRIVATE ${OpenMP_C_FLAGS})
-target_link_libraries(cvl PRIVATE ${OpenMP_C_LIBRARIES})
 
-target_compile_options(cvl PRIVATE ${OpenACC_C_FLAGS})
-target_link_libraries(cvl PRIVATE ${OpenACC_C_LIBRARIES})
-
+target_link_libraries(cvl PRIVATE ${OpenMP_C_LIBRARIES} ${Python_LIBRARIES})
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -std=c17 -fopt-info-optimized-omp -fno-omit-frame-pointer)
+    target_compile_options(cvl PRIVATE ${OpenMP_C_FLAGS})
+    target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -std=c17 -fno-omit-frame-pointer)
 elseif (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(cvl PRIVATE )
+    target_compile_options(cvl PRIVATE -openmp:llvm)
 endif ()
 
 #get_target_property(MAIN_CFLAGS cvl COMPILE_OPTIONS)

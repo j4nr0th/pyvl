@@ -21,7 +21,7 @@
 #include "../../src/core/mesh_io.h"
 #include "../test_common.h"
 
-int main(int argc, char *argv[static restrict argc])
+int main(int argc, char *CVL_ARRAY_ARG(argv, static restrict argc))
 {
     if (argc < 2 || argc > 3)
         return 1;

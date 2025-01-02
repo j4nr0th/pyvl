@@ -23,7 +23,7 @@ real3_t line_direction(const real3_t *positions, const mesh_t *mesh, geo_id_t li
 
 real3_t surface_center(const real3_t *positions, const mesh_t *mesh, geo_id_t surface_id)
 {
-    real3_t out = {};
+    real3_t out = {0};
     for (unsigned i_line = mesh->surface_offsets[surface_id.value];
          i_line < mesh->surface_offsets[surface_id.value + 1]; ++i_line)
     {
@@ -47,7 +47,7 @@ real3_t surface_center(const real3_t *positions, const mesh_t *mesh, geo_id_t su
 
 real3_t surface_normal(const real3_t *positions, const mesh_t *mesh, geo_id_t surface_id)
 {
-    real3_t out = {};
+    real3_t out = {0};
     const unsigned i0 = mesh->surface_offsets[surface_id.value];
     const unsigned i1 = mesh->surface_offsets[surface_id.value + 1];
     real3_t d1 = line_direction(positions, mesh, mesh->surface_lines[i0]);
@@ -172,8 +172,9 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
     return 0;
 }
 
-int mesh_from_elements(mesh_t *p_out, unsigned n_elements, const unsigned point_counts[static restrict n_elements],
-                       const unsigned flat_points[restrict], const allocator_t *allocator)
+int mesh_from_elements(mesh_t *p_out, unsigned n_elements,
+                       const unsigned CVL_ARRAY_ARG(point_counts, static restrict n_elements),
+                       const unsigned CVL_ARRAY_ARG(flat_points, restrict), const allocator_t *allocator)
 {
     mesh_t this;
 

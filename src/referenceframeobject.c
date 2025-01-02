@@ -278,11 +278,12 @@ static PyGetSetDef pyvl_reference_frame_getset[] = {
      .set = NULL,
      .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
      .closure = NULL},
-    {},
+    {0},
 };
 
-static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const args[static nargs], PyArrayObject **p_in,
-                                       PyArrayObject **p_out, npy_intp *p_dim, const npy_intp **p_dims)
+static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const CVL_ARRAY_ARG(args, static nargs),
+                                       PyArrayObject **p_in, PyArrayObject **p_out, npy_intp *p_dim,
+                                       const npy_intp **p_dims)
 {
     if (nargs != 1 && nargs != 2)
     {
@@ -1248,7 +1249,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                "velocity : (N, 3) array\n"
                "   Array to which the velocity vectors at the specified positions should be added\n"
                "   to. These values should be added to and not just overwritten.\n"},
-    {},
+    {0},
 };
 
 PyDoc_STRVAR(
