@@ -557,13 +557,14 @@ class SimulationGeometry(Mapping):
         vel = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
-            new_rf = info.rf.at_time(float(t))
+            new_rf: ReferenceFrame | None = info.rf.at_time(float(t))
             pos = np.array(info.pos)
             v = np.zeros_like(vel[info.points])
             while new_rf is not None:
                 new_rf.add_velocity(pos, v)
                 new_rf.to_parent_with_offset(pos, pos)
                 new_rf.to_parent_without_offset(v, v)
+                new_rf = new_rf.parent
             del pos
             vel[info.points] = v
         return vel
