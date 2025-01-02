@@ -642,12 +642,18 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
 
     Py_BEGIN_ALLOW_THREADS;
 
-#pragma acc data copyin(positions[0 : n_points], lines[0 : n_lines], surface_offsets[0 : n_surfaces + 1],              \
-                        surface_lines[0 : n_entries]) copyout(out_ptr[0 : n_surfaces])                                 \
-    create(line_buffer[0 : n_lines])
+#if defined(_OPENMP) && _OPENMP >= 201307
+
+#pragma omp target data map(to : positions[0 : n_points], lines[0 : n_lines], surface_offsets[0 : n_surfaces + 1],     \
+                                surface_lines[0 : n_entries]) map(from : out_ptr[0 : n_surfaces])                      \
+    map(alloc : line_buffer[0 : n_lines])
     {
-#pragma acc parallel loop
+#pragma omp target teams distribute parallel for
         for (unsigned iln = 0; iln < n_lines; ++iln)
+#else  // !(defined(_OPENMP) && _OPENMP >= 201307)
+    {
+        for (unsigned iln = 0; iln < n_lines; ++iln)
+#endif // defined(_OPENMP) && _OPENMP >= 201307
         {
             const line_t line = lines[iln];
             const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
@@ -658,7 +664,7 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
             direction.v0 /= len;
             direction.v1 /= len;
             direction.v2 /= len;
-#pragma acc loop
+
             for (unsigned icp = 0; icp < n_cpts; ++icp)
             {
                 const real3_t control_point = cpts[icp];
@@ -694,8 +700,12 @@ static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *ar
             }
         }
 
-#pragma acc parallel loop collapse(2)
+#if defined(_OPENMP) && _OPENMP >= 201307
+#pragma omp target teams distribute parallel for
         for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
+#else  // !(defined(_OPENMP) && _OPENMP >= 201307)
+        for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
+#endif // defined(_OPENMP) && _OPENMP >= 201307
         {
             for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
             {
