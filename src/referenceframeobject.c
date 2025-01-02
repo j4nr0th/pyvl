@@ -2,6 +2,7 @@
 // Created by jan on 29.11.2024.
 //
 #include "referenceframeobject.h"
+#include "common.h"
 #include <numpy/arrayobject.h>
 
 static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
@@ -926,6 +927,24 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
     return (PyObject *)this;
 }
 
+static PyObject *pyvl_reference_frame_add_velocity(PyObject *Py_UNUSED(self), PyObject *const *args, Py_ssize_t nargs)
+{
+    if (nargs != 2)
+    {
+        PyErr_Format(PyExc_TypeError, "Function takes 2 parameters, but was called with %u\n", (unsigned)nargs);
+        return NULL;
+    }
+    const PyArrayObject *const in_array =
+        pyvl_ensure_array(args[0], 2, (const npy_intp[2]){0, 3}, 0, NPY_FLOAT64, "Position array");
+    const npy_intp required_dims[2] = {PyArray_DIM(in_array, 0), 3};
+    const PyArrayObject *const out_array =
+        pyvl_ensure_array(args[1], 2, required_dims, NPY_ARRAY_WRITEABLE, NPY_FLOAT64, "Velocity array");
+    if (!out_array)
+        return NULL;
+
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef pyvl_reference_frame_methods[] = {
     {.ml_name = "from_parent_with_offset",
      .ml_meth = (void *)pyvl_reference_frame_from_parent_with_offset,
@@ -1203,6 +1222,24 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                "-------\n"
                "Self\n"
                "    Deserialized :class:`ReferenceFrame`.\n"},
+    {.ml_name = "add_velocity",
+     .ml_meth = (void *)pyvl_reference_frame_add_velocity,
+     .ml_flags = METH_FASTCALL,
+     .ml_doc = "add_velocity(positions: array, velocity: array, /) -> None\n"
+               "Add the velocity at the specified positions.\n"
+               "\n"
+               "This method exists to account for the motion of the mesh from non-stationary\n"
+               "reference frames.\n"
+               "\n"
+               "Parameters\n"
+               "----------\n"
+               "positions : (N, 3) array\n"
+               "   Array of :math:`N` position vectors specifying the positions where the\n"
+               "   velocity should be updated.\n"
+               "\n"
+               "velocity : (N, 3) array\n"
+               "   Array to which the velocity vectors at the specified positions should be added\n"
+               "   to. These values should be added to and not just overwritten.\n"},
     {},
 };
 

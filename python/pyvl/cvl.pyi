@@ -603,6 +603,26 @@ class ReferenceFrame:
         """
         ...
 
+    def add_velocity(
+        self, positions: npt.NDArray[np.float64], velocity: npt.NDArray[np.float64], /
+    ) -> None:
+        """Add the velocity at the specified positions.
+
+        This method exists to account for the motion of the mesh from non-stationary
+        reference frames.
+
+        Parameters
+        ----------
+        positions : (N, 3) array
+            Array of :math:`N` position vectors specifying the positions where the
+            velocity should be updated.
+
+        velocity : (N, 3) array
+            Array to which the velocity vectors at the specified positions should be added
+            to. These values should be added to and not just overwritten.
+        """
+        ...
+
     @staticmethod
     def angles_from_rotation(rotation_matrix: npt.ArrayLike) -> npt.NDArray[np.double]:
         """Compute rotation angles from a transformation matrix.
