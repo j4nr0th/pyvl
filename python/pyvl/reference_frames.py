@@ -125,6 +125,29 @@ class TranslatingReferenceFrame(ReferenceFrame):
 
         return cls(offset, angles, velocity, parent, time)
 
+    def add_velocity(
+        self, positions: npt.NDArray[np.float64], velocity: npt.NDArray[np.float64], /
+    ) -> None:
+        """Add the velocity at the specified positions.
+
+        This method exists to account for the motion of the mesh from non-stationary
+        reference frames.
+
+        Parameters
+        ----------
+        positions : (N, 3) array
+            Array of :math:`N` position vectors specifying the positions where the
+            velocity should be updated.
+
+        velocity : (N, 3) array
+            Array to which the velocity vectors at the specified positions should be added
+            to. These values should be added to and not just overwritten.
+        """
+        # Do it just to enforce the types.
+        super().add_velocity(positions, velocity)
+        # Add a constant velocity
+        velocity[:, :] += self.vel[None, :]
+
 
 class RotorReferenceFrame(ReferenceFrame):
     """Reference frame designed for rotors.
@@ -198,3 +221,29 @@ class RotorReferenceFrame(ReferenceFrame):
     def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
         """Deserialize the reference frame into the HDF5 group."""
         raise NotImplementedError
+
+    def add_velocity(
+        self, positions: npt.NDArray[np.float64], velocity: npt.NDArray[np.float64], /
+    ) -> None:
+        """Add the velocity at the specified positions.
+
+        This method exists to account for the motion of the mesh from non-stationary
+        reference frames.
+
+        Parameters
+        ----------
+        positions : (N, 3) array
+            Array of :math:`N` position vectors specifying the positions where the
+            velocity should be updated.
+
+        velocity : (N, 3) array
+            Array to which the velocity vectors at the specified positions should be added
+            to. These values should be added to and not just overwritten.
+        """
+        # Do it just to enforce the types.
+        super().add_velocity(positions, velocity)
+        omega = self.rotation(self.time)
+
+        # Add a rotation velocity
+        velocity[:, 0] += omega * positions[:, 1]
+        velocity[:, 1] -= omega * positions[:, 0]
