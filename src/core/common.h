@@ -183,7 +183,7 @@ static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
 }
 static inline real3_t angles_from_real3x3(const real3x3_t a)
 {
-    return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = atan2(-a.m20, hypot(a.m00, a.m01)), .v2 = atan2(a.m10, a.m00)};
+    return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = atan2(-a.m20, hypot(a.m00, a.m10)), .v2 = atan2(a.m10, a.m00)};
 }
 
 static inline real_t clamp_angle_to_range(const real_t a)
