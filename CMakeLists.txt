@@ -86,11 +86,10 @@ if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(cvl PRIVATE ${OpenMP_C_FLAGS})
     target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -lto=auto -std=c17 -fno-omit-frame-pointer)
 elseif (CMAKE_C_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(cvl PRIVATE -openmp:llvm)
+    # Don't set any warning tags for Windows, since I don't trust it as much as GCC.
+    target_compile_options(cvl PRIVATE -openmp:llvm /wd4068 /std:c17)
 endif ()
 
-#get_target_property(MAIN_CFLAGS cvl COMPILE_OPTIONS)
-#message("Compile options are: ${MAIN_CFLAGS}")
 
 enable_testing()
 add_subdirectory(test)

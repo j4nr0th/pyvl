@@ -155,7 +155,7 @@ static PyObject *pyvl_mesh_get_n_surfaces(PyObject *self, void *Py_UNUSED(closur
 static PyObject *pyvl_mesh_get_line_data(PyObject *self, void *Py_UNUSED(closere))
 {
     const PyVL_MeshObject *const this = (PyVL_MeshObject *)self;
-    _Static_assert(sizeof(*this->mesh.lines) == 2 * sizeof(npy_uint32));
+    _Static_assert(sizeof(*this->mesh.lines) == 2 * sizeof(npy_uint32), "Types must have the same size.");
     const npy_intp dims[2] = {this->mesh.n_lines, 2};
     PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNewFromData(2, dims, NPY_UINT32, this->mesh.lines);
     if (!out)
@@ -752,7 +752,7 @@ static PyObject *pyvl_line_velocities_from_point_velocities(PyObject *self, PyOb
     if (!line_buffer)
         return NULL;
 
-    _Static_assert(3 * sizeof(npy_float64) == sizeof(real3_t));
+    _Static_assert(3 * sizeof(npy_float64) == sizeof(real3_t), "Types must have the same size.");
     real3_t const *restrict velocities_in = PyArray_DATA(point_velocities);
     real3_t *restrict velocities_out = PyArray_DATA(line_buffer);
 
@@ -1079,7 +1079,7 @@ static PyObject *pyvl_mesh_dual_normal_criterion(PyObject *self, PyObject *const
     PyArrayObject *const normal_array =
         pyvl_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
                           NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Normals array");
-    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64));
+    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64), "Types must have the same size.");
 
     if (!normal_array)
         return NULL;
@@ -1344,8 +1344,8 @@ static PyObject *pyvl_mesh_line_forces(PyObject *Py_UNUSED(null), PyObject *args
             return NULL;
         }
     }
-    _Static_assert(sizeof(real_t) == sizeof(npy_float64));
-    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64));
+    _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Types must have the same size.");
+    _Static_assert(sizeof(real3_t) == 3 * sizeof(npy_float64), "Types must have the same size.");
 
     const real_t *const restrict cir = PyArray_DATA(circulation);
     const real3_t *const restrict pos = PyArray_DATA(positions);
