@@ -1,0 +1,41 @@
+name: Build
+
+# Inspired by Numpy and CiBuildWheel configs
+
+on: [push, pull_request]
+
+jobs:
+  build_wheels:
+    name: Build wheels for ${{ matrix.python }} on ${{ matrix.buildplat[0] }}-${{ matrix.buildplat[1] }}
+    runs-on: ${{ matrix.buildplat[0] }}
+    strategy:
+      matrix:
+        buildplat:
+          - [ubuntu-22.04, manylinux_x86_64]
+          - [ubuntu-22.04, musllinux_x86_64]
+          - [windows-2019, win_amd64]
+          - [windows-2019, win32]
+          
+        python: ["cp39", "cp310", "cp311", "cp312", "cp313"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Used to host cibuildwheel
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel==2.22.0
+
+      - name: Build wheels
+        run: python -m cibuildwheel --output-dir wheelhouse
+        # to supply options, put them in 'env', like:
+        # env:
+        #   CIBW_SOME_OPTION: value
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.python }}-${{ matrix.buildplat[0] }}-${{ matrix.buildplat[1] }}-${{ strategy.job-index }}
+          path: ./wheelhouse/*.whl
