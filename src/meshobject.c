@@ -237,7 +237,7 @@ static PyObject *pyvl_mesh_get_surface(PyObject *self, PyObject *arg)
     {
         return NULL;
     }
-    if (idx >= this->mesh.n_surfaces || idx < -(long)this->mesh.n_surfaces)
+    if (idx >= (long)this->mesh.n_surfaces || idx < -(long)this->mesh.n_surfaces)
     {
         PyErr_Format(PyExc_IndexError, "Index %ld is our of bounds for a mesh with %u surfaces.", idx,
                      this->mesh.n_surfaces);
@@ -370,7 +370,7 @@ static real3_t *ensure_line_memory(PyObject *in, unsigned n_lines, unsigned n_cp
         return NULL;
     }
 
-    if (PyArray_SIZE(this) < n_lines * n_cpts * 3)
+    if (PyArray_SIZE(this) < (npy_intp)(n_lines * n_cpts * 3))
     {
         PyErr_Format(PyExc_ValueError,
                      "Line computation buffer did not have space for enough elements "
@@ -781,7 +781,7 @@ static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize
 {
     unsigned n_surfaces = 0, n_lines = 0, n_points = 0, n_surface_entries = 0;
 
-    for (unsigned i = 0; i < nargs; ++i)
+    for (unsigned i = 0; i < (unsigned)nargs; ++i)
     {
         PyObject *const o = args[i];
         if (!PyObject_TypeCheck(o, &pyvl_mesh_type))
@@ -817,7 +817,7 @@ static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize
 
     unsigned cnt_pts = 0, cnt_lns = 0, cnt_surf = 0, cnt_entr = 0;
     line_t *l = lines;
-    for (unsigned i = 0; i < nargs; ++i)
+    for (unsigned i = 0; i < (unsigned)nargs; ++i)
     {
         const PyVL_MeshObject *const m = (PyVL_MeshObject *)args[i];
         // Lines are copied, but incremented
@@ -967,7 +967,7 @@ static PyObject *pyvl_mesh_surface_normal(PyObject *self, PyObject *const *args,
                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!in_array)
         return NULL;
-    if (PyArray_DIM(in_array, 1) != 3 || PyArray_DIM(in_array, 0) != this->mesh.n_points)
+    if (PyArray_DIM(in_array, 1) != 3 || (unsigned)PyArray_DIM(in_array, 0) != this->mesh.n_points)
     {
         PyErr_Format(PyExc_ValueError,
                      "Input array did not have the shape expected from the number of points in"

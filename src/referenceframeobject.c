@@ -378,7 +378,7 @@ static PyObject *pyvl_reference_frame_from_parent_with_offset(PyObject *self, Py
     const real3x3_t mat = real3x3_from_angles(this->transformation.angles);
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -407,7 +407,7 @@ static PyObject *pyvl_reference_frame_from_parent_without_offset(PyObject *self,
     const real3x3_t mat = real3x3_from_angles(this->transformation.angles);
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -435,7 +435,7 @@ static PyObject *pyvl_reference_frame_to_parent_with_offset(PyObject *self, PyOb
     const real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -463,7 +463,7 @@ static PyObject *pyvl_reference_frame_to_parent_without_offset(PyObject *self, P
     const real3x3_t mat = real3x3_inverse_from_angles(this->transformation.angles);
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -498,7 +498,7 @@ static PyObject *pyvl_reference_frame_from_global_with_offset(PyObject *self, Py
 
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -532,7 +532,7 @@ static PyObject *pyvl_reference_frame_from_global_without_offset(PyObject *self,
 
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -567,7 +567,7 @@ static PyObject *pyvl_reference_frame_to_global_with_offset(PyObject *self, PyOb
 
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
@@ -600,7 +600,7 @@ static PyObject *pyvl_reference_frame_to_global_without_offset(PyObject *self, P
 
     _Static_assert(sizeof(real_t) == sizeof(npy_float64), "Binary compatibility must be ensured.");
     size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; ++i)
+    for (unsigned i = 0; i < (unsigned)dim_in - 1; ++i)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
