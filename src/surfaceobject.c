@@ -247,7 +247,7 @@ static PyObject *pyvl_surface_get_lines(PyObject *self, void *Py_UNUSED(closure)
             Py_DECREF(out);
             return NULL;
         }
-        PyTuple_SET_ITEM(out, i, ln);
+        PyTuple_SET_ITEM(out, i, (PyObject *)ln);
     }
 
     return out;
