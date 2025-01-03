@@ -212,7 +212,7 @@ static PyObject *pyvl_mesh_get_line(PyObject *self, PyObject *arg)
     {
         return NULL;
     }
-    if (idx >= this->mesh.n_lines || idx < -(long)this->mesh.n_lines)
+    if (idx >= (long)this->mesh.n_lines || idx < -(long)this->mesh.n_lines)
     {
         PyErr_Format(PyExc_IndexError, "Index %ld is our of bounds for a mesh with %u lines.", idx, this->mesh.n_lines);
         return NULL;
@@ -1021,7 +1021,7 @@ static PyObject *pyvl_mesh_surface_average_vec3(PyObject *self, PyObject *const 
                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!in_array)
         return NULL;
-    if (PyArray_DIM(in_array, 1) != 3 || PyArray_DIM(in_array, 0) != this->mesh.n_points)
+    if (PyArray_DIM(in_array, 1) != 3 || PyArray_DIM(in_array, 0) != (long)this->mesh.n_points)
     {
         PyErr_Format(PyExc_ValueError,
                      "Input array did not have the shape expected from the number of points in"
