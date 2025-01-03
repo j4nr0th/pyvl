@@ -13,8 +13,6 @@ typedef struct
     geo_id_t p2;
 } line_t;
 
-_Static_assert(sizeof(geo_id_t) == sizeof(uint32_t));
-
 /**
  *  Struct containing either primary or dual mesh.
  *
