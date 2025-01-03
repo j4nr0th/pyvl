@@ -196,7 +196,7 @@ static PyObject *pyvl_reference_frame_get_parents(PyObject *self, void *Py_UNUSE
     for (PyVL_ReferenceFrame *p = this->parent; p; p = p->parent)
     {
         Py_INCREF(p);
-        PyTuple_SET_ITEM(out, i, p);
+        PyTuple_SET_ITEM(out, i, (PyObject *)p);
         i += 1;
     }
     return out;
