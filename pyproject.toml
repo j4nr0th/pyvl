@@ -61,6 +61,8 @@ docs = [
     "sphinxcontrib-websupport",
     "sphinxcontrib-asciinema",
     "threadpoolctl",
+    "av",
+    "imageio",
 ]
 
 
