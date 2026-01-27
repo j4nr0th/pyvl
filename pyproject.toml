@@ -6,7 +6,7 @@ description = "Panel code solver."
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0.0",
-    "pyvista>=0.44.0",
+    "pyvista",
     "meshio>=5.3",
     "h5py>=3.12",
     "scipy",
@@ -24,7 +24,6 @@ build.verbose = true
 logging.level = "INFO"
 editable.verbose = true
 editable.rebuild = false
-# wheel.py-api = "cp310"
 
 
 [project.optional-dependencies]
@@ -99,13 +98,20 @@ unfixable = []
 convention = "numpy"
 
 [tool.pytest]
-exclude_also = ["if TYPE_CHECKING:", "@(abc\\.)?abstractmethod"]
-
-
-[tool.pytest.ini_options]
-addopts = "--doctest-modules -ra --cov=pyvl"
+addopts = ["--doctest-modules", "-ra", "--cov=pyvl"]
 testpaths = ["test/pytests", "python"]
 console_output_style = "count"
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
 
 [tool.interrogate]
 ignore-init-method = true
