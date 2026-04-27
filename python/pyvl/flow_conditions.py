@@ -442,7 +442,7 @@ class FlowConditionsRotating(FlowConditions):
         )
         omg = np.array((self.omega_x, self.omega_y, self.omega_z), np.float64)
         v = np.linalg.cross(pos, omg)
-        return v
+        return np.astype(v, np.float64)
 
     def get_density(
         self,

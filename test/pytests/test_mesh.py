@@ -17,14 +17,16 @@ def test_mesh_construction():
 
 def test_mesh_surface_normals():
     """Check that surface normals are all really unit normals."""
-    positions = np.array([
-        [0, 2, 0.5],
-        [0.4, 2, 0.4],
-        [4, 0.1, 0.2],
-        [3, -0.1, 0.2],
-        [2, 1, 0.2],
-        [2, -1, 3],
-    ])
+    positions = np.array(
+        [
+            [0, 2, 0.5],
+            [0.4, 2, 0.4],
+            [4, 0.1, 0.2],
+            [3, -0.1, 0.2],
+            [2, 1, 0.2],
+            [2, -1, 3],
+        ]
+    )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
     msh = Mesh(positions.shape[0], elements)
     normals = msh.surface_normal(positions)
@@ -47,14 +49,16 @@ def test_mesh_surface_normals():
 
 def test_mesh_surface_centers():
     """Check that surface centers are all correct."""
-    positions = np.array([
-        [0, 2, 0.5],
-        [0.4, 2, 0.4],
-        [4, 0.1, 0.2],
-        [3, -0.1, 0.2],
-        [2, 1, 0.2],
-        [2, -1, 3],
-    ])
+    positions = np.array(
+        [
+            [0, 2, 0.5],
+            [0.4, 2, 0.4],
+            [4, 0.1, 0.2],
+            [3, -0.1, 0.2],
+            [2, 1, 0.2],
+            [2, -1, 3],
+        ]
+    )
     elements = [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]]
     msh = Mesh(positions.shape[0], elements)
     centers = msh.surface_average_vec3(positions)

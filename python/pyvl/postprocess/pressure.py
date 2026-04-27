@@ -35,9 +35,9 @@ def compute_surface_dynamic_pressure(
             pos,
             cpts,
         )
-        induced_velocity: npt.NDArray[np.float64] = np.vecdot(
+        induced_velocity: npt.NDArray[np.float64] = np.vecdot(  # type: ignore
             ind_mat, circulation[None, :, None], axis=1
-        )  # type: ignore
+        )
         vel = results.geometry.velocity_at_time(t)
         cp_vel = results.geometry.mesh.surface_average_vec3(vel)
         induced_velocity -= cp_vel
@@ -47,9 +47,9 @@ def compute_surface_dynamic_pressure(
         if wm is not None:
             induced_velocity += wm.get_velocity(cpts)
 
-        pressure = np.vecdot(
+        pressure = np.vecdot(  # type: ignore
             induced_velocity, 0.5 * induced_velocity + freestream_velocity, axis=-1
-        )  # type: ignore
+        )
         pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure
         out_list.append(pressure)
 
@@ -90,18 +90,16 @@ def compute_dynamic_pressure_variable(
             pos,
             cpts,
         )
-        induced_velocity: npt.NDArray[np.float64] = np.vecdot(
-            ind_mat, circulation[None, :, None], axis=1
-        )  # type: ignore
+        induced_velocity = np.vecdot(ind_mat, circulation[None, :, None], axis=1)  # type: ignore
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
 
         wm = results.wake_models[i]
         if wm is not None:
             induced_velocity += wm.get_velocity(cpts)
 
-        pressure = np.vecdot(
+        pressure = np.vecdot(  # type: ignore
             induced_velocity, 0.5 * induced_velocity + freestream_velocity, axis=-1
-        )  # type: ignore
+        )
         pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure
         out_list.append(pressure)
     return out_list

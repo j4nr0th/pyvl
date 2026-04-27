@@ -24,8 +24,7 @@ editable.rebuild = false
 dev = [
     "build",
     "scikit-build-core",
-    "mypy",
-    "npt-promote",
+    "pyrefly",
     "pytest",
     "pytest-cov",
     "interrogate",
@@ -59,13 +58,11 @@ docs = [
 ]
 
 
-[tool.mypy]
-mypy_path = "python/pyvl"
-plugins = ["npt_promote", "numpy.typing.mypy_plugin"]
-ignore_missing_imports = true
-warn_unused_configs = true
-warn_unused_ignores = true
-strict_equality = true
+[tool.pyrefly]
+project-includes = ["python/pyvl/**/*.py", "python/pyvl/**/*.pyi"]
+use-ignore-files = true
+search-path = ["python/pyvl"]
+ignore-missing-imports = ["*"]
 
 [tool.codespell]
 skip = "sandbox/*"

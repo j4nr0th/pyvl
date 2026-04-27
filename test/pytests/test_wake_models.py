@@ -17,14 +17,16 @@ from pyvl.flow_conditions import FlowConditionsUniform
 
 def test_explicit_unsteady():
     """Test the WakeModelLineExplicitSteady behaviour."""
-    node_positions = np.array([
-        [0, 1, 0],
-        [3, 1, -0.5],
-        [3, 1, +0.5],
-        [0, -1, 0],
-        [3, -1, -0.5],
-        [3, -1, +0.5],
-    ])
+    node_positions = np.array(
+        [
+            [0, 1, 0],
+            [3, 1, -0.5],
+            [3, 1, +0.5],
+            [0, -1, 0],
+            [3, -1, -0.5],
+            [3, -1, +0.5],
+        ]
+    )
     geo = Geometry(
         "wedge",
         ReferenceFrame(),
@@ -78,17 +80,19 @@ def test_explicit_unsteady():
 
 def test_explicit_unsteady2():
     """Test the WakeModelLineExplicitSteady behaviour."""
-    node_positions = np.array([
-        [0, 1, 0],  # 0
-        [3, 1, -0.5],  # 1
-        [3, 1, +0.5],  # 2
-        [0, -1, 0],  # 3
-        [3, -1, -0.5],  # 4
-        [3, -1, +0.5],  # 5
-        [0, -2, 0],  # 6
-        [3, -2, -0.5],  # 7
-        [3, -2, +0.5],  # 8
-    ])
+    node_positions = np.array(
+        [
+            [0, 1, 0],  # 0
+            [3, 1, -0.5],  # 1
+            [3, 1, +0.5],  # 2
+            [0, -1, 0],  # 3
+            [3, -1, -0.5],  # 4
+            [3, -1, +0.5],  # 5
+            [0, -2, 0],  # 6
+            [3, -2, -0.5],  # 7
+            [3, -2, +0.5],  # 8
+        ]
+    )
     geo = Geometry(
         "wedge",
         ReferenceFrame(),
@@ -130,14 +134,16 @@ def test_explicit_unsteady2():
 
     def _circulation_function(time: float):
         """Return changing circulation."""
-        return 0.01 * np.array((
-            np.sin(time),
-            np.cos(time),
-            1,
-            np.cos(time),
-            np.sin(time),
-            -1,
-        ))
+        return 0.01 * np.array(
+            (
+                np.sin(time),
+                np.cos(time),
+                1,
+                np.cos(time),
+                np.sin(time),
+                -1,
+            )
+        )
 
     for i in range(5):
         wake_model.update(

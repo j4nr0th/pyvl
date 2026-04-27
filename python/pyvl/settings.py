@@ -79,6 +79,8 @@ class TimeSettings:
         dt = hmap.get_scalar("dt")
         if "output_interval" in hmap:
             output_interval = hmap.get_int("output_interval")
+        else:
+            output_interval = None
         return cls(nt=nt, dt=dt, output_interval=output_interval)
 
 

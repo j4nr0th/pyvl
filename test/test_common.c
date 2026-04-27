@@ -7,8 +7,10 @@
 #include <errno.h>
 #include <string.h>
 
-
-enum { ALLOCATOR_MAGIC_NUMBER = 0xB16B00B1E5 };
+enum
+{
+    ALLOCATOR_MAGIC_NUMBER = 0xB16B00B1E5
+};
 
 static void *test_allocate(void *state, size_t sz)
 {
@@ -28,14 +30,12 @@ static void *test_reallocate(void *state, void *ptr, size_t new_size)
     return realloc(ptr, new_size);
 }
 
-const allocator_t TEST_ALLOCATOR = {
-    .allocate = test_allocate,
-    .deallocate = test_deallocate,
-    .reallocate = test_reallocate,
-    .state = (void *)ALLOCATOR_MAGIC_NUMBER
-};
+const allocator_t TEST_ALLOCATOR = {.allocate = test_allocate,
+                                    .deallocate = test_deallocate,
+                                    .reallocate = test_reallocate,
+                                    .state = (void *)ALLOCATOR_MAGIC_NUMBER};
 
-char* read_file_to_string(const char* path, size_t chunk_size)
+char *read_file_to_string(const char *path, size_t chunk_size)
 {
     FILE *f_in = fopen(path, "r");
     TEST_ASSERT(f_in, "Could not open file %s, %s", path, strerror(errno));

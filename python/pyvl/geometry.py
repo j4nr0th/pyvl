@@ -162,7 +162,7 @@ class Geometry:
             )
         if not isinstance(mesh, Mesh):
             raise TypeError(
-                f"mesh must be a either Mesh object, instead it was " f"{type(mesh)}."
+                f"mesh must be a either Mesh object, instead it was {type(mesh)}."
             )
         try:
             pos = np.array(positions, np.float64).reshape((-1, 3))

@@ -22,8 +22,7 @@ typedef struct
 #ifdef __GNUC__
 __attribute__((format(printf, 2, 3)))
 #endif
-static int
-string_stream_write_fmt(string_stream *stream, const char *fmt, ...)
+static int string_stream_write_fmt(string_stream *stream, const char *fmt, ...)
 {
     va_list args, cpy;
     va_start(args, fmt);
