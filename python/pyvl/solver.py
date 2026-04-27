@@ -158,7 +158,7 @@ def run_solver(
         Settings of the solver.
     wake_model : WakeModel, optional
         Model with which to model the wake with.
-    outpu_settings : OutputSettings, optional
+    output_settings : OutputSettings, optional
         Settings related to file IO.
     """
     results = SolverResults(geometry, settings)
@@ -166,7 +166,9 @@ def run_solver(
     if settings.time_settings is None:
         times = np.array((0,), np.float64)
     else:
-        times = np.arange(settings.time_settings.nt) * settings.time_settings.dt
+        times = np.astype(
+            np.arange(settings.time_settings.nt) * settings.time_settings.dt, np.float64
+        )
 
     i_out = 0
 

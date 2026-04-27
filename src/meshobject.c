@@ -13,6 +13,9 @@
 #include "lineobject.h"
 #include "surfaceobject.h"
 
+// Should be the last include
+#include <cpyutl.h>
+
 static PyObject *pyvl_mesh_str(PyObject *self)
 {
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
@@ -169,13 +172,6 @@ static PyObject *pyvl_mesh_get_line_data(PyObject *self, void *Py_UNUSED(closere
     }
     Py_INCREF(this);
 
-    // npy_uint32 *const p_out = PyArray_DATA(out);
-    // for (unsigned i = 0; i < this->mesh.n_lines; ++i)
-    // {
-    //     p_out[2 * i + 0] = this->mesh.lines[i].p1.value;
-    //     p_out[2 * i + 1] = this->mesh.lines[i].p2.value;
-    // }
-
     return (PyObject *)out;
 }
 
@@ -207,7 +203,7 @@ static PyGetSetDef pyvl_mesh_getset[] = {
 static PyObject *pyvl_mesh_get_line(PyObject *self, PyObject *arg)
 {
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    long idx = PyLong_AsLong(arg);
+    const long idx = PyLong_AsLong(arg);
     if (PyErr_Occurred())
     {
         return NULL;
@@ -232,7 +228,7 @@ static PyObject *pyvl_mesh_get_line(PyObject *self, PyObject *arg)
 static PyObject *pyvl_mesh_get_surface(PyObject *self, PyObject *arg)
 {
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    long idx = PyLong_AsLong(arg);
+    const long idx = PyLong_AsLong(arg);
     if (PyErr_Occurred())
     {
         return NULL;
@@ -350,7 +346,7 @@ static PyObject *pyvl_mesh_to_element_connectivity(PyObject *self, PyObject *Py_
     return out;
 }
 
-static real3_t *ensure_line_memory(PyObject *in, unsigned n_lines, unsigned n_cpts)
+static real3_t *ensure_line_memory(PyObject *in, const unsigned n_lines, const unsigned n_cpts)
 {
     if (!PyArray_Check(in))
     {
@@ -370,7 +366,7 @@ static real3_t *ensure_line_memory(PyObject *in, unsigned n_lines, unsigned n_cp
         return NULL;
     }
 
-    if (PyArray_SIZE(this) < (npy_intp)(n_lines * n_cpts * 3))
+    if (PyArray_SIZE(this) < (npy_intp)n_lines * n_cpts * 3)
     {
         PyErr_Format(PyExc_ValueError,
                      "Line computation buffer did not have space for enough elements "
@@ -381,43 +377,66 @@ static real3_t *ensure_line_memory(PyObject *in, unsigned n_lines, unsigned n_cp
     return PyArray_DATA(this);
 }
 
-static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                             const Py_ssize_t nargs, const PyObject *kwnames)
 {
+    (void)defining_class; // For now...
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    if (nargs != 6 && nargs != 5 && nargs != 4)
-    {
-        PyErr_Format(PyExc_TypeError, "Method requires 4, 5, or 6 arguments, but was called with %u.", (unsigned)nargs);
-        return NULL;
-    }
-    const double tol = PyFloat_AsDouble(args[0]);
-    if (PyErr_Occurred())
+    PyArrayObject *pos_array, *norm_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
+    double tol;
+    Py_ssize_t thrd_cnt = 1;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
+                {.type = CPYARG_TYPE_PYTHON, .kwname = "positions", .type_check = &PyArray_Type, .p_val = &pos_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "control_points",
+                 .type_check = &PyArray_Type,
+                 .p_val = &in_array},
+                {.type = CPYARG_TYPE_PYTHON, .kwname = "normals", .type_check = &PyArray_Type, .p_val = &norm_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "out",
+                 .type_check = &PyArray_Type,
+                 .p_val = &out_array,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "line_buffer",
+                 .type_check = &PyArray_Type,
+                 .p_val = &line_buffer_opt,
+                 .optional = true},
+                {.type = CPYARG_TYPE_SSIZE, .kwname = "thread_count", .p_val = &thrd_cnt, .optional = true},
+                {}, // sentinel
+            },
+            args, nargs, kwnames) < 0)
         return NULL;
 
-    PyArrayObject *const pos_array =
-        pyvl_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position array");
+    if (thrd_cnt < 1)
+    {
+        PyErr_SetString(PyExc_ValueError, "Thread count must be at least 1.");
+        return NULL;
+    }
+
+    pos_array = pyvl_ensure_array((PyObject *)pos_array, 2, (const npy_intp[2]){this->mesh.n_points, 3},
+                                  NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position array");
     if (!pos_array)
         return NULL;
 
-    PyArrayObject *const in_array =
-        pyvl_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
-                          NPY_FLOAT64, "Control point array");
+    in_array = pyvl_ensure_array((PyObject *)in_array, 2, (const npy_intp[2]){0, 3},
+                                 NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Control point array");
     if (!in_array)
         return NULL;
     const npy_intp ndim = PyArray_NDIM(in_array);
     const npy_intp *dims = PyArray_DIMS(in_array);
     const unsigned n_cpts = dims[0];
 
-    PyArrayObject *const norm_array =
-        pyvl_ensure_array(args[3], ndim, dims, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Normal array");
+    norm_array = pyvl_ensure_array((PyObject *)norm_array, ndim, dims, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
+                                   NPY_FLOAT64, "Normal array");
     if (!norm_array)
         return NULL;
 
-    PyArrayObject *out_array;
-    if (nargs > 4 && !Py_IsNone(args[4]))
+    if (out_array)
     {
-        // If None is second arg, treat it as if it is not present at all.
-        out_array = pyvl_ensure_array(args[4], 2, (const npy_intp[3]){n_cpts, this->mesh.n_surfaces},
+        out_array = pyvl_ensure_array((PyObject *)out_array, 2, (const npy_intp[3]){n_cpts, this->mesh.n_surfaces},
                                       NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE | NPY_ARRAY_ALIGNED, NPY_FLOAT64,
                                       "Output array");
         Py_INCREF(out_array);
@@ -432,9 +451,9 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyObject *const *ar
 
     bool free_mem;
     real3_t *line_buffer;
-    if (nargs == 6 && !Py_IsNone(args[5]))
+    if (line_buffer_opt)
     {
-        line_buffer = ensure_line_memory(args[5], this->mesh.n_lines, n_cpts);
+        line_buffer = ensure_line_memory((PyObject *)line_buffer_opt, this->mesh.n_lines, n_cpts);
         if (!line_buffer)
         {
             Py_DECREF(out_array);
@@ -461,10 +480,10 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyObject *const *ar
 
     Py_BEGIN_ALLOW_THREADS;
     compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           line_buffer, tol);
+                           line_buffer, tol, thrd_cnt);
     line_induction_to_normal_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets,
                                                this->mesh.surface_lines, this->mesh.n_lines, n_cpts, normals,
-                                               line_buffer, out_ptr);
+                                               line_buffer, out_ptr, thrd_cnt);
     Py_END_ALLOW_THREADS;
     if (free_mem)
         PyMem_Free(line_buffer);
@@ -472,36 +491,59 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyObject *const *ar
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                            const Py_ssize_t nargs, const PyObject *kwnames)
 {
+    (void)defining_class; // For now...
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    if (nargs != 5 && nargs != 4 && nargs != 3)
-    {
-        PyErr_Format(PyExc_TypeError, "Method requires 3, 4, or 5 arguments, but was called with %u.", (unsigned)nargs);
-        return NULL;
-    }
-    const double tol = PyFloat_AsDouble(args[0]);
-    if (PyErr_Occurred())
+    PyArrayObject *pos_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
+    double tol;
+    Py_ssize_t thrd_cnt = 1;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
+                {.type = CPYARG_TYPE_PYTHON, .kwname = "positions", .type_check = &PyArray_Type, .p_val = &pos_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "control_points",
+                 .type_check = &PyArray_Type,
+                 .p_val = &in_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "out",
+                 .type_check = &PyArray_Type,
+                 .p_val = &out_array,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "line_buffer",
+                 .type_check = &PyArray_Type,
+                 .p_val = &line_buffer_opt,
+                 .optional = true},
+                {.type = CPYARG_TYPE_SSIZE, .kwname = "thread_count", .p_val = &thrd_cnt, .optional = true},
+                {}, // sentinel
+            },
+            args, nargs, kwnames) < 0)
         return NULL;
 
-    PyArrayObject *const pos_array =
-        pyvl_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position");
+    if (thrd_cnt < 1)
+    {
+        PyErr_SetString(PyExc_ValueError, "Thread count must be at least 1.");
+        return NULL;
+    }
+
+    pos_array = pyvl_ensure_array((PyObject *)pos_array, 2, (const npy_intp[2]){this->mesh.n_points, 3},
+                                  NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position");
     if (!pos_array)
         return NULL;
-    PyArrayObject *const in_array =
-        pyvl_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
-                          NPY_FLOAT64, "Control point array");
+    in_array = pyvl_ensure_array((PyObject *)in_array, 2, (const npy_intp[2]){0, 3},
+                                 NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Control point array");
     if (!in_array)
         return NULL;
     const npy_intp *dims = PyArray_DIMS(in_array);
     const unsigned n_cpts = dims[0];
 
-    PyArrayObject *out_array;
-    if (nargs > 3 && !Py_IsNone(args[3]))
+    if (out_array)
     {
         // If None is second arg, treat it as if it is not present at all.
-        out_array = pyvl_ensure_array(args[3], 3, (const npy_intp[3]){n_cpts, this->mesh.n_surfaces, 3},
+        out_array = pyvl_ensure_array((PyObject *)out_array, 3, (const npy_intp[3]){n_cpts, this->mesh.n_surfaces, 3},
                                       NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, NPY_FLOAT64,
                                       "Output tensor");
         if (!out_array)
@@ -518,9 +560,9 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyObject *const *arg
 
     bool free_mem;
     real3_t *line_buffer;
-    if (nargs == 5 && !Py_IsNone(args[4]))
+    if (line_buffer_opt)
     {
-        line_buffer = ensure_line_memory(args[4], this->mesh.n_lines, n_cpts);
+        line_buffer = ensure_line_memory((PyObject *)line_buffer_opt, this->mesh.n_lines, n_cpts);
         if (!line_buffer)
         {
             Py_DECREF(out_array);
@@ -545,191 +587,10 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyObject *const *arg
     real3_t *out_ptr = PyArray_DATA(out_array);
     Py_BEGIN_ALLOW_THREADS;
     compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           line_buffer, tol);
+                           line_buffer, tol, thrd_cnt);
     line_induction_to_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets, this->mesh.surface_lines,
-                                        this->mesh.n_lines, n_cpts, line_buffer, out_ptr);
+                                        this->mesh.n_lines, n_cpts, line_buffer, out_ptr, thrd_cnt);
     Py_END_ALLOW_THREADS;
-    if (free_mem)
-        PyMem_Free(line_buffer);
-
-    return (PyObject *)out_array;
-}
-
-static PyObject *pyvl_mesh_induction_matrix2(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
-{
-    const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    if (nargs != 5 && nargs != 4 && nargs != 3)
-    {
-        PyErr_Format(PyExc_TypeError, "Method requires 3, 4, or 5 arguments, but was called with %u.", (unsigned)nargs);
-        return NULL;
-    }
-    const double tol = PyFloat_AsDouble(args[0]);
-    if (PyErr_Occurred())
-        return NULL;
-
-    PyArrayObject *const pos_array =
-        pyvl_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position");
-    if (!pos_array)
-        return NULL;
-    PyArrayObject *const in_array =
-        pyvl_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
-                          NPY_FLOAT64, "Control point array");
-    if (!in_array)
-        return NULL;
-    const npy_intp *dims = PyArray_DIMS(in_array);
-    const unsigned n_cpts = dims[0];
-
-    PyArrayObject *out_array;
-    if (nargs > 3 && !Py_IsNone(args[3]))
-    {
-        // If None is second arg, treat it as if it is not present at all.
-        out_array = pyvl_ensure_array(args[3], 3, (const npy_intp[3]){n_cpts, this->mesh.n_surfaces, 3},
-                                      NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, NPY_FLOAT64,
-                                      "Output tensor");
-        if (!out_array)
-            return NULL;
-        Py_INCREF(out_array);
-    }
-    else
-    {
-        const npy_intp out_dims[3] = {n_cpts, this->mesh.n_surfaces, 3};
-        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
-        if (!out_array)
-            return NULL;
-    }
-
-    bool free_mem;
-    real3_t *line_buffer;
-    if (nargs == 5 && !Py_IsNone(args[4]))
-    {
-        line_buffer = ensure_line_memory(args[4], this->mesh.n_lines, n_cpts);
-        if (!line_buffer)
-        {
-            Py_DECREF(out_array);
-            return NULL;
-        }
-        free_mem = false;
-    }
-    else
-    {
-        line_buffer = PyMem_Malloc(sizeof(*line_buffer) * this->mesh.n_lines * n_cpts);
-        if (!line_buffer)
-        {
-            Py_DECREF(out_array);
-            return NULL;
-        }
-        free_mem = true;
-    }
-
-    // Now I can be sure the arrays are well-behaved
-    const real3_t *restrict cpts = PyArray_DATA(in_array);
-    const real3_t *restrict positions = PyArray_DATA(pos_array);
-    real3_t *restrict out_ptr = PyArray_DATA(out_array);
-
-    // compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-    // line_buffer, tol);
-
-    const unsigned n_lines = this->mesh.n_lines;
-    const line_t *restrict lines = this->mesh.lines;
-    const unsigned n_surfaces = this->mesh.n_surfaces;
-    const unsigned *restrict surface_offsets = this->mesh.surface_offsets;
-    const geo_id_t *restrict surface_lines = this->mesh.surface_lines;
-    const unsigned n_entries = this->mesh.surface_offsets[this->mesh.n_surfaces];
-    const unsigned n_points = this->mesh.surface_offsets[this->mesh.n_points];
-    (void)n_entries;
-    (void)n_points;
-
-    Py_BEGIN_ALLOW_THREADS;
-
-#if defined(_OPENMP) && _OPENMP >= 201307
-
-#pragma omp target data map(to : positions[0 : n_points], lines[0 : n_lines], surface_offsets[0 : n_surfaces + 1],     \
-                                surface_lines[0 : n_entries]) map(from : out_ptr[0 : n_surfaces])                      \
-    map(alloc : line_buffer[0 : n_lines])
-    {
-#pragma omp target teams distribute parallel for
-        for (unsigned iln = 0; iln < n_lines; ++iln)
-#else  // !(defined(_OPENMP) && _OPENMP >= 201307)
-    {
-        for (unsigned iln = 0; iln < n_lines; ++iln)
-#endif // defined(_OPENMP) && _OPENMP >= 201307
-        {
-            const line_t line = lines[iln];
-            const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
-            const real3_t r1 = positions[pt1];
-            const real3_t r2 = positions[pt2];
-            real3_t direction = real3_sub(r2, r1);
-            const real_t len = real3_mag(direction);
-            direction.v0 /= len;
-            direction.v1 /= len;
-            direction.v2 /= len;
-
-            for (unsigned icp = 0; icp < n_cpts; ++icp)
-            {
-                const real3_t control_point = cpts[icp];
-                if (len < tol)
-                {
-                    //  Filament is too short
-                    line_buffer[icp * n_lines + iln] = (real3_t){0};
-                    continue;
-                }
-
-                const real3_t dr1 = real3_sub(control_point, r1);
-                const real3_t dr2 = real3_sub(control_point, r2);
-
-                const real_t tan_dist1 = real3_dot(direction, dr1);
-                const real_t tan_dist2 = real3_dot(direction, dr2);
-
-                const real_t norm_dist1 = real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1);
-                const real_t norm_dist2 = real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2);
-
-                const real_t norm_dist = sqrt((norm_dist1 + norm_dist2) / 2.0);
-
-                if (norm_dist < tol)
-                {
-                    //  Filament is too short
-                    line_buffer[icp * n_lines + iln] = (real3_t){0};
-                    continue;
-                }
-
-                const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
-                // const real3_t dr_avg = (real3_mul1(real3_add(dr1, dr2), 0.5));
-                const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
-                line_buffer[icp * n_lines + iln] = vel_dir;
-            }
-        }
-
-#if defined(_OPENMP) && _OPENMP >= 201307
-#pragma omp target teams distribute parallel for
-        for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
-#else  // !(defined(_OPENMP) && _OPENMP >= 201307)
-        for (unsigned i_surf = 0; i_surf < n_surfaces; ++i_surf)
-#endif // defined(_OPENMP) && _OPENMP >= 201307
-        {
-            for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
-            {
-                real3_t res = {0};
-                for (unsigned i_ln = surface_offsets[i_surf]; i_ln < surface_offsets[i_surf + 1]; ++i_ln)
-                {
-                    const geo_id_t ln_id = surface_lines[i_ln];
-                    if (ln_id.orientation)
-                    {
-                        res = real3_sub(res, line_buffer[i_cp * n_lines + ln_id.value]);
-                    }
-                    else
-                    {
-                        res = real3_add(res, line_buffer[i_cp * n_lines + ln_id.value]);
-                    }
-                }
-                // printf("Surface %u at CP %u has induction (%g, %g, %g)\n", i_surf, i_cp, res.x, res.y, res.z);
-                out_ptr[i_cp * n_surfaces + i_surf] = res;
-            }
-        }
-    }
-
-    Py_END_ALLOW_THREADS;
-
     if (free_mem)
         PyMem_Free(line_buffer);
 
@@ -777,9 +638,9 @@ static PyObject *pyvl_line_velocities_from_point_velocities(PyObject *self, PyOb
     Py_RETURN_NONE;
 }
 
-static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, const Py_ssize_t nargs)
 {
-    unsigned n_surfaces = 0, n_lines = 0, n_points = 0, n_surface_entries = 0;
+    unsigned n_surfaces = 0, n_lines = 0, n_surface_entries = 0;
 
     for (unsigned i = 0; i < (unsigned)nargs; ++i)
     {
@@ -793,7 +654,6 @@ static PyObject *pyvl_mesh_merge(PyObject *type, PyObject *const *args, Py_ssize
         const PyVL_MeshObject *const this = (PyVL_MeshObject *)o;
         n_surfaces += this->mesh.n_surfaces;
         n_lines += this->mesh.n_lines;
-        n_points += this->mesh.n_points;
         n_surface_entries += this->mesh.surface_offsets[this->mesh.n_surfaces];
     }
 
@@ -894,7 +754,7 @@ static PyObject *pyvl_mesh_copy(PyObject *self, PyObject *Py_UNUSED(args))
     return (PyObject *)this;
 }
 
-static PyObject *pyvl_mesh_line_gradient(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_line_gradient(PyObject *self, PyObject *const *args, const Py_ssize_t nargs)
 {
     // Arguments:
     // self - mesh
@@ -953,7 +813,7 @@ static PyObject *pyvl_mesh_line_gradient(PyObject *self, PyObject *const *args, 
     return (PyObject *)line_values;
 }
 
-static PyObject *pyvl_mesh_surface_normal(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_surface_normal(PyObject *self, PyObject *const *args, const Py_ssize_t nargs)
 {
     if (nargs != 1 && nargs != 2)
     {
@@ -1007,7 +867,7 @@ static PyObject *pyvl_mesh_surface_normal(PyObject *self, PyObject *const *args,
     return (PyObject *)out;
 }
 
-static PyObject *pyvl_mesh_surface_average_vec3(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_surface_average_vec3(PyObject *self, PyObject *const *args, const Py_ssize_t nargs)
 {
     if (nargs != 1 && nargs != 2)
     {
@@ -1051,7 +911,7 @@ static PyObject *pyvl_mesh_surface_average_vec3(PyObject *self, PyObject *const 
     _Static_assert(sizeof(npy_float64) * 3 == sizeof(real3_t), "Binary compatibility");
 
     real3_t *const p_out = PyArray_DATA(out);
-    real3_t *const positions = PyArray_DATA(in_array);
+    const real3_t *const positions = PyArray_DATA(in_array);
 
     for (unsigned i_surf = 0; i_surf < this->mesh.n_surfaces; ++i_surf)
     {
@@ -1229,36 +1089,55 @@ static PyObject *pyvl_mesh_from_lines(PyObject *type, PyObject *args, PyObject *
     return (PyObject *)this;
 }
 
-static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                                 const Py_ssize_t nargs, const PyObject *kwnames)
 {
+    (void)defining_class; // For now...
     const PyVL_MeshObject *this = (PyVL_MeshObject *)self;
-    if (nargs != 4 && nargs != 3)
-    {
-        PyErr_Format(PyExc_TypeError, "Method requires 3, or 4 arguments, but was called with %u.", (unsigned)nargs);
-        return NULL;
-    }
-    const double tol = PyFloat_AsDouble(args[0]);
-    if (PyErr_Occurred())
+    PyArrayObject *pos_array, *in_array, *out_array = NULL;
+    double tol;
+    Py_ssize_t thrd_cnt = 1;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
+                {.type = CPYARG_TYPE_PYTHON, .kwname = "positions", .type_check = &PyArray_Type, .p_val = &pos_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "control_points",
+                 .type_check = &PyArray_Type,
+                 .p_val = &in_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "out",
+                 .type_check = &PyArray_Type,
+                 .p_val = &out_array,
+                 .optional = true},
+                {.type = CPYARG_TYPE_SSIZE, .kwname = "thread_count", .p_val = &thrd_cnt, .optional = true},
+                {}, // sentinel
+            },
+            args, nargs, kwnames) < 0)
         return NULL;
 
-    PyArrayObject *const pos_array =
-        pyvl_ensure_array(args[1], 2, (const npy_intp[2]){this->mesh.n_points, 3},
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position array");
+    if (thrd_cnt < 1)
+    {
+        PyErr_SetString(PyExc_ValueError, "Thread count must be at least 1.");
+        return NULL;
+    }
+
+    pos_array = pyvl_ensure_array((PyObject *)pos_array, 2, (const npy_intp[2]){this->mesh.n_points, 3},
+                                  NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Position array");
     if (!pos_array)
         return NULL;
-    PyArrayObject *const in_array =
-        pyvl_ensure_array(args[2], 2, (const npy_intp[2]){0, 3}, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED,
-                          NPY_FLOAT64, "Control point array");
+    in_array = pyvl_ensure_array((PyObject *)in_array, 2, (const npy_intp[2]){0, 3},
+                                 NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, NPY_FLOAT64, "Control point array");
     if (!in_array)
         return NULL;
     const npy_intp *dims = PyArray_DIMS(in_array);
     const unsigned n_cpts = dims[0];
 
-    PyArrayObject *out_array;
-    if (nargs > 3 && !Py_IsNone(args[3]))
+    const npy_intp out_dims[3] = {n_cpts, this->mesh.n_lines, 3};
+    if (out_array)
     {
         // If None is second arg, treat it as if it is not present at all.
-        out_array = pyvl_ensure_array(args[3], 3, (const npy_intp[3]){n_cpts, this->mesh.n_lines, 3},
+        out_array = pyvl_ensure_array((PyObject *)out_array, 3, out_dims,
                                       NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, NPY_FLOAT64,
                                       "Output tensor");
         if (!out_array)
@@ -1267,7 +1146,6 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyObject *const
     }
     else
     {
-        const npy_intp out_dims[3] = {n_cpts, this->mesh.n_lines, 3};
         out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
         if (!out_array)
             return NULL;
@@ -1279,7 +1157,7 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyObject *const
     real3_t *out_ptr = PyArray_DATA(out_array);
     Py_BEGIN_ALLOW_THREADS;
     compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           out_ptr, tol);
+                           out_ptr, tol, thrd_cnt);
     Py_END_ALLOW_THREADS;
 
     return (PyObject *)out_array;
@@ -1411,15 +1289,11 @@ static PyMethodDef pyvl_mesh_methods[] = {
      .ml_doc = "Convert mesh connectivity to arrays list of element lengths and indices."},
     {.ml_name = "induction_matrix",
      .ml_meth = (void *)pyvl_mesh_induction_matrix,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "Compute an induction matrix for the mesh."},
-    {.ml_name = "induction_matrix2",
-     .ml_meth = (void *)pyvl_mesh_induction_matrix2,
-     .ml_flags = METH_FASTCALL,
+     .ml_flags = METH_FASTCALL | METH_KEYWORDS | METH_METHOD,
      .ml_doc = "Compute an induction matrix for the mesh."},
     {.ml_name = "induction_matrix3",
      .ml_meth = (void *)pyvl_mesh_induction_matrix3,
-     .ml_flags = METH_FASTCALL,
+     .ml_flags = METH_FASTCALL | METH_KEYWORDS | METH_METHOD,
      .ml_doc = "Compute an induction matrix with normals included."},
     {.ml_name = "line_velocities_from_point_velocities",
      .ml_meth = (void *)pyvl_line_velocities_from_point_velocities,
@@ -1456,7 +1330,7 @@ static PyMethodDef pyvl_mesh_methods[] = {
      .ml_doc = "Create line-only mesh from line connectivity."},
     {.ml_name = "line_induction_matrix",
      .ml_meth = (void *)pyvl_mesh_line_induction_matrix,
-     .ml_flags = METH_FASTCALL,
+     .ml_flags = METH_FASTCALL | METH_KEYWORDS | METH_METHOD,
      .ml_doc = "Compute an induction matrix for the mesh based on line circulations."},
     {.ml_name = "line_forces",
      .ml_meth = (void *)pyvl_mesh_line_forces,

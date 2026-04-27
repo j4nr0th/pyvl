@@ -83,13 +83,15 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
     }
 }
 
-void compute_line_induction(unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
-                            unsigned n_positions, const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
-                            unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
-                            real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), real_t tol)
+void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
+                            const unsigned n_positions,
+                            const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions), const unsigned n_cpts,
+                            const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
+                            real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t tol,
+                            const unsigned n_threads)
 {
     unsigned iln;
-#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol)
+#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol) num_threads(n_threads)
     for (iln = 0; iln < n_lines; ++iln)
     {
         const line_t line = lines[iln];
@@ -138,16 +140,17 @@ void compute_line_induction(unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, 
     }
 }
 
-void line_induction_to_surface_induction(unsigned n_surfaces,
+void line_induction_to_surface_induction(const unsigned n_surfaces,
                                          const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
-                                         const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), unsigned n_lines,
-                                         unsigned n_cpts,
+                                         const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), const unsigned n_lines,
+                                         const unsigned n_cpts,
                                          const real3_t CVL_ARRAY_ARG(line_inductions, static restrict n_lines *n_cpts),
-                                         real3_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts))
+                                         real3_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts),
+                                         const unsigned n_threads)
 {
     unsigned i_surf;
 #pragma omp parallel for default(none)                                                                                 \
-    shared(n_surfaces, surface_offsets, n_lines, n_cpts, line_inductions, surface_lines, out)
+    shared(n_surfaces, surface_offsets, n_lines, n_cpts, line_inductions, surface_lines, out) num_threads(n_threads)
     for (i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
         for (unsigned i_cp = 0; i_cp < n_cpts; ++i_cp)
@@ -172,15 +175,16 @@ void line_induction_to_surface_induction(unsigned n_surfaces,
 }
 
 void line_induction_to_normal_surface_induction(
-    unsigned n_surfaces, const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
-    const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), unsigned n_lines, unsigned n_cpts,
+    const unsigned n_surfaces, const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
+    const geo_id_t CVL_ARRAY_ARG(surface_lines, restrict), const unsigned n_lines, const unsigned n_cpts,
     const real3_t CVL_ARRAY_ARG(normal_vectors, static restrict n_cpts),
     const real3_t CVL_ARRAY_ARG(line_inductions, static restrict n_lines *n_cpts),
-    real_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts))
+    real_t CVL_ARRAY_ARG(out, restrict n_surfaces *n_cpts), const unsigned n_threads)
 {
     unsigned i_surf, i_cp;
 #pragma omp parallel for default(none) collapse(2)                                                                     \
-    shared(n_surfaces, surface_offsets, surface_lines, n_lines, n_cpts, line_inductions, normal_vectors, out)
+    shared(n_surfaces, surface_offsets, surface_lines, n_lines, n_cpts, line_inductions, normal_vectors, out)          \
+    num_threads(n_threads)
     for (i_surf = 0; i_surf < n_surfaces; ++i_surf)
     {
         for (i_cp = 0; i_cp < n_cpts; ++i_cp)

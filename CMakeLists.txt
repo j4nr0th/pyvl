@@ -9,6 +9,7 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 set(CMAKE_C_STANDARD 17)
 
 find_package(OpenMP REQUIRED)
+set(Python_FIND_VIRTUALENV FIRST) # Needed for UV
 find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
 
 # Find the NumPy headers
@@ -82,8 +83,9 @@ if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
 endif ()
 target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
 
+add_subdirectory(cpyutl)
 
-target_link_libraries(cvl PRIVATE OpenMP::OpenMP_C ${Python_LIBRARIES})
+target_link_libraries(cvl PRIVATE OpenMP::OpenMP_C ${Python_LIBRARIES} cpyutl)
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -fno-omit-frame-pointer)

@@ -148,21 +148,9 @@ class Mesh:
         control_points: npt.NDArray[np.float64],
         out: npt.NDArray[np.float64] | None = None,
         line_buffer: npt.NDArray[np.float64] | None = None,
-        /,
+        thread_count: int = 1,
     ) -> npt.NDArray[np.float64]:
         """Compute an induction matrix for the mesh."""
-        ...
-
-    def induction_matrix2(
-        self,
-        tol: float,
-        positions: npt.NDArray[np.float64],
-        control_points: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
-        line_buffer: npt.NDArray[np.float64] | None = None,
-        /,
-    ) -> npt.NDArray[np.float64]:
-        """Compute an induction matrix for the mesh using OpenACC."""
         ...
 
     def induction_matrix3(
@@ -173,7 +161,7 @@ class Mesh:
         normals: npt.NDArray[np.float64],
         out: npt.NDArray[np.float64] | None = None,
         line_buffer: npt.NDArray[np.float64] | None = None,
-        /,
+        thread_count: int = 1,
     ) -> npt.NDArray[np.float64]:
         """Compute an induction matrix with normals included."""
         ...
@@ -221,7 +209,7 @@ class Mesh:
         positions: npt.NDArray[np.float64],
         control_points: npt.NDArray[np.float64],
         out: npt.NDArray[np.float64] | None = None,
-        /,
+        thread_count: int = 1,
     ) -> npt.NDArray[np.float64]:
         """Compute an induction matrix for the mesh based on line circulations."""
         ...

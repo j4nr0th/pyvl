@@ -4,13 +4,7 @@ version = "0.0.1a"
 authors = [{ name = "Jan Roth", email = "r0th.j4n@gmail.com" }]
 description = "Panel code solver."
 requires-python = ">=3.10"
-dependencies = [
-    "numpy>=2.0.0",
-    "pyvista",
-    "meshio>=5.3",
-    "h5py>=3.12",
-    "scipy",
-]
+dependencies = ["numpy>=2.0.0", "pyvista", "meshio>=5.3", "h5py>=3.12", "scipy"]
 
 
 [build-system]
@@ -26,7 +20,7 @@ editable.verbose = true
 editable.rebuild = false
 
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "build",
     "scikit-build-core",
@@ -42,6 +36,8 @@ dev = [
     "trame-vtk",
     "trame-vuetify",
     "tomli",
+    "jupyter_sphinx",
+    "pyvista[jupyter]",
 ]
 docs = [
     "sphinx",
@@ -50,8 +46,6 @@ docs = [
     "sphinx-favicon",
     "sphinx-design",
     "sphinx-gallery",
-    "jupyter_sphinx",
-    "pyvista[jupyter,trame]",
     "pypandoc",
     "pytest-sphinx",
     "sphinx-autobuild",

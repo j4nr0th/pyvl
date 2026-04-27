@@ -45,6 +45,7 @@ plt = pv.Plotter()
 plt.add_mesh(geo.as_polydata())
 plt.show(interactive=False)
 plt.close()
+del plt
 
 # %%
 #
@@ -142,6 +143,7 @@ for i in range(velocities.shape[0]):
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)
+    del plotter
 
 # %%
 #
@@ -162,3 +164,4 @@ for field in forces:
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)
+    del plotter

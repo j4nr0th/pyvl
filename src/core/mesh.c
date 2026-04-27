@@ -4,14 +4,7 @@
 
 #include "mesh.h"
 
-void mesh_free(mesh_t *this, const allocator_t *allocator)
-{
-    allocator->deallocate(allocator->state, this->surface_lines);
-    allocator->deallocate(allocator->state, this->surface_offsets);
-    allocator->deallocate(allocator->state, this->lines);
-}
-
-real3_t line_direction(const real3_t *positions, const mesh_t *mesh, geo_id_t line_id)
+real3_t line_direction(const real3_t *positions, const mesh_t *mesh, const geo_id_t line_id)
 {
     const line_t *ln = mesh->lines + line_id.value;
     if (!line_id.orientation)
@@ -21,7 +14,7 @@ real3_t line_direction(const real3_t *positions, const mesh_t *mesh, geo_id_t li
     return real3_sub(positions[ln->p2.value], positions[ln->p1.value]);
 }
 
-real3_t surface_center(const real3_t *positions, const mesh_t *mesh, geo_id_t surface_id)
+real3_t surface_center(const real3_t *positions, const mesh_t *mesh, const geo_id_t surface_id)
 {
     real3_t out = {0};
     for (unsigned i_line = mesh->surface_offsets[surface_id.value];
@@ -45,7 +38,7 @@ real3_t surface_center(const real3_t *positions, const mesh_t *mesh, geo_id_t su
     return (real3_t){{out.v0 * div, out.v1 * div, out.v2 * div}};
 }
 
-real3_t surface_normal(const real3_t *positions, const mesh_t *mesh, geo_id_t surface_id)
+real3_t surface_normal(const real3_t *positions, const mesh_t *mesh, const geo_id_t surface_id)
 {
     real3_t out = {0};
     const unsigned i0 = mesh->surface_offsets[surface_id.value];
@@ -91,7 +84,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
         geo_id_t surf_ids[2] = {{.orientation = 0, .value = INVALID_ID}, {.orientation = 0, .value = INVALID_ID}};
         unsigned cnt = 0;
 
-        /* Check each surface, until two with the edge are found. */
+        /* Check each surface until two with the edge are found. */
         for (unsigned i_surf = 0; i_surf < primal->n_surfaces && cnt < 2; ++i_surf)
         {
             for (unsigned i_surf_line = primal->surface_offsets[i_surf];
@@ -100,7 +93,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
                 const geo_id_t line_id = primal->surface_lines[i_surf_line];
                 if (line_id.value == i_line)
                 {
-                    surf_ids[!(line_id.orientation)].value = i_surf;
+                    surf_ids[!line_id.orientation].value = i_surf;
                     cnt += 1;
                     break;
                 }
@@ -111,7 +104,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
     }
 
     /*
-     * Dual surfaces map to primal points and each consists of lines, which indicate what primal lines contain
+     * Dual surfaces map to primal points, and each consists of lines, which indicate what primal lines contain
      * these points.
      */
 
@@ -172,7 +165,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
     return 0;
 }
 
-int mesh_from_elements(mesh_t *p_out, unsigned n_elements,
+int mesh_from_elements(mesh_t *p_out, const unsigned n_elements,
                        const unsigned CVL_ARRAY_ARG(point_counts, static restrict n_elements),
                        const unsigned CVL_ARRAY_ARG(flat_points, restrict), const allocator_t *allocator)
 {
@@ -262,7 +255,7 @@ unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigne
     unsigned total_points = 0;
     for (unsigned i = 0; i < n_surfaces; ++i)
     {
-        const unsigned n_lines = (mesh->surface_offsets[i + 1] - mesh->surface_offsets[i]);
+        const unsigned n_lines = mesh->surface_offsets[i + 1] - mesh->surface_offsets[i];
         point_counts[i] = n_lines;
         total_points += n_lines;
     }
@@ -298,4 +291,12 @@ unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigne
     *p_flat_points = flat_points;
 
     return n_surfaces;
+}
+
+void mesh_free(mesh_t *this, const allocator_t *allocator)
+{
+    allocator->deallocate(allocator->state, this->surface_lines);
+    allocator->deallocate(allocator->state, this->surface_offsets);
+    allocator->deallocate(allocator->state, this->lines);
+    *this = (mesh_t){};
 }
