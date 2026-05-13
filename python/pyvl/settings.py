@@ -1,5 +1,6 @@
 """Implementation of the flow solver settings."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Self
 
@@ -7,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 
 from pyvl.fio.io_common import HirearchicalMap
+from pyvl.fio.type_resolution import flow_conditions_from_serial
 from pyvl.flow_conditions import FlowConditions
 
 
@@ -191,7 +193,12 @@ class SolverSettings:
         hm = HirearchicalMap()
         # Flow conditiotns
         fc = HirearchicalMap()
-        fc.insert_type("type", type(self.flow_conditions))
+        fc.insert_string(
+            "type",
+            type(self.flow_conditions).__module__
+            + "."
+            + type(self.flow_conditions).__name__,
+        )
         fc.insert_hirearchycal_map("data", self.flow_conditions.save())
         hm.insert_hirearchycal_map("flow_conditions", fc)
         # Model settings
@@ -201,7 +208,12 @@ class SolverSettings:
         return hm
 
     @classmethod
-    def load(cls, hmap: HirearchicalMap) -> Self:
+    def load(
+        cls,
+        hmap: HirearchicalMap,
+        custom_types: Mapping[str, type] | None = None,
+        allow_override: bool = False,
+    ) -> Self:
         """Deserialize the object from a HirearchicalMap.
 
         Parameters
@@ -209,18 +221,18 @@ class SolverSettings:
         hmap : HirearchicalMap
             Serialized state of the :class:`SolverSettings` object created by a call
             to :meth:`SolverSettings.save`.
+        custom_types : Mapping[str, type], optional
+            A mapping of type names to types for custom subclasses of FlowConditions.
+        allow_override : bool, default: False
+            If True, custom types can override built-in types.
 
         Returns
         -------
         Self
             Deserialized :class:`SolverSettings` object.
         """
-        # Flow conditiotns
         fc = hmap.get_hirearchical_map("flow_conditions")
-        flow_conditions_type: type[FlowConditions] = fc.get_type("type")
-        flow_conditions: FlowConditions = flow_conditions_type.load(
-            fc.get_hirearchical_map("data")
-        )
+        flow_conditions = flow_conditions_from_serial(fc, custom_types, allow_override)
 
         # Model settings
         model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))

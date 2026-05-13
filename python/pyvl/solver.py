@@ -1,5 +1,6 @@
 """Implementation of the flow solver."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -13,6 +14,7 @@ from pyvl.cvl import ReferenceFrame
 from pyvl.fio.io_common import HirearchicalMap, SerializationFunction
 from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
+from pyvl.fio.type_resolution import wake_model_from_serial
 from pyvl.geometry import SimulationGeometry
 from pyvl.settings import SolverSettings
 from pyvl.wake import WakeModel
@@ -80,23 +82,43 @@ class SolverState:
         out.insert_hirearchycal_map("simulation_geometry", self.geometry.save())
         if self.wake_model is not None:
             wake_model = HirearchicalMap()
-            wake_model.insert_type("type", type(self.wake_model))
+            wake_model.insert_string(
+                "type",
+                type(self.wake_model).__module__ + "." + type(self.wake_model).__name__,
+            )
             wake_model.insert_hirearchycal_map("data", self.wake_model.save())
             out.insert_hirearchycal_map("wake_model", wake_model)
         return out
 
     @classmethod
-    def load(cls, hmap: HirearchicalMap) -> Self:
-        """Deserialize current state from a HirearchicalMap."""
+    def load(
+        cls,
+        hmap: HirearchicalMap,
+        custom_types: Mapping[str, type] | None = None,
+        allow_override: bool = False,
+    ) -> Self:
+        """Deserialize current state from a HirearchicalMap.
+
+        Parameters
+        ----------
+        hmap : HirearchicalMap
+            Serialized state of the :class:`SolverState` object.
+        custom_types : Mapping[str, type], optional
+            A mapping of type names to types for custom subclasses of FlowConditions
+            and WakeModel.
+        allow_override : bool, default: False
+            If True, custom types can override built-in types.
+        """
         geometry = SimulationGeometry.load(
             hmap.get_hirearchical_map("simulation_geometry")
         )
-        settings = SolverSettings.load(hmap.get_hirearchical_map("solver_settings"))
+        settings = SolverSettings.load(
+            hmap.get_hirearchical_map("solver_settings"), custom_types, allow_override
+        )
         wake_model = None
         if "wake_model" in hmap:
             wm_hmap = hmap.get_hirearchical_map("wake_model")
-            wm_type: type[WakeModel] = wm_hmap.get_type("type")
-            wake_model = wm_type.load(wm_hmap.get_hirearchical_map("data"))
+            wake_model = wake_model_from_serial(wm_hmap, custom_types, allow_override)
         self = cls(geometry=geometry, settings=settings, wake_model=wake_model)
         self.iteration = hmap.get_int("iteration")
         self.positions[:] = hmap.get_array("positions")
@@ -226,7 +248,9 @@ def run_solver(
 
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
-        circulation = la.lu_solve(decomp, state.circulation, overwrite_b=True)
+        circulation = np.asarray(
+            la.lu_solve(decomp, state.circulation, overwrite_b=True), np.double
+        )
         # Adjust circulations
         for geo_name in geometry:
             info = geometry[geo_name]
@@ -250,7 +274,7 @@ def run_solver(
             wm = state.wake_model
 
             if wm is not None:
-                results.wake_models.append(type(wm).load(wm.save()))
+                results.wake_models.append(type(wm).load(wm.save()))  # type: ignore it is not ABC
             else:
                 results.wake_models.append(None)
 

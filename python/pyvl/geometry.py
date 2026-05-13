@@ -14,6 +14,7 @@ import pyvista as pv
 
 from pyvl.cvl import INVALID_ID, Mesh, ReferenceFrame
 from pyvl.fio.io_common import HirearchicalMap
+from pyvl.fio.type_resolution import reference_frame_from_serial
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
@@ -65,7 +66,7 @@ def mesh_from_serial(group: HirearchicalMap) -> Mesh:
 def rf_to_serial(self: ReferenceFrame) -> HirearchicalMap:
     """Serialize the ReferenceFrame into a HirearchicalMap."""
     out = HirearchicalMap()
-    out.insert_type("type", type(self))
+    out.insert_string("type", type(self).__module__ + "." + type(self).__name__)
 
     data = HirearchicalMap()
     self.save(data)
@@ -76,16 +77,28 @@ def rf_to_serial(self: ReferenceFrame) -> HirearchicalMap:
     return out
 
 
-def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
-    """Load reference frame from a HDF5 group."""
-    cls: type[ReferenceFrame] = group.get_type("type")
-    data = group.get_hirearchical_map("data")
-    parent = None
-    if "parent" in group:
-        parent_group = group.get_hirearchical_map("parent")
-        parent = rf_from_serial(parent_group)
-        return cls.load(group=data, parent=parent)
-    return cls.load(group=data)
+def rf_from_serial(
+    group: HirearchicalMap,
+    custom_types: Mapping[str, type] | None = None,
+    allow_override: bool = False,
+) -> ReferenceFrame:
+    """Load reference frame from a HirearchicalMap.
+
+    Parameters
+    ----------
+    group : HirearchicalMap
+        The serialized reference frame data.
+    custom_types : Mapping[str, type], optional
+        A mapping of type names to types for custom ReferenceFrame subclasses.
+    allow_override : bool, default: False
+        If True, custom types can override built-in types.
+
+    Returns
+    -------
+    ReferenceFrame
+        The deserialized reference frame.
+    """
+    return reference_frame_from_serial(group, custom_types, allow_override)
 
 
 @dataclass(init=False, frozen=True, eq=False)
@@ -609,7 +622,7 @@ class SimulationGeometry(Mapping):
         """
         pos = self.positions_at_time(t)
         lines = self.mesh.line_data
-        cell = pv.CellArray.from_regular_cells(lines)
+        cell = pv.CellArray.from_regular_cells(np.astype(lines, int))
         pd = pv.PolyData(pos, lines=cell)
         return pd
 

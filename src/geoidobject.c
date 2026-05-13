@@ -1,4 +1,6 @@
 #include "geoidobject.h"
+#include <numpy/ndarrayobject.h>
+// Always after ndarray
 #include <cpyutl.h>
 
 PyObject *geoid_repr(PyObject *self)

@@ -26,12 +26,6 @@ class HirearchicalMap(MutableMapping[str, Any]):
         """Add a value associated with the key."""
         self._map[key] = value
 
-    def insert_type(self, key: str, t: type) -> None:
-        """Insert a type into the mapping as an entry "type"."""
-        if not isinstance(t, type):
-            raise TypeError(f"The value was not a type but {type(t).__name__}")
-        self._insert(key, t.__module__ + "." + t.__name__)
-
     def insert_array(self, key: str, value: npt.ArrayLike) -> None:
         """Insert an array-like into the mapping and copies it."""
         self._insert(key, np.array(value))
@@ -40,7 +34,7 @@ class HirearchicalMap(MutableMapping[str, Any]):
         """Insert a string into the mapping."""
         if not isinstance(value, str):
             raise TypeError(f"The value was not a string but {type(value).__name__}")
-        self._insert(key, np.array(value))
+        self._insert(key, value)
 
     def insert_scalar(self, key: str, value: int | float) -> None:
         """Insert a scalar into the mapping."""
@@ -79,21 +73,6 @@ class HirearchicalMap(MutableMapping[str, Any]):
             )
         self._insert(key, value)
 
-    def get_type(self, key: str) -> type:
-        """Load a type from the mapping as an entry "type"."""
-        full_type_name = self[key]
-        if not isinstance(full_type_name, str):
-            raise TypeError(
-                "The value was not a type name but instead "
-                f"{type(full_type_name).__name__}"
-            )
-        module_name, type_name = full_type_name.rsplit(".", 1)
-        mod = __import__(module_name, fromlist=[type_name])
-        cls: type = getattr(mod, type_name)
-        if not isinstance(cls, type):
-            raise TypeError(f"The value was not a type but {type(cls).__name__}")
-        return cls
-
     def get_array(self, key: str) -> npt.NDArray:
         """Load a copy of an array from the mapping."""
         v = self[key]
@@ -102,9 +81,11 @@ class HirearchicalMap(MutableMapping[str, Any]):
     def get_string(self, key: str) -> str:
         """Load a string from the mapping."""
         value = self._map[key]
-        if not isinstance(value, str):
-            raise TypeError(f"The value was not a strint but {type(value).__name__}")
-        return value
+        if isinstance(value, str):
+            return value
+        if isinstance(value, np.ndarray):
+            return str(value)
+        raise TypeError(f"The value was not a string but {type(value).__name__}")
 
     def get_scalar(self, key: str) -> int | float:
         """Load a scalar from the mapping."""
