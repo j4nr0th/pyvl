@@ -109,3 +109,7 @@ def test_overlap_induction_matrix() -> None:
     test_mat = msh.line_induction_matrix(1e-6, positions, positions)
     for i in range(4):
         assert all(test_mat[i, i, :] == (0, 0, 0))
+
+
+if __name__ == "__main__":
+    test_mesh_surface_normals()

@@ -9,7 +9,7 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 set(CMAKE_C_STANDARD 17)
 
 find_package(OpenMP REQUIRED)
-set(Python_FIND_VIRTUALENV FIRST) # Needed for UV
+# set(Python_FIND_VIRTUALENV ONLY) # Needed for UV
 find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
 
 # Find the NumPy headers
@@ -40,7 +40,6 @@ list(
         src/surfaceobject.h
         src/meshobject.h
         src/referenceframeobject.h
-        src/common.h
 )
 
 list(
@@ -79,7 +78,7 @@ set_property(TARGET cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_compile_definitions(cvl PRIVATE CVL_ASSERTS)
 
 if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
-    message( FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
+    message(FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
 target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
 

@@ -84,7 +84,8 @@ def rf_from_serial(group: HirearchicalMap) -> ReferenceFrame:
     if "parent" in group:
         parent_group = group.get_hirearchical_map("parent")
         parent = rf_from_serial(parent_group)
-    return cls.load(group=data, parent=parent)
+        return cls.load(group=data, parent=parent)
+    return cls.load(group=data)
 
 
 @dataclass(init=False, frozen=True, eq=False)

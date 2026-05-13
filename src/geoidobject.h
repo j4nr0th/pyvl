@@ -1,22 +1,21 @@
-//
-// Created by jan on 23.11.2024.
-//
+/**
+ * Header with definition of the GeoID Python type.
+ */
+#pragma once
 
-#ifndef GEOIDOBJECT_H
-#define GEOIDOBJECT_H
-
-#include "core/common.h"
 #include "module.h"
 
 typedef struct
 {
-    PyObject_HEAD geo_id_t id;
+    PyObject_HEAD;
+    geo_id_t id;
 } PyVL_GeoIDObject;
 
+/**
+ * TypeSpec for the GeoID type.
+ */
 CVL_INTERNAL
-extern PyTypeObject pyvl_geoid_type;
+extern PyType_Spec pyvl_geoid_typespec;
 
 CVL_INTERNAL
 PyVL_GeoIDObject *pyvl_geoid_from_value(geo_id_t id);
-
-#endif // GEOIDOBJECT_H

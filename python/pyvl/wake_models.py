@@ -123,7 +123,7 @@ class WakeModelLineExplicitUnsteady(WakeModel):
             flat = np.array(old_pos.reshape((-1, 3)), np.float64)
             vel = flow.get_velocity(time, flat)
             ind_mat = geometry.mesh.induction_matrix(self.vortex_tol, positions, flat)
-            vel += np.vecdot(ind_mat, circulation[None, :, None], axis=1)  # type: ignore
+            vel += np.sum(ind_mat * circulation[None, :, None], axis=1)  # type: ignore
             new_pos = old_pos + vel.reshape(old_pos.shape) * dt
             self.wake_positions[:, :, i + 1, :] = new_pos
 

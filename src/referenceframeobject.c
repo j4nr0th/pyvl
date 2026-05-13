@@ -1,13 +1,15 @@
-//
-// Created by jan on 29.11.2024.
-//
 #include "referenceframeobject.h"
 #include <numpy/arrayobject.h>
-// This must be after the arrayobject
-#include "common.h"
+
+// Must be after the array include
+#include <cpyutl.h>
 
 static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
+    const module_state_t *const state = get_module_state(type);
+    if (!state)
+        return NULL;
+
     double theta_x = 0, theta_y = 0, theta_z = 0;
     double offset_x = 0, offset_y = 0, offset_z = 0;
     PyVL_ReferenceFrame *parent;
@@ -17,11 +19,12 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
     {
         return NULL;
     }
+
     if (p == NULL || Py_IsNone(p))
     {
         parent = NULL;
     }
-    else if (!PyObject_TypeCheck(p, &pyvl_reference_frame_type))
+    else if (!PyObject_TypeCheck(p, state->rf_type))
     {
         PyErr_Format(PyExc_TypeError, "Argument \"parent\" must be a ReferenceFrame object, but it was %R", Py_TYPE(p));
         return NULL;
@@ -30,6 +33,7 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
     {
         parent = (PyVL_ReferenceFrame *)p;
     }
+
     theta_x = clamp_angle_to_range(theta_x);
     theta_y = clamp_angle_to_range(theta_y);
     theta_z = clamp_angle_to_range(theta_z);
@@ -46,14 +50,18 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
         .angles = {.x = theta_x, .y = theta_y, .z = theta_z},
         .offset = {.x = offset_x, .y = offset_y, .z = offset_z},
     };
+
     return (PyObject *)this;
 }
 
 static void pyvl_reference_frame_dealloc(PyObject *self)
 {
+    PyObject_GC_UnTrack(self);
     PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     Py_XDECREF(this->parent);
-    Py_TYPE(this)->tp_free(this);
+    PyTypeObject *type = Py_TYPE(this);
+    type->tp_free(this);
+    Py_DECREF(type);
 }
 
 static PyObject *pyvl_reference_frame_repr(PyObject *self)
@@ -67,9 +75,10 @@ static PyObject *pyvl_reference_frame_repr(PyObject *self)
 
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     PyObject *out;
-    unsigned len = snprintf(NULL, 0, "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x,
-                            this->transformation.angles.y, this->transformation.angles.z, this->transformation.offset.x,
-                            this->transformation.offset.y, this->transformation.offset.z);
+    const unsigned len =
+        snprintf(NULL, 0, "(%g, %g, %g), (%g, %g, %g)", this->transformation.angles.x, this->transformation.angles.y,
+                 this->transformation.angles.z, this->transformation.offset.x, this->transformation.offset.y,
+                 this->transformation.offset.z);
     char *buffer = PyMem_Malloc((len + 1) * sizeof *buffer);
     if (!buffer)
         return NULL;
@@ -189,7 +198,7 @@ static PyObject *pyvl_reference_frame_get_parents(PyObject *self, void *Py_UNUSE
 {
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
     unsigned parent_cnt = 0;
-    for (PyVL_ReferenceFrame *p = this->parent; p; p = p->parent)
+    for (const PyVL_ReferenceFrame *p = this->parent; p; p = p->parent)
         parent_cnt += 1;
     PyObject *out = PyTuple_New(parent_cnt);
     unsigned i = 0;
@@ -204,12 +213,16 @@ static PyObject *pyvl_reference_frame_get_parents(PyObject *self, void *Py_UNUSE
 
 static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *other, const int op)
 {
+    const module_state_t *const state = get_module_state(Py_TYPE(self));
+    if (!state)
+        return NULL;
+
     static const real_t tol = 1e-10;
     if (op != Py_EQ && op != Py_NE)
     {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    if (Py_TYPE(other) != &pyvl_reference_frame_type)
+    if (Py_TYPE(other) != state->rf_type)
     {
         Py_RETURN_FALSE;
     }
@@ -239,7 +252,7 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
         result = false;
     }
 
-    result = (op == Py_EQ) ? result : !result;
+    result = (op == Py_EQ ? (int)result : !result) != 0;
     if (!result)
     {
         Py_RETURN_FALSE;
@@ -248,55 +261,60 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
 }
 
 static PyGetSetDef pyvl_reference_frame_getset[] = {
-    {.name = "parent",
-     .get = pyvl_reference_frame_get_parent,
-     .set = NULL,
-     .doc = "ReferenceFrame | None : Return what reference frame the current one is defined relative to.\n",
-     .closure = NULL},
-    {.name = "offset",
-     .get = pyvl_reference_frame_get_offset,
-     .set = NULL,
-     .doc = "array : Vector determining the offset of the reference frame in relative to its parent.",
-     .closure = NULL},
-    {.name = "angles",
-     .get = pyvl_reference_frame_get_angles,
-     .set = NULL,
-     .doc = "array : Vector determining the rotation of the reference frame in parent's frame.",
-     .closure = NULL},
-    {.name = "rotation_matrix",
-     .get = pyvl_reference_frame_get_rotation_matrix,
-     .set = NULL,
-     .doc = "array : Matrix representing rotation of the reference frame.\n",
-     .closure = NULL},
-    {.name = "rotation_matrix_inverse",
-     .get = pyvl_reference_frame_get_rotation_matrix_inverse,
-     .set = NULL,
-     .doc = "array : Matrix representing inverse rotation of the reference frame.",
-     .closure = NULL},
-    {.name = "parents",
-     .get = pyvl_reference_frame_get_parents,
-     .set = NULL,
-     .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
-     .closure = NULL},
+    {
+        .name = "parent",
+        .get = pyvl_reference_frame_get_parent,
+        .doc = "ReferenceFrame | None : Return what reference frame the current one is defined relative to.\n",
+    },
+    {
+        .name = "offset",
+        .get = pyvl_reference_frame_get_offset,
+        .doc = "array : Vector determining the offset of the reference frame in relative to its parent.",
+    },
+    {
+        .name = "angles",
+        .get = pyvl_reference_frame_get_angles,
+        .doc = "array : Vector determining the rotation of the reference frame in parent's frame.",
+    },
+    {
+        .name = "rotation_matrix",
+        .get = pyvl_reference_frame_get_rotation_matrix,
+        .doc = "array : Matrix representing rotation of the reference frame.\n",
+    },
+    {
+        .name = "rotation_matrix_inverse",
+        .get = pyvl_reference_frame_get_rotation_matrix_inverse,
+        .doc = "array : Matrix representing inverse rotation of the reference frame.",
+    },
+    {
+        .name = "parents",
+        .get = pyvl_reference_frame_get_parents,
+        .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
+    },
     {0},
 };
 
-static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const CVL_ARRAY_ARG(args, static nargs),
+static bool prepare_for_transformation(PyObject *const *args, const Py_ssize_t nargs, const PyObject *kwnames,
                                        PyArrayObject **p_in, PyArrayObject **p_out, npy_intp *p_dim,
                                        const npy_intp **p_dims)
 {
-    if (nargs != 1 && nargs != 2)
-    {
-        PyErr_SetString(PyExc_TypeError, "Method only takes 1 or two parameters");
+    PyObject *in_any;
+    PyArrayObject *out_array = NULL;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in_any, .kwname = "x"},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&out_array,
+                 .kwname = "out",
+                 .type_check = &PyArray_Type,
+                 .optional = true},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
         return false;
-    }
-    if (nargs == 2 && !PyArray_Check(args[1]))
-    {
-        PyErr_SetString(PyExc_TypeError, "Second argument must be an array.");
-        return false;
-    }
-    PyArrayObject *const in_array = (PyArrayObject *)PyArray_FromAny(args[0], PyArray_DescrFromType(NPY_FLOAT64), 1, 0,
-                                                                     NPY_ARRAY_C_CONTIGUOUS, NULL);
+
+    PyArrayObject *const in_array =
+        (PyArrayObject *)PyArray_FromAny(in_any, PyArray_DescrFromType(NPY_DOUBLE), 1, 0, NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!in_array)
     {
         return false;
@@ -312,37 +330,11 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const CVL_ARR
         Py_DECREF(in_array);
         return false;
     }
-    PyArrayObject *out_array;
-    if (nargs == 2)
+    if (out_array)
     {
-        out_array = (PyArrayObject *)args[1];
-        if (!(PyArray_FLAGS(out_array) & NPY_ARRAY_C_CONTIGUOUS))
+        if (check_input_array(out_array, dim_in, dims_in, NPY_DOUBLE,
+                              NPY_ARRAY_WRITEABLE | NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "out") < 0)
         {
-            PyErr_SetString(PyExc_ValueError, "Output array is not C-contiguous.");
-            Py_DECREF(in_array);
-            return false;
-        }
-        if (PyArray_TYPE(out_array) != NPY_DOUBLE)
-        {
-            PyErr_SetString(PyExc_ValueError, "Output array is not of C double type.");
-            Py_DECREF(in_array);
-            return false;
-        }
-
-        const npy_intp dim_out = PyArray_NDIM(out_array);
-        const npy_intp *dims_out = PyArray_DIMS(out_array);
-        if (dim_out != dim_in)
-        {
-            PyErr_Format(PyExc_ValueError,
-                         "Output array does not have the same number of axis as the input "
-                         "array (in: %u, out: %u).",
-                         (unsigned)dim_in, (unsigned)dim_out);
-            Py_DECREF(in_array);
-            return false;
-        }
-        if (memcmp(dims_in, dims_out, sizeof(*dims_in) * dim_in) != 0)
-        {
-            PyErr_SetString(PyExc_ValueError, "Output array does not have the same exact shape as the input array.");
             Py_DECREF(in_array);
             return false;
         }
@@ -357,6 +349,7 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const CVL_ARR
             return false;
         }
     }
+
     *p_in = in_array;
     *p_out = out_array;
     *p_dim = dim_in;
@@ -364,12 +357,15 @@ static bool prepare_for_transformation(Py_ssize_t nargs, PyObject *const CVL_ARR
     return true;
 }
 
-static PyObject *pyvl_reference_frame_from_parent_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_from_parent_with_offset(PyObject *self, PyTypeObject *defining_class,
+                                                              PyObject *const *args, const Py_ssize_t nargs,
+                                                              PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -392,13 +388,15 @@ static PyObject *pyvl_reference_frame_from_parent_with_offset(PyObject *self, Py
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_from_parent_without_offset(PyObject *self, PyObject *const *args,
-                                                                 Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_from_parent_without_offset(PyObject *self, PyTypeObject *defining_class,
+                                                                 PyObject *const *args, const Py_ssize_t nargs,
+                                                                 PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -421,12 +419,15 @@ static PyObject *pyvl_reference_frame_from_parent_without_offset(PyObject *self,
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_to_parent_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_to_parent_with_offset(PyObject *self, PyTypeObject *defining_class,
+                                                            PyObject *const *args, const Py_ssize_t nargs,
+                                                            PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -449,12 +450,15 @@ static PyObject *pyvl_reference_frame_to_parent_with_offset(PyObject *self, PyOb
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_to_parent_without_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_to_parent_without_offset(PyObject *self, PyTypeObject *defining_class,
+                                                               PyObject *const *args, const Py_ssize_t nargs,
+                                                               PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -477,12 +481,15 @@ static PyObject *pyvl_reference_frame_to_parent_without_offset(PyObject *self, P
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_from_global_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_from_global_with_offset(PyObject *self, PyTypeObject *defining_class,
+                                                              PyObject *const *args, const Py_ssize_t nargs,
+                                                              PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -512,13 +519,15 @@ static PyObject *pyvl_reference_frame_from_global_with_offset(PyObject *self, Py
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_from_global_without_offset(PyObject *self, PyObject *const *args,
-                                                                 Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_from_global_without_offset(PyObject *self, PyTypeObject *defining_class,
+                                                                 PyObject *const *args, const Py_ssize_t nargs,
+                                                                 PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -546,12 +555,15 @@ static PyObject *pyvl_reference_frame_from_global_without_offset(PyObject *self,
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_to_global_with_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_to_global_with_offset(PyObject *self, PyTypeObject *defining_class,
+                                                            PyObject *const *args, const Py_ssize_t nargs,
+                                                            PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -581,12 +593,15 @@ static PyObject *pyvl_reference_frame_to_global_with_offset(PyObject *self, PyOb
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_to_global_without_offset(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_to_global_without_offset(PyObject *self, PyTypeObject *defining_class,
+                                                               PyObject *const *args, const Py_ssize_t nargs,
+                                                               PyObject *kwnames)
 {
+    (void)defining_class;
     PyArrayObject *in_array, *out_array;
     npy_intp dim_in;
     const npy_intp *dims_in;
-    if (!prepare_for_transformation(nargs, args, &in_array, &out_array, &dim_in, &dims_in))
+    if (!prepare_for_transformation(args, nargs, kwnames, &in_array, &out_array, &dim_in, &dims_in))
     {
         return NULL;
     }
@@ -614,15 +629,24 @@ static PyObject *pyvl_reference_frame_to_global_without_offset(PyObject *self, P
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                               const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    const double theta = PyFloat_AsDouble(arg);
-    if (PyErr_Occurred())
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
         return NULL;
 
-    PyVL_ReferenceFrame *const new =
-        (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
+    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
+    double theta;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &theta},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    PyVL_ReferenceFrame *const new = (PyVL_ReferenceFrame *)state->rf_type->tp_alloc(state->rf_type, 0);
     if (!new)
         return NULL;
     new->transformation = this->transformation;
@@ -632,15 +656,24 @@ static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyObject *arg)
     return (PyObject *)new;
 }
 
-static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                               const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    const double theta = PyFloat_AsDouble(arg);
-    if (PyErr_Occurred())
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
         return NULL;
 
-    PyVL_ReferenceFrame *const new =
-        (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
+    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
+    double theta;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &theta},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    PyVL_ReferenceFrame *const new = (PyVL_ReferenceFrame *)state->rf_type->tp_alloc(state->rf_type, 0);
     if (!new)
         return NULL;
     new->transformation = this->transformation;
@@ -650,15 +683,24 @@ static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyObject *arg)
     return (PyObject *)new;
 }
 
-static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                               const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    const double theta = PyFloat_AsDouble(arg);
-    if (PyErr_Occurred())
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
         return NULL;
 
-    PyVL_ReferenceFrame *const new =
-        (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
+    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
+    double theta;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &theta},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    PyVL_ReferenceFrame *const new = (PyVL_ReferenceFrame *)state->rf_type->tp_alloc(state->rf_type, 0);
     if (!new)
         return NULL;
     new->transformation = this->transformation;
@@ -668,11 +710,25 @@ static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyObject *arg)
     return (PyObject *)new;
 }
 
-static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                                  const Py_ssize_t nargs, const PyObject *kwnames)
 {
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
+        return NULL;
+
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    PyArrayObject *const off_array =
-        (PyArrayObject *)PyArray_FromAny(arg, PyArray_DescrFromType(NPY_FLOAT64), 1, 1, NPY_ARRAY_C_CONTIGUOUS, NULL);
+    PyObject *in_any;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in_any},
+                {},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(in_any, PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
+                                                                      NPY_ARRAY_C_CONTIGUOUS, NULL);
     if (!off_array)
         return NULL;
     const npy_intp *p_n = PyArray_DIMS(off_array);
@@ -686,8 +742,7 @@ static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyObject *arg)
     const real3_t new_offset = {.v0 = p_in[0], .v1 = p_in[1], .v2 = p_in[2]};
     Py_DECREF(off_array);
 
-    PyVL_ReferenceFrame *const new =
-        (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
+    PyVL_ReferenceFrame *const new = (PyVL_ReferenceFrame *)state->rf_type->tp_alloc(state->rf_type, 0);
     if (!new)
         return NULL;
     new->transformation = this->transformation;
@@ -697,14 +752,23 @@ static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyObject *arg)
     return (PyObject *)new;
 }
 
-static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                              const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const double time = PyFloat_AsDouble(arg);
-    if (PyErr_Occurred())
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
         return NULL;
-    (void)time;
-    PyVL_ReferenceFrame *const new =
-        (PyVL_ReferenceFrame *)pyvl_reference_frame_type.tp_alloc(&pyvl_reference_frame_type, 0);
+
+    double time;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &time},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    PyVL_ReferenceFrame *const new = (PyVL_ReferenceFrame *)state->rf_type->tp_alloc(state->rf_type, 0);
     if (!new)
         return NULL;
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
@@ -713,7 +777,7 @@ static PyObject *pyvl_reference_frame_at_time(PyObject *self, PyObject *arg)
     {
         //  Evolve the parent.
         PyVL_ReferenceFrame *new_parent =
-            (PyVL_ReferenceFrame *)PyObject_CallMethod((PyObject *)this->parent, "at_time", "O", arg);
+            (PyVL_ReferenceFrame *)PyObject_CallMethod((PyObject *)this->parent, "at_time", "d", time);
         if (!new_parent)
         {
             Py_DECREF(new);
@@ -769,8 +833,22 @@ static PyObject *pyvl_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *ar
     return (PyObject *)out;
 }
 
-static PyObject *pyvl_reference_frame_save(PyObject *self, PyObject *arg)
+static PyObject *pyvl_reference_frame_save(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                           const Py_ssize_t nargs, const PyObject *kwnames)
 {
+    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    if (!state)
+        return NULL;
+
+    PyObject *arg;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&arg},
+                {},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
     if (!PyMapping_Check(arg))
     {
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
@@ -784,28 +862,14 @@ static PyObject *pyvl_reference_frame_save(PyObject *self, PyObject *arg)
         Py_XDECREF(rot_array);
         return NULL;
     }
-    // if (this->parent)
-    // {
-    //     PyObject *const out_group = PyObject_CallMethod(arg, "create_group", "s", "parent");
-    //     if (!out_group)
-    //     {
-    //         Py_DECREF(off_array);
-    //         Py_DECREF(rot_array);
-    //         return NULL;
-    //     }
-    //     PyObject *const res = pyvl_reference_frame_save((PyObject *)this->parent, out_group);
-    //     Py_DECREF(out_group);
-    //     Py_XDECREF(res);
-    //     if (!res)
-    //         return NULL;
-    // }
+
     const int res1 = PyMapping_SetItemString(arg, "offset", off_array);
     Py_DECREF(off_array);
     const int res2 = PyMapping_SetItemString(arg, "angles", rot_array);
     Py_DECREF(rot_array);
     if (res1 < 0 || res2 < 0)
         return NULL;
-    PyObject *type_name = PyUnicode_FromString(pyvl_reference_frame_type.tp_name);
+    PyObject *type_name = PyUnicode_FromString(state->rf_type->tp_name);
     if (!type_name)
         return NULL;
     const int res3 = PyMapping_SetItemString(arg, "type", type_name);
@@ -815,73 +879,38 @@ static PyObject *pyvl_reference_frame_save(PyObject *self, PyObject *arg)
     Py_RETURN_NONE;
 }
 
-static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObject *kwargs)
+static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *args, const Py_ssize_t nargs,
+                                           const PyObject *kwnames)
 {
-    PyObject *group, *parent = NULL;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", (char *[3]){"group", "parent", NULL}, &group, &parent))
-    {
+    const module_state_t *const state = get_module_state(type);
+    if (!state)
         return NULL;
-    }
-    if (parent)
-    {
-        if (Py_IsNone(parent))
-        {
-            parent = NULL;
-        }
-        else if (!PyObject_TypeCheck(parent, &pyvl_reference_frame_type))
-        {
-            PyErr_Format(PyExc_TypeError, "Parent was neither None nor a ReferenceFrame (instead it was %R).",
-                         Py_TYPE(parent));
-            return NULL;
-        }
-    }
+
+    PyObject *group, *parent = NULL;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&group, .kwname = "group"},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&parent,
+                 .kwname = "parent",
+                 .type_check = state->rf_type,
+                 .optional = true},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
     if (!PyMapping_Check(group))
     {
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
         return NULL;
     }
-    // PyObject *const type_name = PyMapping_GetItemString(group, "type");
-    // if (!type_name)
-    //     return NULL;
-    // Py_ssize_t len;
-    // const char *const full_name = PyUnicode_AsUTF8AndSize(type_name, &len);
-    // if (!full_name)
-    // {
-    //     Py_DECREF(type_name);
-    //     return NULL;
-    // }
-    // const char *const split = strrchr(full_name, '.');
-    // if (!split)
-    // {
-    //     Py_DECREF(type_name);
-    //     PyErr_Format(PyExc_ValueError, "The type name did not contain any \".\" characters.");
-    //     return NULL;
-    // }
-    // const unsigned mod_len = split - full_name;
-    // char *const buffer = PyMem_Malloc(sizeof(*buffer) * (mod_len));
-    // if (!buffer)
-    // {
-    //     Py_DECREF(type_name);
-    //     return NULL;
-    // }
-    // memcpy(buffer, full_name, mod_len - 1);
-    // buffer[mod_len - 1] = 0;
-    // PyObject *module = PyImport_ImportModule(buffer);
-    // PyMem_Free(buffer);
-    // if (!module)
-    // {
-    //     Py_DECREF(type_name);
-    //     return NULL;
-    // }
-    PyTypeObject *type = (PyTypeObject *)self; // PyObject_GetAttrString(module, split + 1);
-    // Py_DECREF(type_name);
-    // if (!type)
-    //     return NULL;
 
     PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)type->tp_alloc(type, 0);
     // Py_DECREF(type);
     if (!this)
         return NULL;
+
     PyObject *const off_val = PyMapping_GetItemString(group, "offset");
     PyObject *const rot_val = PyMapping_GetItemString(group, "angles");
     if (!off_val || !rot_val)
@@ -890,6 +919,7 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
         Py_XDECREF(rot_val);
         return NULL;
     }
+
     PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(off_val, PyArray_DescrFromType(NPY_FLOAT64), 1, 1,
                                                                       NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
     Py_DECREF(off_val);
@@ -903,6 +933,7 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
         Py_DECREF(this);
         return NULL;
     }
+
     if (PyArray_SIZE(off_array) != 3)
     {
         PyErr_Format(PyExc_ValueError, "Offset array did not have 3 elements, but had %u instead.",
@@ -912,6 +943,7 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
         Py_DECREF(this);
         return NULL;
     }
+
     if (PyArray_SIZE(rot_array) != 3)
     {
         PyErr_Format(PyExc_ValueError, "Angle array did not have 3 elements, but had %u instead.",
@@ -936,319 +968,359 @@ static PyObject *pyvl_reference_frame_load(PyObject *self, PyObject *args, PyObj
     return (PyObject *)this;
 }
 
-static PyObject *pyvl_reference_frame_add_velocity(PyObject *Py_UNUSED(self), PyObject *const *args, Py_ssize_t nargs)
+static PyObject *pyvl_reference_frame_add_velocity(PyTypeObject *Py_UNUSED(defining_class), PyObject *Py_UNUSED(self),
+                                                   PyObject *const *args, const Py_ssize_t nargs,
+                                                   const PyObject *kwnames)
 {
-    if (nargs != 2)
-    {
-        PyErr_Format(PyExc_TypeError, "Function takes 2 parameters, but was called with %u\n", (unsigned)nargs);
+    PyArrayObject *in_array, *out_array;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = &in_array, .type_check = &PyArray_Type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = &out_array, .type_check = &PyArray_Type},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
         return NULL;
-    }
-    const PyArrayObject *const in_array =
-        pyvl_ensure_array(args[0], 2, (const npy_intp[2]){0, 3}, 0, NPY_FLOAT64, "Position array");
-    const npy_intp required_dims[2] = {PyArray_DIM(in_array, 0), 3};
-    const PyArrayObject *const out_array =
-        pyvl_ensure_array(args[1], 2, required_dims, NPY_ARRAY_WRITEABLE, NPY_FLOAT64, "Velocity array");
-    if (!out_array)
+
+    if (check_input_array(in_array, 2, (const npy_intp[2]){0, 3}, NPY_DOUBLE,
+                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "Positions array") < 0)
+        return NULL;
+    if (check_input_array(out_array, 2, PyArray_DIMS(in_array), NPY_DOUBLE,
+                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, "Velocity array") < 0)
         return NULL;
 
     Py_RETURN_NONE;
 }
 
 static PyMethodDef pyvl_reference_frame_methods[] = {
-    {.ml_name = "from_parent_with_offset",
-     .ml_meth = (void *)pyvl_reference_frame_from_parent_with_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "from_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map position vector from parent reference frame to the child reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
-               "out : (N, 3) array, optional"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "from_parent_without_offset",
-     .ml_meth = (void *)pyvl_reference_frame_from_parent_without_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "from_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map direction vector from parent reference frame to the child reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
-               "out : (N, 3) array, optional\n"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "to_parent_with_offset",
-     .ml_meth = (void *)pyvl_reference_frame_to_parent_with_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "to_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map position vector from child reference frame to the parent reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
-               "out : (N, 3) array, optional"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Position vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "to_parent_without_offset",
-     .ml_meth = (void *)pyvl_reference_frame_to_parent_without_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "to_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map direction vector from child reference frame to the parent reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
-               "out : (N, 3) array, optional\n"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Direction vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "from_global_with_offset",
-     .ml_meth = (void *)pyvl_reference_frame_from_global_with_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "from_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map position vector from global reference frame to the child reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
-               "out : (N, 3) array, optional"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "from_global_without_offset",
-     .ml_meth = (void *)pyvl_reference_frame_from_global_without_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "from_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map direction vector from global reference frame to the child reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
-               "out : (N, 3) array, optional\n"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "to_global_with_offset",
-     .ml_meth = (void *)pyvl_reference_frame_to_global_with_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "to_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map position vector from child reference frame to the parent reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
-               "out : (N, 3) array, optional"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Position vectors mapped to the global reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "to_global_without_offset",
-     .ml_meth = (void *)pyvl_reference_frame_to_global_without_offset,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "to_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
-               "Map direction vector from child reference frame to the global reference frame.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "x : (N, 3) array\n"
-               "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
-               "out : (N, 3) array, optional\n"
-               "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
-               "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
-               "    C-contiguous, and writable.\n"
-               "Returns\n"
-               "-------\n"
-               "(N, 3) array\n"
-               "    Direction vectors mapped to the global reference frame. If the ``out`` parameter was\n"
-               "    specified, this return value will be the same object. If ``out`` was not specified,\n"
-               "    then a new array will be allocated."},
-    {.ml_name = "rotate_x",
-     .ml_meth = pyvl_reference_frame_rotate_x,
-     .ml_flags = METH_O,
-     .ml_doc = "rotate_x(theta_x: float, /) -> Self\n"
-               "Create a copy of the frame rotated around the x-axis.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "theta_x : float\n"
-               "    Angle by which to rotate the reference frame by.\n"
-               "Returns\n"
-               "-------\n"
-               "Self\n"
-               "    Reference frame rotated around the x-axis by the specified angle.\n"},
-    {.ml_name = "rotate_y",
-     .ml_meth = pyvl_reference_frame_rotate_y,
-     .ml_flags = METH_O,
-     .ml_doc = "rotate_y(theta_y: float, /) -> Self\n"
-               "Create a copy of the frame rotated around the y-axis.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "theta_y : float\n"
-               "    Angle by which to rotate the reference frame by.\n"
-               "Returns\n"
-               "-------\n"
-               "Self\n"
-               "    Reference frame rotated around the y-axis by the specified angle.\n"},
-    {.ml_name = "rotate_z",
-     .ml_meth = pyvl_reference_frame_rotate_z,
-     .ml_flags = METH_O,
-     .ml_doc = "rotate_z(theta_z: float, /) -> Self\n"
-               "Create a copy of the frame rotated around the z-axis.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "theta_z : float\n"
-               "    Angle by which to rotate the reference frame by.\n"
-               "Returns\n"
-               "-------\n"
-               "Self\n"
-               "    Reference frame rotated around the z-axis by the specified angle.\n"},
-    {.ml_name = "with_offset",
-     .ml_meth = pyvl_reference_frame_with_offset,
-     .ml_flags = METH_O,
-     .ml_doc = "with_offset(offset: VecLike3, /) -> ReferenceFrame\n"
-               "Create a copy of the frame with different offset value.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "offset : VecLike3\n"
-               "    Offset to add to the reference frame relative to its parent.\n"
-               "Returns\n"
-               "-------\n"
-               "ReferenceFrame\n"
-               "    A copy of itself which is translated by the value of ``offset`` in\n"
-               "    the parent's reference frame.\n"},
-    {.ml_name = "at_time",
-     .ml_meth = pyvl_reference_frame_at_time,
-     .ml_flags = METH_O,
-     .ml_doc = "at_time(t: float, /) -> Self\n"
-               "Compute reference frame at the given time.\n"
-               "\n"
-               "This is used when the reference frame is moving or rotating in space.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "t : float\n"
-               "    Time at which the reference frame is needed.\n"
-               "\n"
-               "Returns\n"
-               "-------\n"
-               "Self\n"
-               "    New reference frame at the given time.\n"},
-    {.ml_name = "angles_from_rotation",
-     .ml_meth = pyvl_matrix_to_angles,
-     .ml_flags = METH_O | METH_STATIC,
-     .ml_doc = "angles_from_rotation(mat: array, /) -> array\n"
-               "Compute rotation angles from a transformation matrix.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "mat : (3, 3) array\n"
-               "    Rotation matrix to convert to the rotation angles. This is done assuming that the\n"
-               "    matrix is orthogonal.\n"
-               "Returns\n"
-               "-------\n"
-               "(3,) array"
-               "    Rotation angles around the x-, y-, and z-axis which result in a transformation\n"
-               "    with equal rotation matrix.\n"},
-    {.ml_name = "save",
-     .ml_meth = pyvl_reference_frame_save,
-     .ml_flags = METH_O,
-     .ml_doc = "save(hmap: HirearchicalMap, /)\n"
-               "Serialize the ReferenceFrame into a HirearchicalMap.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "hmap : HirearchicalMap\n"
-               "    :class:`HirearchicalMap` in which to save the reference frame into."},
-    {.ml_name = "load",
-     .ml_meth = (void *)pyvl_reference_frame_load,
-     .ml_flags = METH_VARARGS | METH_KEYWORDS | METH_CLASS,
-     .ml_doc = "load(self, hmap: HirearchicalMap, parent: ReferenceFrame | None = None/) -> Self\n"
-               "Load the ReferenceFrame from a HirearchicalMap.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "hmap : HirearchicalMap\n"
-               "    A :class:`HirearchicalMap`, which was created with a call to :meth:`ReferenceFrame.save`.\n"
-               "parent : ReferenceFrame, optional\n"
-               "    Parent of the reference frame.\n"
-               "Returns\n"
-               "-------\n"
-               "Self\n"
-               "    Deserialized :class:`ReferenceFrame`.\n"},
-    {.ml_name = "add_velocity",
-     .ml_meth = (void *)pyvl_reference_frame_add_velocity,
-     .ml_flags = METH_FASTCALL,
-     .ml_doc = "add_velocity(positions: array, velocity: array, /) -> None\n"
-               "Add the velocity at the specified positions.\n"
-               "\n"
-               "This method exists to account for the motion of the mesh from non-stationary\n"
-               "reference frames.\n"
-               "\n"
-               "Parameters\n"
-               "----------\n"
-               "positions : (N, 3) array\n"
-               "   Array of :math:`N` position vectors specifying the positions where the\n"
-               "   velocity should be updated.\n"
-               "\n"
-               "velocity : (N, 3) array\n"
-               "   Array to which the velocity vectors at the specified positions should be added\n"
-               "   to. These values should be added to and not just overwritten.\n"},
+    {
+        .ml_name = "from_parent_with_offset",
+        .ml_meth = (void *)pyvl_reference_frame_from_parent_with_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "from_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map position vector from parent reference frame to the child reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
+                  "out : (N, 3) array, optional"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "from_parent_without_offset",
+        .ml_meth = (void *)pyvl_reference_frame_from_parent_without_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "from_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map direction vector from parent reference frame to the child reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in parent reference frame.\n"
+                  "out : (N, 3) array, optional\n"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "to_parent_with_offset",
+        .ml_meth = (void *)pyvl_reference_frame_to_parent_with_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "to_parent_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map position vector from child reference frame to the parent reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+                  "out : (N, 3) array, optional"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Position vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "to_parent_without_offset",
+        .ml_meth = (void *)pyvl_reference_frame_to_parent_without_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "to_parent_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map direction vector from child reference frame to the parent reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+                  "out : (N, 3) array, optional\n"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Direction vectors mapped to the parent reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "from_global_with_offset",
+        .ml_meth = (void *)pyvl_reference_frame_from_global_with_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "from_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map position vector from global reference frame to the child reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
+                  "out : (N, 3) array, optional"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Position vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "from_global_without_offset",
+        .ml_meth = (void *)pyvl_reference_frame_from_global_without_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "from_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map direction vector from global reference frame to the child reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in global reference frame.\n"
+                  "out : (N, 3) array, optional\n"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Direction vectors mapped to the child reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "to_global_with_offset",
+        .ml_meth = (void *)pyvl_reference_frame_to_global_with_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "to_global_with_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map position vector from child reference frame to the parent reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+                  "out : (N, 3) array, optional"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Position vectors mapped to the global reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "to_global_without_offset",
+        .ml_meth = (void *)pyvl_reference_frame_to_global_without_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "to_global_without_offset(x: array, out: out_array | None = None) -> out_array\n"
+                  "Map direction vector from child reference frame to the global reference frame.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : (N, 3) array\n"
+                  "    Array of :math:`N` vectors in :math:`\\mathbb{R}^3` in child reference frame.\n"
+                  "out : (N, 3) array, optional\n"
+                  "    Array which receives the mapped vectors. Must have the exact shape of ``x``.\n"
+                  "    It must also have the :class:`dtype` for :class:`numpy.double`, as well as be aligned,\n"
+                  "    C-contiguous, and writable.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(N, 3) array\n"
+                  "    Direction vectors mapped to the global reference frame. If the ``out`` parameter was\n"
+                  "    specified, this return value will be the same object. If ``out`` was not specified,\n"
+                  "    then a new array will be allocated.",
+    },
+    {
+        .ml_name = "rotate_x",
+        .ml_meth = (void *)pyvl_reference_frame_rotate_x,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "rotate_x(theta_x: float, /) -> Self\n"
+                  "Create a copy of the frame rotated around the x-axis.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "theta_x : float\n"
+                  "    Angle by which to rotate the reference frame by.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    Reference frame rotated around the x-axis by the specified angle.\n",
+    },
+    {
+        .ml_name = "rotate_y",
+        .ml_meth = (void *)pyvl_reference_frame_rotate_y,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "rotate_y(theta_y: float, /) -> Self\n"
+                  "Create a copy of the frame rotated around the y-axis.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "theta_y : float\n"
+                  "    Angle by which to rotate the reference frame by.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    Reference frame rotated around the y-axis by the specified angle.\n",
+    },
+    {
+        .ml_name = "rotate_z",
+        .ml_meth = (void *)pyvl_reference_frame_rotate_z,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "rotate_z(theta_z: float, /) -> Self\n"
+                  "Create a copy of the frame rotated around the z-axis.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "theta_z : float\n"
+                  "    Angle by which to rotate the reference frame by.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    Reference frame rotated around the z-axis by the specified angle.\n",
+    },
+    {
+        .ml_name = "with_offset",
+        .ml_meth = (void *)pyvl_reference_frame_with_offset,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "with_offset(offset: VecLike3, /) -> ReferenceFrame\n"
+                  "Create a copy of the frame with different offset value.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "offset : VecLike3\n"
+                  "    Offset to add to the reference frame relative to its parent.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "ReferenceFrame\n"
+                  "    A copy of itself which is translated by the value of ``offset`` in\n"
+                  "    the parent's reference frame.\n",
+    },
+    {
+        .ml_name = "at_time",
+        .ml_meth = (void *)pyvl_reference_frame_at_time,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "at_time(t: float, /) -> Self\n"
+                  "Compute reference frame at the given time.\n"
+                  "\n"
+                  "This is used when the reference frame is moving or rotating in space.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "t : float\n"
+                  "    Time at which the reference frame is needed.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    New reference frame at the given time.\n",
+    },
+    {
+        .ml_name = "angles_from_rotation",
+        .ml_meth = pyvl_matrix_to_angles,
+        .ml_flags = METH_O | METH_STATIC,
+        .ml_doc = "angles_from_rotation(mat: array, /) -> array\n"
+                  "Compute rotation angles from a transformation matrix.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "mat : (3, 3) array\n"
+                  "    Rotation matrix to convert to the rotation angles. This is done assuming that the\n"
+                  "    matrix is orthogonal.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "(3,) array"
+                  "    Rotation angles around the x-, y-, and z-axis which result in a transformation\n"
+                  "    with equal rotation matrix.\n",
+    },
+    {
+        .ml_name = "save",
+        .ml_meth = (void *)pyvl_reference_frame_save,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "save(hmap: HirearchicalMap, /)\n"
+                  "Serialize the ReferenceFrame into a HirearchicalMap.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "hmap : HirearchicalMap\n"
+                  "    :class:`HirearchicalMap` in which to save the reference frame into.",
+    },
+    {
+        .ml_name = "load",
+        .ml_meth = (void *)pyvl_reference_frame_load,
+        .ml_flags = METH_FASTCALL | METH_KEYWORDS | METH_CLASS,
+        .ml_doc = "load(hmap: HirearchicalMap, parent: ReferenceFrame | None = None/) -> Self\n"
+                  "Load the ReferenceFrame from a HirearchicalMap.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "hmap : HirearchicalMap\n"
+                  "    A :class:`HirearchicalMap`, which was created with a call to :meth:`ReferenceFrame.save`.\n"
+                  "parent : ReferenceFrame, optional\n"
+                  "    Parent of the reference frame.\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    Deserialized :class:`ReferenceFrame`.\n",
+    },
+    {
+        .ml_name = "add_velocity",
+        .ml_meth = (void *)pyvl_reference_frame_add_velocity,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "add_velocity(positions: array, velocity: array, /) -> None\n"
+                  "Add the velocity at the specified positions.\n"
+                  "\n"
+                  "This method exists to account for the motion of the mesh from non-stationary\n"
+                  "reference frames.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "positions : (N, 3) array\n"
+                  "   Array of :math:`N` position vectors specifying the positions where the\n"
+                  "   velocity should be updated.\n"
+                  "\n"
+                  "velocity : (N, 3) array\n"
+                  "   Array to which the velocity vectors at the specified positions should be added\n"
+                  "   to. These values should be added to and not just overwritten.\n",
+    },
     {0},
 };
 
@@ -1293,16 +1365,22 @@ PyDoc_STRVAR(
     "\n");
 
 CVL_INTERNAL
-PyTypeObject pyvl_reference_frame_type = {
-    .ob_base = PyVarObject_HEAD_INIT(NULL, 0).tp_name = "pyvl.cvl.ReferenceFrame",
-    .tp_basicsize = sizeof(PyVL_ReferenceFrame),
-    .tp_itemsize = 0,
-    .tp_repr = pyvl_reference_frame_repr,
-    .tp_doc = pyvl_reference_frame_type_docstring,
-    .tp_getset = pyvl_reference_frame_getset,
-    .tp_methods = pyvl_reference_frame_methods,
-    .tp_new = pyvl_reference_frame_new,
-    .tp_dealloc = pyvl_reference_frame_dealloc,
-    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE,
-    .tp_richcompare = pyvl_reference_frame_rich_compare,
+PyType_Spec pyvl_reference_frame_typespec = {
+    .name = PYVL_CTYPE_NAME(ReferenceFrame),
+    .basicsize = sizeof(PyVL_ReferenceFrame),
+    .itemsize = 0,
+    .flags =
+        Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_HEAPTYPE,
+    .slots =
+        (PyType_Slot[]){
+            {Py_tp_doc, (void *)pyvl_reference_frame_type_docstring},
+            {Py_tp_repr, pyvl_reference_frame_repr},
+            {Py_tp_getset, pyvl_reference_frame_getset},
+            {Py_tp_methods, pyvl_reference_frame_methods},
+            {Py_tp_new, pyvl_reference_frame_new},
+            {Py_tp_dealloc, pyvl_reference_frame_dealloc},
+            {Py_tp_richcompare, pyvl_reference_frame_rich_compare},
+            {Py_tp_traverse, cpyutl_traverse_heap_type},
+            {0, NULL},
+        },
 };
