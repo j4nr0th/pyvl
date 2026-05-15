@@ -264,6 +264,26 @@ class ReferenceFrame:
     vector or a callable with signature ``(float) -> (float, float, float)``. Callables
     are evaluated at the given time to determine the current transformation.
 
+    While denoting the position of the reference frame as :math:`\vec{r}(t)`, velocity as
+    :math:`\vec{v}(t)`, the orientation matrix as :math:`\mathbf{T}(t)`, and its angular
+    velocity as :math:`\vec{\omega}(t)`, the position and velocity relative to its parent,
+    denoted by :math:`\vec{r}_\mathrm{parent}(t)` and :math:`\vec{v}_\mathrm{parent}(t)`,
+    for a point at :math:`\vec{r}_P` with velocity :math:`\vec{v}_P` are given by
+
+    .. math::
+
+        \vec{r}_\mathrm{parent}(t) = \mathbf{T}(t) \left( \vec{r}_P + \vec{r}(t) \right)
+
+    and
+
+    .. math::
+
+        \vec{v}_\mathrm{parent}(t) = \mathbf{T}(t) \left( \vec{v}_P + \vec{v} + \vec{r}(t)
+        \times \vec{\omega}(t) \right)
+
+    Of course it is also possible to transform any other quantity just with the
+    orientation matrix :math:`\mathbf{T}`.
+
     Parameters
     ----------
     offset : VecLike3 or Callable, default: (0, 0, 0)

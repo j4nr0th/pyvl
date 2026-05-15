@@ -30,7 +30,7 @@ ang_vel = (RPM / 60) * 2 * np.pi
 
 geo = pyvl.Geometry.from_meshio(
     label="prop",
-    reference_frame=pyvl.RotorReferenceFrame(omega=(-ang_vel, 0, 0)),
+    reference_frame=pyvl.ReferenceFrame(rotation=(-ang_vel, 0, 0)),
     mesh=mio.read(examples.example_file_name("prop.msh")),
 )
 
