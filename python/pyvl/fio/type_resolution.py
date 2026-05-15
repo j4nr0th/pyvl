@@ -48,7 +48,6 @@ def reference_frame_from_serial(
         If the type name is not recognized or cannot be loaded.
     """
     from pyvl.cvl import ReferenceFrame
-    from pyvl.reference_frames import RotorReferenceFrame, TranslatingReferenceFrame
 
     type_name = group.get_string("type")
     data = group.get_hirearchical_map("data")
@@ -69,18 +68,6 @@ def reference_frame_from_serial(
         case "pyvl.cvl.ReferenceFrame":
             return (
                 ReferenceFrame.load(data, parent) if parent else ReferenceFrame.load(data)
-            )
-        case "pyvl.reference_frames.TranslatingReferenceFrame":
-            return (
-                TranslatingReferenceFrame.load(data, parent)
-                if parent
-                else TranslatingReferenceFrame.load(data)
-            )
-        case "pyvl.reference_frames.RotorReferenceFrame":
-            return (
-                RotorReferenceFrame.load(data, parent)
-                if parent
-                else RotorReferenceFrame.load(data)
             )
         case _:
             if custom_types is not None:

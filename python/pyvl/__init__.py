@@ -27,10 +27,6 @@ from pyvl.geometry import SimulationGeometry as SimulationGeometry
 from pyvl.geometry import geometry_show_pyvista as geometry_show_pyvista
 from pyvl.geometry import mesh_from_mesh_io as mesh_from_mesh_io
 
-# Reference Frames
-from pyvl.reference_frames import RotorReferenceFrame as RotorReferenceFrame
-from pyvl.reference_frames import TranslatingReferenceFrame as TranslatingReferenceFrame
-
 # Settings
 from pyvl.settings import ModelSettings as ModelSettings
 from pyvl.settings import SolverSettings as SolverSettings

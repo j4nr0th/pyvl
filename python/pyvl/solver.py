@@ -201,17 +201,19 @@ def run_solver(
         iteration_begin_time = perf_counter()
         for geo_name in geometry:
             info = geometry[geo_name]
-            new_rf = info.rf.at_time(time)
             positions = np.array(info.pos)
             velocities = np.zeros_like(positions)
-            rf: ReferenceFrame | None = new_rf
+            rf: ReferenceFrame | None = info.rf
             while rf is not None:
                 # Transform positions to parent
-                positions = rf.to_parent_with_offset(positions, positions)
+                positions = rf.to_parent_with_offset(positions, time=time)
                 # Add reference frame velocity
-                rf.add_velocity(positions, velocities)
+                rf_vel = rf.velocity_at(time)
+                rf_rot = rf.rotation_matrix_at(time)
+                np.matmul(rf_rot, velocities, out=velocities)
+                np.add(velocities, rf_vel, out=velocities)
                 # Transform velocity to the parent
-                velocities = rf.to_parent_without_offset(velocities, velocities)
+                velocities = rf.to_parent_without_offset(velocities, time=time)
                 # Move to the parent
                 rf = rf.parent
             # Update the properties in the global reference frame

@@ -367,7 +367,7 @@ class Geometry:
             reference frame.
         """
         n = self.msh.surface_normal(self.positions)
-        return self.reference_frame.from_parent_without_offset(n, n)
+        return self.reference_frame.from_parent_without_offset(n)
 
     @property
     def centers(self) -> npt.NDArray[np.float64]:
@@ -386,7 +386,7 @@ class Geometry:
             frame.
         """
         n = self.msh.surface_average_vec3(self.positions)
-        return self.reference_frame.from_parent_with_offset(n, n)
+        return self.reference_frame.from_parent_with_offset(n)
 
 
 @dataclass(frozen=True, eq=False)
@@ -565,8 +565,7 @@ class SimulationGeometry(Mapping):
         pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
-            new_rf = info.rf.at_time(float(t))
-            pos[info.points] = new_rf.to_global_with_offset(info.pos)
+            pos[info.points] = info.rf.to_global_with_offset(info.pos, time=float(t))
         return pos
 
     def velocity_at_time(self, t: float) -> npt.NDArray[np.float64]:
@@ -588,14 +587,19 @@ class SimulationGeometry(Mapping):
         vel = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
-            new_rf: ReferenceFrame | None = info.rf.at_time(float(t))
+            rf = info.rf
             pos = np.array(info.pos)
             v = np.zeros_like(vel[info.points])
-            while new_rf is not None:
-                new_rf.add_velocity(pos, v)
-                new_rf.to_parent_with_offset(pos, pos)
-                new_rf.to_parent_without_offset(v, v)
-                new_rf = new_rf.parent
+            while rf is not None:
+                rf_vel = rf.velocity_at(float(t))
+                v_local = np.broadcast_to(rf_vel, v.shape).copy()
+                v += rf.to_global_without_offset(v_local, time=float(t))
+                pos_local = rf.to_global_without_offset(pos, time=float(t))
+                rf_rot = rf.rotation_at(float(t))
+                if np.any(rf_rot != 0):
+                    v += np.cross(pos_local, np.broadcast_to(rf_rot, pos_local.shape))
+                pos = rf.to_parent_with_offset(pos, time=float(t))
+                rf = rf.parent
             del pos
             vel[info.points] = v
         return vel

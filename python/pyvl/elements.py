@@ -68,5 +68,7 @@ class ImplicitElements:
         # Update positions
         self.positions[point_indices] = new_positions
         # Update control points
-        self.control_points[element_indices] = self.geometry.mesh.surface_average_vec3()
+        self.control_points[element_indices] = self.geometry.mesh.surface_average_vec3(
+            self.positions
+        )
         ...

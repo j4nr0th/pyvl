@@ -6,7 +6,7 @@ from pathlib import Path
 import meshio as mio
 import numpy as np
 import pytest
-from pyvl import Geometry, ReferenceFrame, TranslatingReferenceFrame, mesh_from_mesh_io
+from pyvl import Geometry, ReferenceFrame, mesh_from_mesh_io
 from pyvl import fio as fio
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import (
@@ -30,8 +30,8 @@ def test_rf_serialization1() -> None:
 
     out = rf_to_serial(rf)
     rf1 = rf_from_serial(out)
-    assert all(rf.offset == rf1.offset)
-    assert all(rf.angles == rf1.angles)
+    assert all(rf.offset_at() == rf1.offset_at())
+    assert all(rf.angles_at() == rf1.angles_at())
     assert rf.parent == rf1.parent
 
 
@@ -42,54 +42,22 @@ def test_rf_serialization2() -> None:
     rf_1 = ReferenceFrame(
         np.random.random_sample(3),
         np.random.random_sample(3),
-        None,
     )
     rf_2 = ReferenceFrame(
         np.random.random_sample(3),
         np.random.random_sample(3),
-        rf_1,
+        parent=rf_1,
     )
 
     out = rf_to_serial(rf_2)
 
     rf_in = rf_from_serial(out)
-    assert all(rf_in.offset == rf_2.offset)
-    assert all(rf_in.angles == rf_2.angles)
+    assert all(rf_in.offset_at() == rf_2.offset_at())
+    assert all(rf_in.angles_at() == rf_2.angles_at())
     assert rf_in.parent is not None
     assert rf_2.parent is not None
-    assert all(rf_in.parent.offset == rf_2.parent.offset)
-    assert all(rf_in.parent.angles == rf_2.parent.angles)
-    assert rf_in.parent.parent == rf_2.parent.parent
-
-
-def test_rf_serialization3() -> None:
-    """Check if ReferenceFrame of different types."""
-    np.random.seed(0)
-
-    rf_1 = TranslatingReferenceFrame(
-        np.random.random_sample(3),
-        np.random.random_sample(3),
-        np.random.random_sample(3),
-        None,
-        np.random.random_sample(1)[0],
-    )
-    rf_2 = TranslatingReferenceFrame(
-        np.random.random_sample(3),
-        np.random.random_sample(3),
-        np.random.random_sample(3),
-        rf_1,
-        np.random.random_sample(1)[0],
-    )
-
-    out = rf_to_serial(rf_2)
-
-    rf_in = rf_from_serial(out)
-    assert all(rf_in.offset == rf_2.offset)
-    assert all(rf_in.angles == rf_2.angles)
-    assert rf_in.parent is not None
-    assert rf_2.parent is not None
-    assert all(rf_in.parent.offset == rf_2.parent.offset)
-    assert all(rf_in.parent.angles == rf_2.parent.angles)
+    assert all(rf_in.parent.offset_at() == rf_2.parent.offset_at())
+    assert all(rf_in.parent.angles_at() == rf_2.parent.angles_at())
     assert rf_in.parent.parent == rf_2.parent.parent
 
 
