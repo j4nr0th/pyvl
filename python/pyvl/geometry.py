@@ -18,7 +18,24 @@ from pyvl.fio.type_resolution import reference_frame_from_serial
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
-    """TODO."""
+    """Convert a meshio.Mesh object into position array and pyvl.Mesh.
+
+    This function extracts 2D cell blocks from the meshio mesh and converts them
+    into the pyvl Mesh format. Only cells with topological dimension 2 (surfaces)
+    are included; other cell types are ignored with a warning.
+
+    Parameters
+    ----------
+    m : meshio.Mesh
+        The meshio Mesh object to convert.
+
+    Returns
+    -------
+    tuple of (N, 3) ndarray, Mesh
+        A tuple containing:
+        - An array of point positions with shape (N, 3)
+        - A Mesh object with the connectivity information
+    """
     connections: list[npt.NDArray[np.unsignedinteger]] = []
     c: mio.CellBlock
     for c in m.cells:

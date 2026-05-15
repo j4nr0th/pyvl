@@ -128,5 +128,6 @@ which allow for these values to be computed.
     solver_settings
     wake_models
     output_settings
+    io
     solver
     postprocess
