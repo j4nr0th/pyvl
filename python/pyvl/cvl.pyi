@@ -872,30 +872,130 @@ class ReferenceFrame:
         """
         ...
 
-    # TODO: docstrings and implementation
     @classmethod
     def transform_position(
         cls,
-        start: ReferenceFrame | None,
-        end: ReferenceFrame | None,
         x: npt.ArrayLike,
+        start: ReferenceFrame | None = None,
+        end: ReferenceFrame | None = None,
+        time: float = 0.0,
         out: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]: ...
+    ) -> npt.NDArray[np.double]:
+        """Transform position vectors from one reference frame to another.
+
+        Parameters
+        ----------
+        x : array_like
+            Position vectors to transform.
+
+        start : ReferenceFrame, optional
+            Reference frame the position vectors are given in. If not given, the global
+            reference frame is assumed.
+
+        end : ReferenceFrame, optional
+            Reference frame the resulting vectors should be given in. If not given, the
+            global reference frame is assumed.
+
+        time : float, default: 0.0
+            What time the transformations should be taken at. Only relevant if the
+            reference frames have time-dependant motion.
+
+        out : array, optional
+            Output array to write the output to. If not given a new one is created.
+
+        Returns
+        -------
+        array
+            Array of position vectors. If ``out`` was given, then the reference to it
+            is returned.
+        """
+        ...
+
     @classmethod
     def transform_velocity(
         cls,
-        start: ReferenceFrame | None,
-        end: ReferenceFrame | None,
         position: npt.ArrayLike,
         velocity: npt.ArrayLike,
+        start: ReferenceFrame | None = None,
+        end: ReferenceFrame | None = None,
         out_position: npt.NDArray[np.double] | None = None,
         out_velocity: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]: ...
+    ) -> npt.NDArray[np.double]:
+        """Transform position and velocity vectors from one reference frame to another.
+
+        Parameters
+        ----------
+        position : array_like
+            Position vectors to transform.
+
+        velocity : array_like
+            Velocity vectors to transform.
+
+        start : ReferenceFrame, optional
+            Reference frame the position vectors are given in. If not given, the global
+            reference frame is assumed.
+
+        end : ReferenceFrame, optional
+            Reference frame the resulting vectors should be given in. If not given, the
+            global reference frame is assumed.
+
+        time : float, default: 0.0
+            What time the transformations should be taken at. Only relevant if the
+            reference frames have time-dependant motion.
+
+        out_position : array, optional
+            Output array to write the output positions to. If not given a new one is
+            created.
+
+        out_velocity : array, optional
+            Output array to write the output velocity to. If not given a new one is
+            created.
+
+        Returns
+        -------
+        array
+            Array of position vectors. If ``out_position`` was given, then the reference
+            to it is returned.
+
+        array
+            Array of velocity vectors. If ``out_velocity` was given, then the reference
+            to it is returned.
+        """
+        ...
+
     @classmethod
     def transform_vector(
         cls,
-        start: ReferenceFrame | None,
-        end: ReferenceFrame | None,
         x: npt.ArrayLike,
+        start: ReferenceFrame | None = None,
+        end: ReferenceFrame | None = None,
         out: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]: ...
+    ) -> npt.NDArray[np.double]:
+        """Transform vectors from one reference frame to another.
+
+        Parameters
+        ----------
+        x : array_like
+            Vectors to transform.
+
+        start : ReferenceFrame, optional
+            Reference frame the vectors are given in. If not given, the global
+            reference frame is assumed.
+
+        end : ReferenceFrame, optional
+            Reference frame the resulting vectors should be given in. If not given, the
+            global reference frame is assumed.
+
+        time : float, default: 0.0
+            What time the transformations should be taken at. Only relevant if the
+            reference frames have time-dependant motion.
+
+        out : array, optional
+            Output array to write the output to. If not given a new one is created.
+
+        Returns
+        -------
+        array
+            Array of vectors. If ``out`` was given, then the reference to it is returned.
+        """
+        ...

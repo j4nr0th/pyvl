@@ -604,8 +604,8 @@ static bool reference_frame_iterate_down_to_ancestor(const PyVL_ReferenceFrame *
  * @return False if "end" is not a descended of "start" or if the iteration function returns false.
  */
 static inline bool reference_frame_iterate_up_to_descendant(const PyVL_ReferenceFrame *const start,
-                                                     const PyVL_ReferenceFrame *const end,
-                                                     const rf_iter_callback_t callback)
+                                                            const PyVL_ReferenceFrame *const end,
+                                                            const rf_iter_callback_t callback)
 {
     const PyVL_ReferenceFrame *const parent = end->parent;
     if (parent != start)
@@ -767,7 +767,8 @@ static bool transform_vel_pos_parent(const PyVL_ReferenceFrame *this, void *para
  * @param r2 Second reference frame.
  * @return First common ancestor of the two reference frames. NULL means the global reference frame.
  */
-static inline const PyVL_ReferenceFrame *nearest_common_ancestor(const PyVL_ReferenceFrame *r1, const PyVL_ReferenceFrame *r2)
+static inline const PyVL_ReferenceFrame *nearest_common_ancestor(const PyVL_ReferenceFrame *r1,
+                                                                 const PyVL_ReferenceFrame *r2)
 {
     // If either has no parent or is NULL, then their common ancestor is global (NULL)
     if (!r1 || !r2 || !r1->parent || !r2->parent)
@@ -798,9 +799,9 @@ static inline const PyVL_ReferenceFrame *nearest_common_ancestor(const PyVL_Refe
  * @return On failure false.
  */
 static inline bool reference_frame_iterate_between_reference_frames(const PyVL_ReferenceFrame *start,
-                                                             const PyVL_ReferenceFrame *end,
-                                                             const rf_iter_callback_t callback_down,
-                                                             const rf_iter_callback_t callback_up)
+                                                                    const PyVL_ReferenceFrame *end,
+                                                                    const rf_iter_callback_t callback_down,
+                                                                    const rf_iter_callback_t callback_up)
 {
     // Get the common ancestor
     const PyVL_ReferenceFrame *const common = nearest_common_ancestor(start, end);
@@ -830,6 +831,78 @@ static inline PyArrayObject *pyvl_ensure_output_array_as_input(PyArrayObject *ou
         return NULL;
     Py_INCREF(out_array);
     return out_array;
+}
+
+static inline PyObject *reference_frame_process_transformation(const PyVL_ReferenceFrame *start,
+                                                               const PyVL_ReferenceFrame *end, const double t,
+                                                               PyObject *in_any, PyArrayObject *out_array,
+                                                               const rf_iter_func trans_func)
+{
+    PyArrayObject *const in_array =
+        (PyArrayObject *)PyArray_FROMANY(in_any, NPY_DOUBLE, 1, INT_MAX, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED);
+    if (!in_array)
+    {
+        return NULL;
+    }
+    const npy_intp dim_in = PyArray_NDIM(in_array);
+    const npy_intp *dims_in = PyArray_DIMS(in_array);
+    if (dims_in[dim_in - 1] != 3)
+    {
+        PyErr_Format(PyExc_ValueError,
+                     "Input array does not have the last axis with 3 dimensions "
+                     "(shape is (..., %u) instead of (..., 3)).",
+                     (unsigned)dims_in[dim_in - 1]);
+        Py_DECREF(in_array);
+        return NULL;
+    }
+    out_array = pyvl_ensure_output_array_as_input(out_array, in_array);
+    if (!out_array)
+    {
+        Py_DECREF(in_array);
+        return NULL;
+    }
+    PyObject *const time = PyFloat_FromDouble(t);
+    if (!time)
+    {
+        Py_DECREF(in_array);
+        Py_DECREF(out_array);
+        return NULL;
+    }
+
+    size_t n_entries = 1;
+    for (unsigned i = 0; i < dim_in - 1; i++)
+        n_entries *= dims_in[i];
+
+    const real3_t *const p_in = PyArray_DATA(in_array);
+    real3_t *const p_out = PyArray_DATA(out_array);
+    if (start == end)
+    {
+        Py_DECREF(time);
+        // Just copy
+        for (size_t i = 0; i < n_entries; ++i)
+        {
+            p_out[i] = p_in[i];
+        }
+        Py_DECREF(in_array);
+        return (PyObject *)out_array;
+    }
+
+    transformation_args_t args_down =
+        (transformation_args_t){.t = time, .n = n_entries, .in = p_in, .out = p_out, .inv = true};
+    transformation_args_t args_up = args_down;
+    args_up.inv = false;
+    const rf_iter_callback_t callback_backward = {.iter_func = trans_func, .param = &args_down};
+    const rf_iter_callback_t callback_forward = {.iter_func = trans_func, .param = &args_up};
+    const bool res = reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
+    Py_DECREF(in_array);
+    Py_DECREF(time);
+    if (!res)
+    {
+        Py_DECREF(out_array);
+        out_array = NULL;
+    }
+
+    return (PyObject *)out_array;
 }
 
 /**
@@ -868,99 +941,14 @@ static inline PyObject *reference_frame_transformation_method(const PyVL_Referen
             args, nargs, kwnames) < 0)
         return NULL;
 
-    PyArrayObject *const in_array =
-        (PyArrayObject *)PyArray_FROMANY(in_any, NPY_DOUBLE, 1, INT_MAX, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED);
-    if (!in_array)
-    {
-        return NULL;
-    }
-    const npy_intp dim_in = PyArray_NDIM(in_array);
-    const npy_intp *dims_in = PyArray_DIMS(in_array);
-    if (dims_in[dim_in - 1] != 3)
-    {
-        PyErr_Format(PyExc_ValueError,
-                     "Input array does not have the last axis with 3 dimensions "
-                     "(shape is (..., %u) instead of (..., 3)).",
-                     (unsigned)dims_in[dim_in - 1]);
-        Py_DECREF(in_array);
-        return NULL;
-    }
-    out_array = pyvl_ensure_output_array_as_input(out_array, in_array);
-    if (!out_array)
-    {
-        Py_DECREF(in_array);
-        return NULL;
-    }
-    PyObject *const time = PyFloat_FromDouble(t);
-    if (!time)
-    {
-        Py_DECREF(in_array);
-        Py_DECREF(out_array);
-        return NULL;
-    }
-
-    size_t n_entries = 1;
-    for (unsigned i = 0; i < dim_in - 1; i++)
-        n_entries *= dims_in[i];
-
-    transformation_args_t args_down = (transformation_args_t){
-        .t = time, .n = n_entries, .in = PyArray_DATA(in_array), .out = PyArray_DATA(out_array), .inv = true};
-    transformation_args_t args_up = args_down;
-    args_up.inv = false;
-    const rf_iter_callback_t callback_backward = {.iter_func = trans_func, .param = &args_down};
-    const rf_iter_callback_t callback_forward = {.iter_func = trans_func, .param = &args_up};
-    const bool res = reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
-    Py_DECREF(in_array);
-    Py_DECREF(time);
-    if (!res)
-    {
-        Py_DECREF(out_array);
-        out_array = NULL;
-    }
-
-    return (PyObject *)out_array;
+    return reference_frame_process_transformation(start, end, t, in_any, out_array, trans_func);
 }
 
-/**
- * Perform a transformation on a set of input vectors based between two reference frames.
- *
- * NOTE: Apparently having the ``inline`` keyword really does help convince GCC to inline this.
- *
- * @param start Initial reference frame where the quantities are initially.
- * @param end Final reference frame where the quantities are transferred to.
- * @param args Positional arguments passed to the method.
- * @param nargs The number of positional arguments.
- * @param kwnames Keyword names passed to the method; can be NULL.
- * @return A NumPy array containing the transformed vectors on success, or NULL on failure (with a Python exception
- * raised).
- */
-static inline PyObject *reference_frame_transformation_velocity(const PyVL_ReferenceFrame *start,
-                                                                const PyVL_ReferenceFrame *end, PyObject *const *args,
-                                                                const Py_ssize_t nargs, const PyObject *kwnames)
+static inline PyObject *reference_frame_process_velocity(const PyVL_ReferenceFrame *start,
+                                                         const PyVL_ReferenceFrame *end, const double t,
+                                                         PyObject *pos_any, PyObject *vel_any, PyArrayObject *out_pos,
+                                                         PyArrayObject *out_vel)
 {
-    PyObject *vel_any, *pos_any;
-    PyArrayObject *out_vel = NULL, *out_pos = NULL;
-    double t = 0.0;
-    if (parse_arguments_check(
-            (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&pos_any, .kwname = "position"},
-                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&vel_any, .kwname = "velocity"},
-                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t, .kwname = "time", .optional = true},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .p_val = (void *)&out_pos,
-                 .kwname = "out_position",
-                 .type_check = &PyArray_Type,
-                 .optional = true},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .p_val = (void *)&out_vel,
-                 .kwname = "out_velocity",
-                 .type_check = &PyArray_Type,
-                 .optional = true},
-                {0},
-            },
-            args, nargs, kwnames) < 0)
-        return NULL;
-
     PyArrayObject *const vel_array =
         (PyArrayObject *)PyArray_FROMANY(vel_any, NPY_DOUBLE, 1, INT_MAX, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED);
     if (!vel_array)
@@ -1019,26 +1007,49 @@ static inline PyObject *reference_frame_transformation_velocity(const PyVL_Refer
     for (unsigned i = 0; i < dim_in - 1; i++)
         n_entries *= dims_in[i];
 
-    transformation_vel_pos_args_t args_down = (transformation_vel_pos_args_t){.t = time,
-                                                                              .n = n_entries,
-                                                                              .in_vel = PyArray_DATA(vel_array),
-                                                                              .out_vel = PyArray_DATA(out_vel),
-                                                                              .in_pos = PyArray_DATA(pos_array),
-                                                                              .out_pos = PyArray_DATA(out_pos),
-                                                                              .inv = true};
-    transformation_vel_pos_args_t args_up = args_down;
-    args_up.inv = false;
-    const rf_iter_callback_t callback_backward = {.iter_func = transform_vel_pos_parent, .param = &args_down};
-    const rf_iter_callback_t callback_forward = {.iter_func = transform_vel_pos_parent, .param = &args_up};
-    const bool res = reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
-    Py_DECREF(vel_array);
-    Py_DECREF(pos_array);
-    Py_DECREF(time);
-    if (!res)
+    const real3_t *const in_vel = PyArray_DATA(vel_array);
+    const real3_t *const in_pos = PyArray_DATA(pos_array);
+    real3_t *const out_v = PyArray_DATA(out_vel);
+    real3_t *const out_p = PyArray_DATA(out_pos);
+
+    if (start == end)
     {
-        Py_DECREF(out_vel);
-        Py_DECREF(out_pos);
-        return NULL;
+        // Just copy
+        Py_DECREF(time);
+        for (size_t i = 0; i < n_entries; ++i)
+        {
+            out_p[i] = in_pos[i];
+            out_v[i] = in_vel[i];
+        }
+        Py_DECREF(vel_array);
+        Py_DECREF(pos_array);
+    }
+    else
+    {
+        transformation_vel_pos_args_t args_down = (transformation_vel_pos_args_t){
+            .t = time,
+            .n = n_entries,
+            .in_vel = in_vel,
+            .out_vel = out_v,
+            .in_pos = in_pos,
+            .out_pos = out_p,
+            .inv = true,
+        };
+        transformation_vel_pos_args_t args_up = args_down;
+        args_up.inv = false;
+        const rf_iter_callback_t callback_backward = {.iter_func = transform_vel_pos_parent, .param = &args_down};
+        const rf_iter_callback_t callback_forward = {.iter_func = transform_vel_pos_parent, .param = &args_up};
+        const bool res =
+            reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
+        Py_DECREF(vel_array);
+        Py_DECREF(pos_array);
+        Py_DECREF(time);
+        if (!res)
+        {
+            Py_DECREF(out_vel);
+            Py_DECREF(out_pos);
+            return NULL;
+        }
     }
 
     // Pack the output into a tuple and return
@@ -1054,6 +1065,49 @@ static inline PyObject *reference_frame_transformation_velocity(const PyVL_Refer
     Py_DECREF(out_pos);
     // Return the tuple
     return out;
+}
+
+/**
+ * Perform a transformation on a set of input vectors based between two reference frames.
+ *
+ * NOTE: Apparently having the ``inline`` keyword really does help convince GCC to inline this.
+ *
+ * @param start Initial reference frame where the quantities are initially.
+ * @param end Final reference frame where the quantities are transferred to.
+ * @param args Positional arguments passed to the method.
+ * @param nargs The number of positional arguments.
+ * @param kwnames Keyword names passed to the method; can be NULL.
+ * @return A NumPy array containing the transformed vectors on success, or NULL on failure (with a Python exception
+ * raised).
+ */
+static inline PyObject *reference_frame_transformation_velocity(const PyVL_ReferenceFrame *start,
+                                                                const PyVL_ReferenceFrame *end, PyObject *const *args,
+                                                                const Py_ssize_t nargs, const PyObject *kwnames)
+{
+    PyObject *vel_any, *pos_any;
+    PyArrayObject *out_vel = NULL, *out_pos = NULL;
+    double t = 0.0;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&pos_any, .kwname = "position"},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&vel_any, .kwname = "velocity"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t, .kwname = "time", .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&out_pos,
+                 .kwname = "out_position",
+                 .type_check = &PyArray_Type,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&out_vel,
+                 .kwname = "out_velocity",
+                 .type_check = &PyArray_Type,
+                 .optional = true},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    return reference_frame_process_velocity(start, end, t, pos_any, vel_any, out_pos, out_vel);
 }
 
 static PyObject *pyvl_reference_frame_from_parent_position(PyObject *self, PyTypeObject *defining_class,
@@ -1200,14 +1254,126 @@ static PyObject *pyvl_reference_frame_to_global_vector(PyObject *self, PyTypeObj
     return reference_frame_transformation_method(this, NULL, args, nargs, kwnames, transform_vector_parent);
 }
 
-static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
-                                               const Py_ssize_t nargs, const PyObject *kwnames)
+static PyObject *pyvl_reference_frame_transform_position(PyTypeObject *class, PyObject *const *args,
+                                                         const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = PyType_GetModuleState(defining_class);
+    const module_state_t *const state = get_module_state(class);
     if (!state)
         return NULL;
 
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
+    const PyVL_ReferenceFrame *src = NULL, *dst = NULL;
+    PyObject *in;
+    double t = 0.0;
+    PyArrayObject *out = NULL;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in, .kwname = "x"},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&src,
+                 .kwname = "src",
+                 .type_check = state->rf_type,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&dst,
+                 .kwname = "dst",
+                 .type_check = state->rf_type,
+                 .optional = true},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t, .kwname = "time", .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)out,
+                 .kwname = "out",
+                 .optional = true,
+                 .type_check = &PyArray_Type},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    return reference_frame_process_transformation(src, dst, t, in, out, transform_position_parent);
+}
+
+static PyObject *pyvl_reference_frame_transform_vector(PyTypeObject *class, PyObject *const *args,
+                                                       const Py_ssize_t nargs, const PyObject *kwnames)
+{
+    const module_state_t *const state = get_module_state(class);
+    if (!state)
+        return NULL;
+
+    const PyVL_ReferenceFrame *src = NULL, *dst = NULL;
+    PyObject *in;
+    double t = 0.0;
+    PyArrayObject *out = NULL;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in, .kwname = "x"},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&src,
+                 .kwname = "src",
+                 .type_check = state->rf_type,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&dst,
+                 .kwname = "dst",
+                 .type_check = state->rf_type,
+                 .optional = true},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t, .kwname = "time", .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)out,
+                 .kwname = "out",
+                 .optional = true,
+                 .type_check = &PyArray_Type},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    return reference_frame_process_transformation(src, dst, t, in, out, transform_vector_parent);
+}
+
+static PyObject *pyvl_reference_frame_transform_vel_pos(PyTypeObject *class, PyObject *const *args,
+                                                        const Py_ssize_t nargs, const PyObject *kwnames)
+{
+    const module_state_t *const state = get_module_state(class);
+    if (!state)
+        return NULL;
+
+    const PyVL_ReferenceFrame *src, *dst;
+    PyObject *in_pos, *in_vel;
+    double t = 0.0;
+    PyArrayObject *out_pos = NULL, *out_vel = NULL;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&src, .kwname = "src", .type_check = state->rf_type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&dst, .kwname = "dst", .type_check = state->rf_type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in_pos, .kwname = "position"},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&in_vel, .kwname = "velocity"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t, .kwname = "time", .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)out_pos,
+                 .kwname = "out_position",
+                 .optional = true,
+                 .type_check = &PyArray_Type},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)out_vel,
+                 .kwname = "out_velocity",
+                 .optional = true,
+                 .type_check = &PyArray_Type},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    return reference_frame_process_velocity(src, dst, t, in_pos, in_vel, out_pos, out_vel);
+}
+
+static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                               const Py_ssize_t nargs, const PyObject *kwnames)
+{
+    const PyVL_ReferenceFrame *this;
+    const module_state_t *state;
+    if (!ensure_rf_and_state(self, defining_class, &this, &state))
+        return NULL;
+
     if (this->orientation.type == PYVL_RF_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
@@ -1238,11 +1404,11 @@ static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyTypeObject *def
 static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                                const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = PyType_GetModuleState(defining_class);
-    if (!state)
+    const PyVL_ReferenceFrame *this;
+    const module_state_t *state;
+    if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     if (this->orientation.type == PYVL_RF_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
@@ -1273,11 +1439,11 @@ static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyTypeObject *def
 static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                                const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = PyType_GetModuleState(defining_class);
-    if (!state)
+    const PyVL_ReferenceFrame *this;
+    const module_state_t *state;
+    if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     if (this->orientation.type == PYVL_RF_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
@@ -1308,11 +1474,11 @@ static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyTypeObject *def
 static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                                   const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = PyType_GetModuleState(defining_class);
-    if (!state)
+    const PyVL_ReferenceFrame *this;
+    const module_state_t *state;
+    if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
     if (this->position.type == PYVL_RF_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot change offset of a ReferenceFrame with time-varying position.");
@@ -2143,6 +2309,125 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "Self\n"
                   "    Deserialized :class:`ReferenceFrame`.\n",
     },
+    //
+    {
+        .ml_name = "transform_position",
+        .ml_meth = (void *)pyvl_reference_frame_transform_position,
+        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "transform_position(x: array_like, src: ReferenceFrame | None = None, dst: ReferenceFrame | None = "
+                  "None, time: float = 0.0, out: "
+                  "out_array | None = None) -> out_array\n"
+                  "Transform a position vector from one reference frame to another.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : array_like\n"
+                  "    Position vectors to transform.\n"
+                  "\n"
+                  "start : ReferenceFrame, optional\n"
+                  "    Reference frame the position vectors are given in. If not given, the global\n"
+                  "    reference frame is assumed.\n"
+                  "\n"
+                  "end : ReferenceFrame, optional\n"
+                  "    Reference frame the resulting vectors should be given in. If not given, the\n"
+                  "    global reference frame is assumed.\n"
+                  "\n"
+                  "time : float, default: 0.0\n"
+                  "    What time the transformations should be taken at. Only relevant if the\n"
+                  "    reference frames have time-dependant motion.\n"
+                  "\n"
+                  "out : array, optional\n"
+                  "    Output array to write the output to. If not given a new one is created.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "array\n"
+                  "    Array of position vectors. If ``out`` was given, then the reference to it\n"
+                  "    is returned.\n",
+    },
+    {
+        .ml_name = "transform_velocity",
+        .ml_meth = (void *)pyvl_reference_frame_transform_vel_pos,
+        .ml_flags = METH_CLASS | METH_KEYWORDS | METH_FASTCALL,
+        .ml_doc = "transform_position(position: array_like, velocity: array_like, src: ReferenceFrame | None = None, "
+                  "dst: ReferenceFrame | None = None, time: float = 0.0, out_position: out_array | None = None, "
+                  "out_velocity: out_array | None = None) -> out_array\n"
+                  "Transform position and velocity vectors from one reference frame to another.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "position : array_like\n"
+                  "    Position vectors to transform.\n"
+                  "\n"
+                  "velocity : array_like\n"
+                  "    Velocity vectors to transform.\n"
+                  "\n"
+                  "start : ReferenceFrame, optional\n"
+                  "    Reference frame the position vectors are given in. If not given, the global\n"
+                  "    reference frame is assumed.\n"
+                  "\n"
+                  "end : ReferenceFrame, optional\n"
+                  "    Reference frame the resulting vectors should be given in. If not given, the\n"
+                  "    global reference frame is assumed.\n"
+                  "\n"
+                  "time : float, default: 0.0\n"
+                  "    What time the transformations should be taken at. Only relevant if the\n"
+                  "    reference frames have time-dependant motion.\n"
+                  "\n"
+                  "out_position : array, optional\n"
+                  "    Output array to write the output positions to. If not given a new one is\n"
+                  "    created.\n"
+                  "\n"
+                  "out_velocity : array, optional\n"
+                  "    Output array to write the output velocity to. If not given a new one is\n"
+                  "    created.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "array\n"
+                  "    Array of position vectors. If ``out_position`` was given, then the reference\n"
+                  "    to it is returned.\n"
+                  "\n"
+                  "array\n"
+                  "    Array of velocity vectors. If ``out_velocity` was given, then the reference\n"
+                  "    to it is returned.\n",
+    },
+    {
+        .ml_name = "transform_vectors",
+        .ml_meth = (void *)pyvl_reference_frame_transform_vector,
+        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "transform_vector(x: array_like, src: ReferenceFrame | None = None, dst: ReferenceFrame | None = "
+                  "None, time: float = 0.0, out: "
+                  "out_array | None = None) -> out_array\n"
+                  "Transform a vector vector from one reference frame to another.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "x : array_like\n"
+                  "    Vector vectors to transform.\n"
+                  "\n"
+                  "start : ReferenceFrame, optional\n"
+                  "    Reference frame the vector vectors are given in. If not given, the global\n"
+                  "    reference frame is assumed.\n"
+                  "\n"
+                  "end : ReferenceFrame, optional\n"
+                  "    Reference frame the resulting vectors should be given in. If not given, the\n"
+                  "    global reference frame is assumed.\n"
+                  "\n"
+                  "time : float, default: 0.0\n"
+                  "    What time the transformations should be taken at. Only relevant if the\n"
+                  "    reference frames have time-dependant motion.\n"
+                  "\n"
+                  "out : array, optional\n"
+                  "    Output array to write the output to. If not given a new one is created.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "array\n"
+                  "    Array of vector vectors. If ``out`` was given, then the reference to it\n"
+                  "    is returned.\n",
+    },
+    //
     {0},
 };
 
