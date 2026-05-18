@@ -203,19 +203,10 @@ def run_solver(
             info = geometry[geo_name]
             positions = np.array(info.pos)
             velocities = np.zeros_like(positions)
-            rf: ReferenceFrame | None = info.rf
-            while rf is not None:
-                # Transform positions to parent
-                positions = rf.to_parent_with_offset(positions, time=time)
-                # Add reference frame velocity
-                rf_vel = rf.velocity_at(time)
-                rf_rot = rf.rotation_matrix_at(time)
-                np.matmul(rf_rot, velocities, out=velocities)
-                np.add(velocities, rf_vel, out=velocities)
-                # Transform velocity to the parent
-                velocities = rf.to_parent_without_offset(velocities, time=time)
-                # Move to the parent
-                rf = rf.parent
+            info.rf
+            positions, velocities = info.rf.to_global_velocity(
+                positions, velocities, time=time
+            )
             # Update the properties in the global reference frame
             state.positions[info.points] = positions
             state.control_points[info.surfaces] = info.msh.surface_average_vec3(positions)

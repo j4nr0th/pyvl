@@ -279,7 +279,7 @@ class Geometry:
         pyvista.PolyData
             PolyData, which represents the geometry.
         """
-        positions = self.reference_frame.from_parent_with_offset(self.positions)
+        positions = self.reference_frame.from_parent_position(self.positions)
         faces = mesh_to_polydata_faces(self.msh)
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
@@ -367,7 +367,7 @@ class Geometry:
             reference frame.
         """
         n = self.msh.surface_normal(self.positions)
-        return self.reference_frame.from_parent_without_offset(n)
+        return self.reference_frame.from_parent_vector(n, out=n)
 
     @property
     def centers(self) -> npt.NDArray[np.float64]:
@@ -386,7 +386,7 @@ class Geometry:
             frame.
         """
         n = self.msh.surface_average_vec3(self.positions)
-        return self.reference_frame.from_parent_with_offset(n)
+        return self.reference_frame.from_parent_vector(n, out=n)
 
 
 @dataclass(frozen=True, eq=False)
@@ -565,7 +565,7 @@ class SimulationGeometry(Mapping):
         pos = np.empty((self.n_points, 3), np.float64)
         for geo_name in self._info:
             info = self._info[geo_name]
-            pos[info.points] = info.rf.to_global_with_offset(info.pos, time=float(t))
+            pos[info.points] = info.rf.to_global_position(info.pos, time=t)
         return pos
 
     def velocity_at_time(self, t: float) -> npt.NDArray[np.float64]:
@@ -590,18 +590,8 @@ class SimulationGeometry(Mapping):
             rf = info.rf
             pos = np.array(info.pos)
             v = np.zeros_like(vel[info.points])
-            while rf is not None:
-                rf_vel = rf.velocity_at(float(t))
-                v_local = np.broadcast_to(rf_vel, v.shape).copy()
-                v += rf.to_global_without_offset(v_local, time=float(t))
-                pos_local = rf.to_global_without_offset(pos, time=float(t))
-                rf_rot = rf.rotation_at(float(t))
-                if np.any(rf_rot != 0):
-                    v += np.cross(pos_local, np.broadcast_to(rf_rot, pos_local.shape))
-                pos = rf.to_parent_with_offset(pos, time=float(t))
-                rf = rf.parent
-            del pos
-            vel[info.points] = v
+            _, vel[info.points] = rf.to_global_velocity(pos, v)
+
         return vel
 
     def polydata_at_time(self, t: float) -> pv.PolyData:
@@ -709,8 +699,8 @@ class SimulationGeometry(Mapping):
         bordering_nodes = np.empty((len(lines), 2), np.uint)
         adjacent_surfaces = np.empty((len(lines), 2), np.uint)
         for i, line_id in enumerate(lines):
-            primal_line = self.mesh.get_line(int(line_id))
-            dual_line = self.dual.get_line(int(line_id))
+            primal_line = self.mesh.get_line(line_id)
+            dual_line = self.dual.get_line(line_id)
             bordering_nodes[i, :] = (primal_line.begin, primal_line.end)
             adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
         return (bordering_nodes, adjacent_surfaces)
@@ -747,7 +737,7 @@ class SimulationGeometry(Mapping):
         geometries: list[Geometry] = []
         for geo_name in group:
             sub_group = group.get_hirearchical_map(geo_name)
-            geo = Geometry.load(str(geo_name), sub_group)
+            geo = Geometry.load(geo_name, sub_group)
             geometries.append(geo)
         return cls(*geometries)
 

@@ -131,46 +131,46 @@ class Mesh:
         ...
 
     def surface_normal(
-        self, positions: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
-    ) -> npt.NDArray[np.float64]:
+        self, positions: npt.ArrayLike, out: npt.NDArray[np.double] | None = None, /
+    ) -> npt.NDArray[np.double]:
         """Compute normals to surfaces based on point positions."""
         ...
 
     def surface_average_vec3(
-        self, vectors: npt.ArrayLike, out: npt.NDArray[np.float64] | None = None, /
-    ) -> npt.NDArray[np.float64]:
+        self, vectors: npt.ArrayLike, out: npt.NDArray[np.double] | None = None, /
+    ) -> npt.NDArray[np.double]:
         """Compute average vec3 for each surface based on point values."""
         ...
 
     def induction_matrix(
         self,
         tol: float,
-        positions: npt.NDArray[np.float64],
-        control_points: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
-        line_buffer: npt.NDArray[np.float64] | None = None,
+        positions: npt.NDArray[np.double],
+        control_points: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
+        line_buffer: npt.NDArray[np.double] | None = None,
         thread_count: int = 1,
-    ) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.double]:
         """Compute an induction matrix for the mesh."""
         ...
 
     def induction_matrix3(
         self,
         tol: float,
-        positions: npt.NDArray[np.float64],
-        control_points: npt.NDArray[np.float64],
-        normals: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
-        line_buffer: npt.NDArray[np.float64] | None = None,
+        positions: npt.NDArray[np.double],
+        control_points: npt.NDArray[np.double],
+        normals: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
+        line_buffer: npt.NDArray[np.double] | None = None,
         thread_count: int = 1,
-    ) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.double]:
         """Compute an induction matrix with normals included."""
         ...
 
     def line_velocities_from_point_velocities(
         self,
-        point_velocities: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64],
+        point_velocities: npt.NDArray[np.double],
+        out: npt.NDArray[np.double],
     ) -> None:
         """Compute line velocities by averaging velocities at its end nodes."""
         ...
@@ -182,15 +182,15 @@ class Mesh:
 
     def line_gradient(
         self,
-        point_array: npt.NDArray[np.float64],
-        line_array: npt.NDArray[np.float64] | None = None,
+        point_array: npt.NDArray[np.double],
+        line_array: npt.NDArray[np.double] | None = None,
         /,
-    ) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.double]:
         """Compute line gradient from point values."""
         ...
 
     def dual_normal_criterion(
-        self, crit: float, normals: npt.NDArray[np.float64], /
+        self, crit: float, normals: npt.NDArray[np.double], /
     ) -> npt.NDArray[np.uint]:
         """Find edges satisfying neighbouring normal dot product criterion."""
         ...
@@ -207,11 +207,11 @@ class Mesh:
     def line_induction_matrix(
         self,
         tol: float,
-        positions: npt.NDArray[np.float64],
-        control_points: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
+        positions: npt.NDArray[np.double],
+        control_points: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
         thread_count: int = 1,
-    ) -> npt.NDArray[np.float64]:
+    ) -> npt.NDArray[np.double]:
         """Compute an induction matrix for the mesh based on line circulations."""
         ...
 
@@ -219,11 +219,11 @@ class Mesh:
     def line_forces(
         primal: Mesh,
         dual: Mesh,
-        circulation: npt.NDArray[np.float64],
-        positions: npt.NDArray[np.float64],
-        freestream: npt.NDArray[np.float64],
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        circulation: npt.NDArray[np.double],
+        positions: npt.NDArray[np.double],
+        freestream: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Compute forces due to reduced circulation filaments.
 
         Parameters
@@ -325,7 +325,7 @@ class ReferenceFrame:
         """Tuple of all parents of this reference frame."""
         ...
 
-    def offset_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def offset_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the position of the reference frame at the given time.
 
         Parameters
@@ -340,7 +340,7 @@ class ReferenceFrame:
         """
         ...
 
-    def velocity_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def velocity_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the linear velocity of the reference frame at the given time.
 
         Parameters
@@ -355,7 +355,7 @@ class ReferenceFrame:
         """
         ...
 
-    def angles_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def angles_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the orientation (Euler angles) of the reference frame at the given time.
 
         Parameters
@@ -370,7 +370,7 @@ class ReferenceFrame:
         """
         ...
 
-    def rotation_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def rotation_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the angular velocity at the given time.
 
         Parameters
@@ -385,7 +385,7 @@ class ReferenceFrame:
         """
         ...
 
-    def rotation_matrix_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def rotation_matrix_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the rotation matrix of the reference frame at the given time.
 
         Parameters
@@ -400,7 +400,7 @@ class ReferenceFrame:
         """
         ...
 
-    def rotation_matrix_inverse_at(self, t: float = 0.0, /) -> npt.NDArray[np.float64]:
+    def rotation_matrix_inverse_at(self, t: float = 0.0, /) -> npt.NDArray[np.double]:
         """Get the inverse rotation matrix of the reference frame at the given time.
 
         Parameters
@@ -415,13 +415,12 @@ class ReferenceFrame:
         """
         ...
 
-    def from_parent_with_offset(
+    def from_parent_position(
         self,
-        r: npt.ArrayLike,
-        /,
+        x: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map position vector from parent reference frame to the child reference frame.
 
         Parameters
@@ -444,13 +443,41 @@ class ReferenceFrame:
         """
         ...
 
-    def from_parent_without_offset(
+    def from_parent_velocity(
         self,
-        r: npt.ArrayLike,
-        /,
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
+        r"""Map position vector from parent reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in parent reference frame.
+        time : float, default: 0.0
+            Time at which to evaluate the transformation.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the child reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated.
+        """
+        ...
+
+    def from_parent_vector(
+        self,
+        x: npt.ArrayLike,
+        time: float = 0.0,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map direction vector from parent reference frame to the child reference frame.
 
         Parameters
@@ -473,13 +500,12 @@ class ReferenceFrame:
         """
         ...
 
-    def to_parent_with_offset(
+    def to_parent_position(
         self,
-        r: npt.ArrayLike,
-        /,
+        x: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map position vector from child reference frame to the parent reference frame.
 
         Parameters
@@ -502,13 +528,41 @@ class ReferenceFrame:
         """
         ...
 
-    def to_parent_without_offset(
+    def to_parent_velocity(
         self,
-        r: npt.ArrayLike,
-        /,
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
+        r"""Map position vector from child reference frame to the parent reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        time : float, default: 0.0
+            Time at which to evaluate the transformation.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the parent reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If
+            ``out`` was not specified, then a new array will be allocated.
+        """
+        ...
+
+    def to_parent_vector(
+        self,
+        x: npt.ArrayLike,
+        time: float = 0.0,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map direction vector from child reference frame to the parent reference frame.
 
         Parameters
@@ -531,13 +585,12 @@ class ReferenceFrame:
         """
         ...
 
-    def from_global_with_offset(
+    def from_global_position(
         self,
-        r: npt.ArrayLike,
-        /,
+        x: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map position vector from global reference frame to the child reference frame.
 
         Parameters
@@ -560,13 +613,14 @@ class ReferenceFrame:
         """
         ...
 
-    def from_global_without_offset(
+    def from_global_velocity(
         self,
-        r: npt.ArrayLike,
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
         /,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
         r"""Map direction vector from global reference frame to the child reference frame.
 
         Parameters
@@ -589,13 +643,40 @@ class ReferenceFrame:
         """
         ...
 
-    def to_global_with_offset(
+    def from_global_vector(
         self,
-        r: npt.ArrayLike,
-        /,
+        x: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        r"""Map direction vector from global reference frame to the child reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in global reference frame.
+        time : float, default: 0.0
+            Time at which to evaluate the transformation.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Direction vectors mapped to the child reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated.
+        """
+        ...
+
+    def to_global_position(
+        self,
+        x: npt.ArrayLike,
+        time: float = 0.0,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map position vector from child reference frame to the global reference frame.
 
         Parameters
@@ -618,13 +699,42 @@ class ReferenceFrame:
         """
         ...
 
-    def to_global_without_offset(
+    def to_global_velocity(
         self,
-        r: npt.ArrayLike,
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
         /,
         time: float = 0.0,
-        out: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        out: npt.NDArray[np.double] | None = None,
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
+        r"""Map position vector from child reference frame to the global reference frame.
+
+        Parameters
+        ----------
+        x : (N, 3) array
+            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        time : float, default: 0.0
+            Time at which to evaluate the transformation.
+        out : (N, 3) array, optional
+            Array which receives the mapped vectors. Must have the exact shape of ``x``.
+            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
+            aligned, C-contiguous, and writable.
+
+        Returns
+        -------
+        (N, 3) array
+            Position vectors mapped to the global reference frame. If the ``out``
+            parameter was specified, this return value will be the same object. If ``out``
+            was not specified, then a new array will be allocated.
+        """
+        ...
+
+    def to_global_vector(
+        self,
+        x: npt.ArrayLike,
+        time: float = 0.0,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         r"""Map direction vector from child reference frame to the global reference frame.
 
         Parameters
@@ -761,3 +871,31 @@ class ReferenceFrame:
             Deserialized :class:`ReferenceFrame`.
         """
         ...
+
+    # TODO: docstrings and implementation
+    @classmethod
+    def transform_position(
+        cls,
+        start: ReferenceFrame | None,
+        end: ReferenceFrame | None,
+        x: npt.ArrayLike,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]: ...
+    @classmethod
+    def transform_velocity(
+        cls,
+        start: ReferenceFrame | None,
+        end: ReferenceFrame | None,
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
+        out_position: npt.NDArray[np.double] | None = None,
+        out_velocity: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]: ...
+    @classmethod
+    def transform_vector(
+        cls,
+        start: ReferenceFrame | None,
+        end: ReferenceFrame | None,
+        x: npt.ArrayLike,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]: ...

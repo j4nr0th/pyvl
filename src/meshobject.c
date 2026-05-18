@@ -865,7 +865,7 @@ static PyObject *pyvl_mesh_line_gradient(PyObject *self, PyTypeObject *defining_
     else
     {
         const npy_intp nl = this->mesh.n_lines;
-        line_values = (PyArrayObject *)PyArray_SimpleNew(1, &nl, NPY_FLOAT64);
+        line_values = (PyArrayObject *)PyArray_SimpleNew(1, &nl, NPY_DOUBLE);
         if (!line_values)
             return NULL;
     }
@@ -942,7 +942,7 @@ static bool ensure_mesh_for_surface_position_calculations(PyObject *self, PyType
     }
     else
     {
-        out = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_FLOAT64);
+        out = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_DOUBLE);
         if (!out)
         {
             Py_DECREF(in_array);
@@ -1230,7 +1230,7 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyTypeObject *d
     }
     else
     {
-        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_FLOAT64);
+        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_DOUBLE);
         if (!out_array)
             return NULL;
     }
@@ -1315,7 +1315,7 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
     }
     else
     {
-        out = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_FLOAT64);
+        out = (PyArrayObject *)PyArray_SimpleNew(2, out_dims, NPY_DOUBLE);
         if (!out)
         {
             return NULL;

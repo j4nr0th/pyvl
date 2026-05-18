@@ -145,6 +145,12 @@ static inline real3_t real3x3_vecmul(const real3x3_t a, const real3_t b)
         .v2 = real3_dot(a.row2, b),
     };
 }
+
+static inline real3_t real3x3_vecmul_transpose(const real3x3_t a, const real3_t b)
+{
+    return real3_add(real3_mul1(a.row0, b.v0), real3_add(real3_mul1(a.row1, b.v1), real3_mul1(a.row2, b.v2)));
+}
+
 static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
 {
     const real3_t col_b0 = {{b.m00, b.m10, b.m20}};
@@ -164,6 +170,12 @@ static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
 }
 static inline real3x3_t real3x3_from_angles(const real3_t angles)
 {
+    if (angles.x == 0 && angles.y == 0 && angles.z == 0)
+    {
+        // Quick path for identity matrix
+        return (real3x3_t){.m00 = 1, .m11 = 1, .m22 = 1};
+    }
+
     const real_t cx = cos(angles.x);
     const real_t sx = sin(angles.x);
     const real_t cy = cos(angles.y);
@@ -215,6 +227,11 @@ static inline real_t clamp_angle_to_range(const real_t a)
     if (rem < 0)
         return 2 * M_PI + rem;
     return rem;
+}
+
+static inline bool real3_all_zero(const real3_t a)
+{
+    return (a.x == 0 && a.y == 0 && a.z == 0) != 0;
 }
 
 static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)

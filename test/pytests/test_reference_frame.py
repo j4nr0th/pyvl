@@ -17,17 +17,18 @@ def test_creation_and_getset():
         offset=(offset_x, offset_y, offset_z),
         theta=(theta_x, theta_y, theta_z),
     )
+    assert all(rf_0.offset_at() == (offset_x, offset_y, offset_z))
+
+    # We do angles this way because we can clip them to [0, 2pi] range.
     angles = rf_0.angles_at()
-    offset_result = rf_0.offset_at()
     assert np.sin(angles) == pytest.approx(np.sin([theta_x, theta_y, theta_z]))
     assert np.cos(angles) == pytest.approx(np.cos([theta_x, theta_y, theta_z]))
-    assert all(offset_result == (offset_x, offset_y, offset_z))
 
 
 def test_parents():
     """Test that parent-related functions work."""
-    np.random.seed(0)
-    rf_0 = ReferenceFrame(np.random.random_sample(3), np.random.random_sample(3))
+    rng = np.random.default_rng(0)
+    rf_0 = ReferenceFrame(rng.random(3), rng.random(3), rng.random(3), rng.random(3))
     rf_1 = ReferenceFrame((102, 4.20, 1.4), (31.2, 33.0, -2), parent=rf_0)
     rf_2 = ReferenceFrame((-102, -4.20, 1.4), (-31.2, 33.0, 2), parent=rf_1)
 
@@ -37,7 +38,8 @@ def test_parents():
 
 def test_rotate_by_and_offset():
     """Test that rotation and offset changes work."""
-    rf_0 = ReferenceFrame(np.random.random_sample(3), np.random.random_sample(3))
+    rng = np.random.default_rng(14)
+    rf_0 = ReferenceFrame(rng.random(3), rng.random(3))
     rf_1 = ReferenceFrame((31.2, 33.0, -2), (0, 0, 0), parent=rf_0)
     rf_2 = rf_1.rotate_x(2.1)
     rf_3 = rf_1.rotate_y(1.1)
@@ -76,9 +78,9 @@ def test_rotate_by_and_offset():
 
 def test_rotation_is_orthonormal():
     """Check that for all angles the rotation is orthonormal."""
-    np.random.seed(0)
+    rng = np.random.default_rng(0)
     for _ in range(100):
-        rf = ReferenceFrame(theta=np.random.random_sample(3))
+        rf = ReferenceFrame(theta=rng.random(3))
         rot_mat = rf.rotation_matrix_at()
         # Must be orthonormal
         assert pytest.approx(rot_mat @ rot_mat.T) == np.eye(3)
@@ -86,26 +88,33 @@ def test_rotation_is_orthonormal():
 
 def test_transformations_are_inverse():
     """Check that transformations of reference frames are inverse."""
-    np.random.seed(592)
+    rng = np.random.default_rng(592)
     for _ in range(10):
-        rf = ReferenceFrame(np.random.random_sample(3), np.random.random_sample(3))
-        x = np.random.random_sample((12, 51, 2, 3))
-        assert pytest.approx(x) == rf.to_parent_with_offset(rf.from_parent_with_offset(x))
-        assert pytest.approx(x) == rf.to_parent_without_offset(
-            rf.from_parent_without_offset(x)
+        rf = ReferenceFrame(
+            rng.random(3),
+            rng.random(3),
+            rng.random(3),
+            rng.random(3),
         )
+        x = rng.random((12, 51, 2, 3))
+        v = rng.random((12, 51, 2, 3))
+        x1, v1 = rf.to_parent_velocity(*rf.from_parent_velocity(x, v))
+        assert x1 == pytest.approx(x)
+        assert v1 == pytest.approx(v)
+        assert pytest.approx(x) == rf.to_parent_position(rf.from_parent_position(x))
+        assert pytest.approx(x) == rf.to_parent_vector(rf.from_parent_vector(x))
 
 
 def test_transformation_output():
     """Check that transformation function with out argument behave properly."""
-    np.random.seed(124590)
-    rf = ReferenceFrame(np.random.random_sample(3), np.random.random_sample(3))
+    rng = np.random.default_rng(124590)
+    rf = ReferenceFrame(rng.random(3), rng.random(3))
     real_shape_in = (3, 1, 4, 10, 3)
-    x_in = np.random.random_sample(real_shape_in)
+    x_in = rng.random(real_shape_in)
     # Passing some random object won't work as second positional arg (time)
     caught = False
     try:
-        _ = rf.to_parent_with_offset(x_in, "SOME random object")
+        _ = rf.to_parent_position(x_in, "SOME random object")
     except TypeError:
         caught = True
     assert caught
@@ -115,7 +124,7 @@ def test_transformation_output():
     # Passing array-like also won't work
     caught = False
     try:
-        _ = rf.to_parent_with_offset(x_in, [0, 1, [0, 2, 3]])
+        _ = rf.to_parent_position(x_in, out=[0, 1, [0, 2, 3]])
     except TypeError:
         caught = True
     assert caught
@@ -123,7 +132,7 @@ def test_transformation_output():
     # Passing array of wrong shape as out
     caught = False
     try:
-        _ = rf.to_parent_with_offset(x_in, out=np.array([[0, 2, 3]]))
+        _ = rf.to_parent_position(x_in, out=np.array([[0, 2, 3]]))
     except ValueError:
         caught = True
     assert caught
@@ -132,7 +141,7 @@ def test_transformation_output():
     caught = False
     try:
         x_out = np.empty_like(x_in, dtype=np.float32)
-        _ = rf.to_parent_with_offset(x_in, out=x_out)
+        _ = rf.to_parent_position(x_in, out=x_out)
     except ValueError:
         caught = True
     assert caught
@@ -141,21 +150,21 @@ def test_transformation_output():
     caught = False
     try:
         x_out = np.empty(real_shape_in + (4,), dtype=np.float64)
-        _ = rf.to_parent_with_offset(x_in, out=(x_out[..., 2]).reshape(real_shape_in))
+        _ = rf.to_parent_position(x_in, out=(x_out[..., 2]).reshape(real_shape_in))
     except ValueError:
         caught = True
     assert caught
 
     # Reference to the array should still be returned
     x_out = np.empty_like(x_in)
-    res_out = rf.to_parent_with_offset(x_in, out=x_out)
+    res_out = rf.to_parent_position(x_in, out=x_out)
     assert res_out is x_out
 
     # Result must be identical when no output array is given
-    assert np.all(res_out == rf.to_parent_with_offset(x_in))
+    assert np.all(res_out == rf.to_parent_position(x_in))
 
     # Must be possible to call inplace
-    rf.to_parent_with_offset(x_in, out=x_in)
+    rf.to_parent_position(x_in, out=x_in)
     assert np.all(res_out == x_in)
 
 
@@ -163,22 +172,22 @@ def test_simple_transformations():
     """Manually check some basic transformations."""
     eye = np.eye(3)
     rf1 = ReferenceFrame(offset=(0, 1.0, 0), theta=(np.pi / 2, 0, 0))
-    eye2 = rf1.from_parent_with_offset(eye)
+    eye2 = rf1.from_parent_position(eye)
     assert pytest.approx(eye2) == [[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [0.0, 0.0, 0.0]]
-    eye2 = rf1.from_parent_without_offset(eye)
+    eye2 = rf1.from_parent_vector(eye)
     assert pytest.approx(eye2) == [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]
     rf1 = ReferenceFrame(theta=(0.0, 0, np.pi / 2))
     out = np.empty_like(eye)
-    eye2 = rf1.from_parent_with_offset(eye, out=out)
+    eye2 = rf1.from_parent_position(eye, out=out)
     assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-    eye2 = rf1.from_parent_without_offset(eye, out=out)
+    eye2 = rf1.from_parent_vector(eye, out=out)
     assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
 
 
 def test_angles_from_rotation():
     """Check that the static method angles_from_rotation recovers the angles."""
-    np.random.seed(0)
-    rf = ReferenceFrame(theta=np.random.random_sample(3))
+    rng = np.random.default_rng(0)
+    rf = ReferenceFrame(theta=rng.random(3))
 
     rot_mat = rf.rotation_matrix_at()
     recovered = ReferenceFrame.angles_from_rotation(rot_mat)
@@ -224,9 +233,9 @@ def test_time_parameter_in_transformations():
     x = np.array([1.0, 2.0, 3.0])
 
     # At t=0, offset is 0, so from_parent_with_offset(x, time=0) = x
-    result_t0 = rf.from_parent_with_offset(x, time=0.0)
+    result_t0 = rf.from_parent_position(x, time=0.0)
     assert result_t0 == pytest.approx([1, 2, 3])
 
     # At t=1, offset is (1, 0, 0), so from_parent_with_offset(x, time=1) = x + (1, 0, 0)
-    result_t1 = rf.from_parent_with_offset(x, time=1.0)
+    result_t1 = rf.from_parent_position(x, time=1.0)
     assert result_t1 == pytest.approx([2, 2, 3])
