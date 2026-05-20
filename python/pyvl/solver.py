@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
-from pyvl.cvl import ReferenceFrame
-from pyvl.fio.io_common import HirearchicalMap, SerializationFunction
+from pyvl._typing import CallableDeserializer, CallableSerializer
+from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationFunction
 from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
 from pyvl.fio.type_resolution import wake_model_from_serial
@@ -69,7 +69,7 @@ class SolverState:
         self.settings = settings
         self.wake_model = wake_model
 
-    def save(self) -> HirearchicalMap:
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize current state to a HirearchicalMap."""
         out = HirearchicalMap()
         out.insert_array("positions", self.positions)
@@ -79,7 +79,7 @@ class SolverState:
         out.insert_array("circulation", self.circulation)
         out.insert_int("iteration", self.iteration)
         out.insert_hirearchycal_map("solver_settings", self.settings.save())
-        out.insert_hirearchycal_map("simulation_geometry", self.geometry.save())
+        out.insert_hirearchycal_map("simulation_geometry", self.geometry.save(serializer))
         if self.wake_model is not None:
             wake_model = HirearchicalMap()
             wake_model.insert_string(
@@ -94,6 +94,7 @@ class SolverState:
     def load(
         cls,
         hmap: HirearchicalMap,
+        deserializer: CallableDeserializer,
         custom_types: Mapping[str, type] | None = None,
         allow_override: bool = False,
     ) -> Self:
@@ -110,7 +111,7 @@ class SolverState:
             If True, custom types can override built-in types.
         """
         geometry = SimulationGeometry.load(
-            hmap.get_hirearchical_map("simulation_geometry")
+            hmap.get_hirearchical_map("simulation_geometry"), deserializer
         )
         settings = SolverSettings.load(
             hmap.get_hirearchical_map("solver_settings"), custom_types, allow_override
@@ -148,9 +149,13 @@ class OutputSettings:
 
     naming_callback: Callable[[int, float], str | Path]
     serialization_fn: SerializationFunction
+    callable_serializer: CallableSerializer
+    callable_deserializer: CallableDeserializer
 
     def __init__(
-        self, ftype: OutputFileType, naming_callback: Callable[[int, float], str | Path]
+        self,
+        ftype: OutputFileType,
+        naming_callback: Callable[[int, float], str | Path],
     ) -> None:
         serialization_fn: SerializationFunction
         match ftype:
@@ -162,6 +167,11 @@ class OutputSettings:
                 raise ValueError(f"The file type {ftype=} is not valid.")
         object.__setattr__(self, "serialization_fn", serialization_fn)
         object.__setattr__(self, "naming_callback", naming_callback)
+        callable_serialization = PythonSerializer()
+        object.__setattr__(self, "callable_serializer", callable_serialization.serialize)
+        object.__setattr__(
+            self, "callable_deserializer", callable_serialization.deserialize
+        )
 
 
 def run_solver(
@@ -273,7 +283,8 @@ def run_solver(
 
             if output_settings is not None:
                 output_settings.serialization_fn(
-                    state.save(), output_settings.naming_callback(iteration, time)
+                    state.save(output_settings.callable_serializer),
+                    output_settings.naming_callback(iteration, time),
                 )
             i_out += 1
         print(

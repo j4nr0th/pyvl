@@ -9,7 +9,7 @@ from typing import Self, final
 import numpy as np
 from numpy import typing as npt
 
-from pyvl._typing import VecLike3
+from pyvl._typing import CallableDeserializer, CallableSerializer, VecLike3
 from pyvl.fio.io_common import HirearchicalMap
 
 INVALID_ID: int = ...
@@ -843,18 +843,26 @@ class ReferenceFrame:
         """
         ...
 
-    def save(self, hmap: HirearchicalMap, /) -> None:
+    def save(self, hmap: HirearchicalMap, serializer: CallableSerializer) -> None:
         """Serialize the ReferenceFrame into a HirearchicalMap.
 
         Parameters
         ----------
         hmap: HirearchicalMap
             :class:`HirearchicalMap` in which to save the reference frame into.
+
+        serializer: CallableSerializer
+            Callable that is used to convert input callables into strings.
         """
         ...
 
     @classmethod
-    def load(cls, group: HirearchicalMap, parent: ReferenceFrame | None = None) -> Self:
+    def load(
+        cls,
+        group: HirearchicalMap,
+        deserializer: CallableDeserializer,
+        parent: ReferenceFrame | None = None,
+    ) -> Self:
         """Load the ReferenceFrame from a HirearchicalMap.
 
         Parameters
@@ -862,6 +870,10 @@ class ReferenceFrame:
         hmap : HirearchicalMap
             A :class:`HirearchicalMap`, which was created with a call to
             :meth:`ReferenceFrame.save`.
+
+        deserializer: CallableDeserializer
+            Callable that is used to convert strings into callables.
+
         parent : ReferenceFrame, optional
             Parent of the reference frame.
 

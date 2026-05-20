@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from pyvl._typing import CallableDeserializer
 from pyvl.fio.io_common import HirearchicalMap
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 
 def reference_frame_from_serial(
     group: HirearchicalMap,
+    deserializer: CallableDeserializer,
     custom_types: Mapping[str, type] | None = None,
     allow_override: bool = False,
 ) -> ReferenceFrame:
@@ -49,35 +51,18 @@ def reference_frame_from_serial(
     """
     from pyvl.cvl import ReferenceFrame
 
-    type_name = group.get_string("type")
-    data = group.get_hirearchical_map("data")
     parent = None
     if "parent" in group:
         parent_group = group.get_hirearchical_map("parent")
-        parent = reference_frame_from_serial(parent_group, custom_types, allow_override)
+        parent = reference_frame_from_serial(
+            parent_group, deserializer, custom_types, allow_override
+        )
 
-    match type_name:
-        case _ if custom_types is not None and type_name in custom_types:
-            if allow_override:
-                cls = custom_types[type_name]
-                return cls.load(data, parent) if parent else cls.load(data)
-            raise TypeError(
-                f'Type "{type_name}" is registered in custom_types but '
-                "allow_override is False."
-            )
-        case "pyvl.cvl.ReferenceFrame":
-            return (
-                ReferenceFrame.load(data, parent) if parent else ReferenceFrame.load(data)
-            )
-        case _:
-            if custom_types is not None:
-                cls = custom_types.get(type_name)
-                if cls is not None:
-                    return cls.load(data, parent) if parent else cls.load(data)
-            raise TypeError(
-                f'Unknown ReferenceFrame type "{type_name}". '
-                "Provide custom_types mapping or check type name."
-            )
+    return (
+        ReferenceFrame.load(group, deserializer, parent)
+        if parent
+        else ReferenceFrame.load(group, deserializer)
+    )
 
 
 def flow_conditions_from_serial(

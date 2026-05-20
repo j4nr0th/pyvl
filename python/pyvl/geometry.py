@@ -12,6 +12,7 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
+from pyvl._typing import CallableDeserializer, CallableSerializer
 from pyvl.cvl import INVALID_ID, Mesh, ReferenceFrame
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import reference_frame_from_serial
@@ -80,24 +81,18 @@ def mesh_from_serial(group: HirearchicalMap) -> Mesh:
     return Mesh(n_points=n_points, connectivity=faces)
 
 
-def rf_to_serial(self: ReferenceFrame) -> HirearchicalMap:
+def rf_to_serial(self: ReferenceFrame, serializer: CallableSerializer) -> HirearchicalMap:
     """Serialize the ReferenceFrame into a HirearchicalMap."""
     out = HirearchicalMap()
-    out.insert_string("type", type(self).__module__ + "." + type(self).__name__)
-
-    data = HirearchicalMap()
-    self.save(data)
-    out.insert_hirearchycal_map("data", data)
+    self.save(out, serializer)
     if self.parent is not None:
-        parent = rf_to_serial(self.parent)
+        parent = rf_to_serial(self.parent, serializer)
         out.insert_hirearchycal_map("parent", parent)
     return out
 
 
 def rf_from_serial(
-    group: HirearchicalMap,
-    custom_types: Mapping[str, type] | None = None,
-    allow_override: bool = False,
+    group: HirearchicalMap, deserializer: CallableDeserializer
 ) -> ReferenceFrame:
     """Load reference frame from a HirearchicalMap.
 
@@ -105,17 +100,22 @@ def rf_from_serial(
     ----------
     group : HirearchicalMap
         The serialized reference frame data.
-    custom_types : Mapping[str, type], optional
-        A mapping of type names to types for custom ReferenceFrame subclasses.
-    allow_override : bool, default: False
-        If True, custom types can override built-in types.
 
     Returns
     -------
     ReferenceFrame
         The deserialized reference frame.
     """
-    return reference_frame_from_serial(group, custom_types, allow_override)
+    parent = None
+    if "parent" in group:
+        parent_group = group.get_hirearchical_map("parent")
+        parent = reference_frame_from_serial(parent_group, deserializer)
+
+    return (
+        ReferenceFrame.load(group, deserializer, parent)
+        if parent
+        else ReferenceFrame.load(group, deserializer)
+    )
 
 
 @dataclass(init=False, frozen=True, eq=False)
@@ -284,7 +284,7 @@ class Geometry:
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
 
-    def save(self) -> HirearchicalMap:
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Save geometry into a HirearchicalMap.
 
         This method is used for serialization of the object.
@@ -298,12 +298,14 @@ class Geometry:
         out.insert_array("positions", self.positions)
         mesh_group = mesh_to_serial(self.msh)
         out.insert_hirearchycal_map("mesh", mesh_group)
-        rf_group = rf_to_serial(self.reference_frame)
+        rf_group = rf_to_serial(self.reference_frame, serializer)
         out.insert_hirearchycal_map("reference_frame", rf_group)
         return out
 
     @classmethod
-    def load(cls, label: str, group: HirearchicalMap) -> Self:
+    def load(
+        cls, label: str, group: HirearchicalMap, deserializer: CallableDeserializer
+    ) -> Self:
         """Load the geometry from a HirearchicalMap.
 
         This method is used for de-serialization.
@@ -327,7 +329,7 @@ class Geometry:
         rf_group = group.get_hirearchical_map("reference_frame")
 
         msh = mesh_from_serial(mesh_group)
-        rf = rf_from_serial(rf_group)
+        rf = rf_from_serial(rf_group, deserializer)
 
         return cls(label=label, reference_frame=rf, mesh=msh, positions=positions)
 
@@ -705,7 +707,7 @@ class SimulationGeometry(Mapping):
             adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
         return (bordering_nodes, adjacent_surfaces)
 
-    def save(self) -> HirearchicalMap:
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Save the simulation geometry into a HirearchicalMap.
 
         Returns
@@ -716,12 +718,12 @@ class SimulationGeometry(Mapping):
         out = HirearchicalMap()
         for geo_name in self._info:
             info = self._info[geo_name]
-            geo_group = Geometry(geo_name, info.rf, info.msh, info.pos).save()
+            geo_group = Geometry(geo_name, info.rf, info.msh, info.pos).save(serializer)
             out.insert_hirearchycal_map(geo_name, geo_group)
         return out
 
     @classmethod
-    def load(cls, group: HirearchicalMap) -> Self:
+    def load(cls, group: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Load the simulation geometry from a HirearchicalMap.
 
         Parameters
@@ -737,7 +739,7 @@ class SimulationGeometry(Mapping):
         geometries: list[Geometry] = []
         for geo_name in group:
             sub_group = group.get_hirearchical_map(geo_name)
-            geo = Geometry.load(geo_name, sub_group)
+            geo = Geometry.load(geo_name, sub_group, deserializer)
             geometries.append(geo)
         return cls(*geometries)
 

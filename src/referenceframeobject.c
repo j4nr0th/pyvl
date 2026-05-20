@@ -1562,55 +1562,131 @@ static PyObject *pyvl_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *ar
     return (PyObject *)out;
 }
 
+static bool pyvl_rf_serialize_entry(const pyvl_rf_time_dependent_t *entry, const char *key, PyObject *hmap,
+                                    PyObject *serializer)
+{
+    PyObject *serial = NULL;
+    const npy_intp sz = 3;
+    switch (entry->type)
+    {
+    case PYVL_RF_CONSTANT:
+        // Simple, create numpy array and write it
+        serial = PyArray_SimpleNew(1, &sz, NPY_DOUBLE);
+        if (serial)
+            *(real3_t *)PyArray_DATA((PyArrayObject *)serial) = entry->value.constant;
+        break;
+
+    case PYVL_RF_CALLABLE:
+        // Convert callable to string
+        serial = PyObject_Vectorcall(serializer, &entry->value.callable, 1, NULL);
+        if (serial)
+        {
+            if (!PyUnicode_Check(serial))
+            {
+                PyErr_Format(PyExc_TypeError, "Serializer did not return a string, but a %s", Py_TYPE(serial)->tp_name);
+                Py_DECREF(serial);
+                serial = NULL;
+            }
+        }
+        break;
+    }
+    if (!serial)
+        return false;
+
+    const int insertion_res = PyMapping_SetItemString(hmap, key, serial);
+    Py_DECREF(serial);
+    return insertion_res == 0;
+}
+
 static PyObject *pyvl_reference_frame_save(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                            const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = PyType_GetModuleState(defining_class);
-    if (!state)
+    const PyVL_ReferenceFrame *this;
+    const module_state_t *state;
+    if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    PyObject *arg;
+    PyObject *hmap, *serializer_callable;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&arg},
-                {},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&hmap, .kwname = "hmap"},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&serializer_callable, .kwname = "serializer"},
+                {0},
             },
             args, nargs, kwnames) < 0)
         return NULL;
 
-    if (!PyMapping_Check(arg))
+    if (!PyMapping_Check(hmap))
     {
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
         return NULL;
     }
-    const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    PyObject *const t = PyFloat_FromDouble(0);
-    if (!t)
-        return NULL;
-    PyObject *const pos_array = evaluate_time_dependent_python(&this->position, t);
-    PyObject *const ori_array = evaluate_time_dependent_python(&this->orientation, t);
-    Py_DECREF(t);
-    if (!pos_array || !ori_array)
+    if (!PyCallable_Check(serializer_callable))
     {
-        Py_XDECREF(pos_array);
-        Py_XDECREF(ori_array);
+        PyErr_Format(PyExc_TypeError, "Serializer is not a callable.");
         return NULL;
     }
 
-    const int res1 = PyMapping_SetItemString(arg, "offset", pos_array);
-    Py_DECREF(pos_array);
-    const int res2 = PyMapping_SetItemString(arg, "angles", ori_array);
-    Py_DECREF(ori_array);
-    if (res1 < 0 || res2 < 0)
+    if (!pyvl_rf_serialize_entry(&this->orientation, "orientation", hmap, serializer_callable) ||
+        !pyvl_rf_serialize_entry(&this->velocity, "velocity", hmap, serializer_callable) ||
+        !pyvl_rf_serialize_entry(&this->position, "position", hmap, serializer_callable) ||
+        !pyvl_rf_serialize_entry(&this->rotation, "rotation", hmap, serializer_callable))
         return NULL;
-    PyObject *type_name = PyUnicode_FromString(state->rf_type->tp_name);
-    if (!type_name)
-        return NULL;
-    const int res3 = PyMapping_SetItemString(arg, "type", type_name);
-    Py_DECREF(type_name);
-    if (res3 < 0)
-        return NULL;
+
     Py_RETURN_NONE;
+}
+
+static bool pyvl_rf_deserialize_entry(const char *key, PyObject *hmap, PyObject *deserializer,
+                                      pyvl_rf_time_dependent_t *entry)
+{
+    PyObject *const value = PyMapping_GetItemString(hmap, key);
+    if (!value)
+        return false;
+
+    if (PyArray_Check(value))
+    {
+        const PyArrayObject *const arr = (PyArrayObject *)value;
+        if (check_input_array(arr, 1, (npy_intp[1]){3}, NPY_DOUBLE, 0, key) < 0)
+        {
+            Py_DECREF(value);
+            return false;
+        }
+
+        *entry = (pyvl_rf_time_dependent_t){.type = PYVL_RF_CONSTANT,
+                                            .value = {.constant = {
+                                                          .x = *(double *)PyArray_GETPTR1(arr, 0),
+                                                          .y = *(double *)PyArray_GETPTR1(arr, 1),
+                                                          .z = *(double *)PyArray_GETPTR1(arr, 2),
+                                                      }}};
+        Py_DECREF(value);
+        return true;
+    }
+
+    if (PyUnicode_Check(value))
+    {
+        PyObject *const deserialized = PyObject_Vectorcall(deserializer, &value, 1, NULL);
+        Py_DECREF(value);
+        if (!deserializer)
+        {
+            return false;
+        }
+
+        if (!PyCallable_Check(deserialized))
+        {
+            PyErr_Format(PyExc_TypeError, "The deserializer did not produce a callable, but a %s",
+                         Py_TYPE(deserialized)->tp_name);
+            Py_DECREF(deserialized);
+            return false;
+        }
+
+        *entry = (pyvl_rf_time_dependent_t){.type = PYVL_RF_CALLABLE, .value = {.callable = deserialized}};
+        return true;
+    }
+
+    PyErr_Format(PyExc_TypeError, "Entry %s was neither a string nor an array and was instead %s.", key,
+                 Py_TYPE(value)->tp_name);
+    Py_DECREF(value);
+    return false;
 }
 
 static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *args, const Py_ssize_t nargs,
@@ -1620,10 +1696,11 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
     if (!state)
         return NULL;
 
-    PyObject *group, *parent = NULL;
+    PyObject *group, *deserializer, *parent = NULL;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&group, .kwname = "group"},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&deserializer, .kwname = "deserializer"},
                 {.type = CPYARG_TYPE_PYTHON,
                  .p_val = (void *)&parent,
                  .kwname = "parent",
@@ -1639,69 +1716,31 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
         PyErr_Format(PyExc_TypeError, "The input parameter is not a mapping.");
         return NULL;
     }
+    if (!PyCallable_Check(deserializer))
+    {
+        PyErr_Format(PyExc_TypeError, "Deserializer is not a callable.");
+        return NULL;
+    }
 
     PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)type->tp_alloc(type, 0);
     if (!this)
         return NULL;
 
-    PyObject *const off_val = PyMapping_GetItemString(group, "offset");
-    PyObject *const rot_val = PyMapping_GetItemString(group, "angles");
-    if (!off_val || !rot_val)
+    // Clear it up
+    this->position = (pyvl_rf_time_dependent_t){0};
+    this->orientation = (pyvl_rf_time_dependent_t){0};
+    this->velocity = (pyvl_rf_time_dependent_t){0};
+    this->rotation = (pyvl_rf_time_dependent_t){0};
+
+    if (!pyvl_rf_deserialize_entry("position", group, deserializer, &this->position) ||
+        !pyvl_rf_deserialize_entry("velocity", group, deserializer, &this->velocity) ||
+        !pyvl_rf_deserialize_entry("orientation", group, deserializer, &this->orientation) ||
+        !pyvl_rf_deserialize_entry("rotation", group, deserializer, &this->rotation))
     {
-        Py_XDECREF(off_val);
-        Py_XDECREF(rot_val);
         Py_DECREF(this);
         return NULL;
     }
 
-    PyArrayObject *const off_array = (PyArrayObject *)PyArray_FromAny(off_val, PyArray_DescrFromType(NPY_DOUBLE), 1, 1,
-                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
-    Py_DECREF(off_val);
-    PyArrayObject *const rot_array = (PyArrayObject *)PyArray_FromAny(rot_val, PyArray_DescrFromType(NPY_DOUBLE), 1, 1,
-                                                                      NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, NULL);
-    Py_DECREF(rot_val);
-    if (!off_array || !rot_array)
-    {
-        Py_XDECREF(off_array);
-        Py_XDECREF(rot_array);
-        Py_DECREF(this);
-        return NULL;
-    }
-
-    if (PyArray_SIZE(off_array) != 3)
-    {
-        PyErr_Format(PyExc_ValueError, "Offset array did not have 3 elements, but had %u instead.",
-                     (unsigned)PyArray_SIZE(off_array));
-        Py_DECREF(off_array);
-        Py_DECREF(rot_array);
-        Py_DECREF(this);
-        return NULL;
-    }
-
-    if (PyArray_SIZE(rot_array) != 3)
-    {
-        PyErr_Format(PyExc_ValueError, "Angle array did not have 3 elements, but had %u instead.",
-                     (unsigned)PyArray_SIZE(rot_array));
-        Py_DECREF(off_array);
-        Py_DECREF(rot_array);
-        Py_DECREF(this);
-        return NULL;
-    }
-
-    const npy_float64 *const offset_ptr = PyArray_DATA(off_array);
-    const npy_float64 *const angles_ptr = PyArray_DATA(rot_array);
-
-    this->position.type = PYVL_RF_CONSTANT;
-    this->position.value.constant = (real3_t){.x = offset_ptr[0], .y = offset_ptr[1], .z = offset_ptr[2]};
-    this->orientation.type = PYVL_RF_CONSTANT;
-    this->orientation.value.constant = (real3_t){.x = angles_ptr[0], .y = angles_ptr[1], .z = angles_ptr[2]};
-    this->velocity.type = PYVL_RF_CONSTANT;
-    this->velocity.value.constant = (real3_t){.x = 0, .y = 0, .z = 0};
-    this->rotation.type = PYVL_RF_CONSTANT;
-    this->rotation.value.constant = (real3_t){.x = 0, .y = 0, .z = 0};
-
-    Py_DECREF(off_array);
-    Py_DECREF(rot_array);
     this->parent = (PyVL_ReferenceFrame *)parent;
     Py_XINCREF(parent);
 

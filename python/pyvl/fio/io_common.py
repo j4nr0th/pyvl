@@ -136,3 +136,27 @@ class HirearchicalMap(MutableMapping[str, Any]):
 
 SerializationFunction = Callable[[HirearchicalMap, Path | str], None]
 DeserializationFunction = Callable[[Path | str], HirearchicalMap]
+
+
+class PythonSerializer:
+    """Serializer for the current Python session."""
+
+    _contents: dict[str, Callable]
+
+    def __init__(self) -> None:
+        self._contents = dict()
+
+    def serialize(self, fn: Callable) -> str:
+        """Serialize a string to a callable."""
+        try:
+            label = fn.__name__
+        except Exception as e:
+            del e
+            label = f"anonymous_{len(self._contents)}"
+        if label not in self._contents:
+            self._contents[label] = fn
+        return label
+
+    def deserialize(self, key: str) -> Callable:
+        """Deserialize a callable based on the label."""
+        return self._contents[key]

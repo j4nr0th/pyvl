@@ -15,6 +15,7 @@ from pyvl.cvl import Surface as Surface
 
 # File IO
 from pyvl.fio.io_common import HirearchicalMap as HirearchicalMap
+from pyvl.fio.io_common import PythonSerializer as PythonSerializer
 
 # Flow Conditions
 from pyvl.flow_conditions import FlowConditions as FlowConditions
