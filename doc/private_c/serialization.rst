@@ -1,11 +1,16 @@
 .. _pyvl.private_c.serialization:
 
-Mesh Serialization
-==================
+Mesh and Reference Frame Serialization
+======================================
 
 The mesh I/O module provides functions for serializing and deserializing mesh
 data structures. The format supports points, lines, and surface connectivity
 in a compact, text-based representation.
+
+Additionally, the :class:`ReferenceFrame` object can be serialized and
+deserialized using the `save` and `load` methods, which use a `HirearchicalMap`
+to store the position, velocity, orientation, and rotation properties.
+
 
 
 File Format Specification

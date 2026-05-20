@@ -2428,7 +2428,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "    to it is returned.\n"
                   "\n"
                   "array\n"
-                  "    Array of velocity vectors. If ``out_velocity` was given, then the reference\n"
+                  "    Array of velocity vectors. If ``out_velocity`` was given, then the reference\n"
                   "    to it is returned.\n",
     },
     {

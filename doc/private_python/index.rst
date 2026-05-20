@@ -30,3 +30,14 @@ solver state at a specific moment.
     :maxdepth: 1
 
     elements
+
+Reference Frame
+---------------
+
+The reference frame module provides the ReferenceFrame class for defining
+coordinate systems.
+
+.. toctree::
+    :maxdepth: 1
+
+    reference_frame
