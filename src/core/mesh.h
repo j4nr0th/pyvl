@@ -226,4 +226,14 @@ unsigned mesh_to_elements(const mesh_t *mesh, unsigned **p_point_counts, unsigne
  */
 void mesh_free(mesh_t *this, const allocator_t *allocator);
 
+/**
+ * Get the count and line IDs, which define a specific surface.
+ *
+ * @param this Mesh to get the surface from.
+ * @param idx Index of the surface.
+ * @param p_lines Pointer, which receives the array of surface line IDs.
+ * @return Surface line count
+ */
+unsigned mesh_get_surface(const mesh_t *this, unsigned idx, const geo_id_t **p_lines);
+
 #endif // MESH_H

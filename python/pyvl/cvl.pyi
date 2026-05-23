@@ -48,43 +48,7 @@ class GeoID:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
-@final
-class Line:
-    """Class which describes a connection between two points."""
-
-    def __new__(cls, begin: int | GeoID, end: int | GeoID) -> Self: ...
-
-    begin: int
-    """Start point of the line."""
-
-    end: int
-    """End point of the line."""
-
-    def __str__(self) -> str: ...
-    def __repr__(self) -> str: ...
-    def __eq__(self, value) -> bool: ...
-
-@final
-class Surface:
-    """Surface bound by a set of lines.
-
-    If the end point of a line ``i`` is not the start point of the line
-    ``i + 1``, a :class:`ValueError` will be raised.
-    """
-
-    def __new__(cls, lines: Sequence[Line]) -> Self: ...
-    @property
-    def n_lines(self) -> int:
-        """Return the number of lines that make up the surface."""
-        ...
-
-    @property
-    def lines(self) -> tuple[Line, ...]:
-        """Return tuple of lines that make up the surface."""
-        ...
-
-    def __str__(self) -> str: ...
-    def __repr__(self) -> str: ...
+_GeoIDLike = GeoID | int
 
 @final
 class Mesh:
@@ -93,7 +57,7 @@ class Mesh:
     def __new__(
         cls,
         n_points: int,
-        connectivity: Sequence[Sequence[int] | npt.ArrayLike],
+        connectivity: Sequence[Sequence[_GeoIDLike] | npt.ArrayLike],
     ) -> Self: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
@@ -112,12 +76,40 @@ class Mesh:
         """Number of surfaces in the mesh."""
         ...
 
-    def get_line(self, i: int) -> Line:
-        """Get the line from the mesh."""
+    def get_line_points(self, i: _GeoIDLike) -> tuple[int, int]:
+        """Get the indices of points that make up the line from the mesh.
+
+        Parameters
+        ----------
+        i : GeoID or int
+            ID of the line to get the points of. If an int is given, negative value
+            means a reverse orientation.
+
+        Returns
+        -------
+        int
+            Index of the point at the start of the line.
+
+        int
+            Index of the point at the end of the line.
+        """
         ...
 
-    def get_surface(self, i: int) -> Surface:
-        """Get the surface from the mesh."""
+    def get_surface_lines(self, i: _GeoIDLike) -> tuple[GeoID, ...]:
+        """Get IDs of lines that make up the surface from the mesh.
+
+        Parameters
+        ----------
+        i : GeoID or int
+            ID of the surface to get the lines of. If an int is given, negative value
+            means a reverse orientation.
+
+        Returns
+        -------
+        tuple[GeoID, ...]
+            Tuple of IDs of lines that make up the surface. When reversed orientation is
+            requested, the order and orientation of the lines is reversed as well.
+        """
         ...
 
     def to_element_connectivity(

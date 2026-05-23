@@ -1,10 +1,8 @@
 #define PY_ARRAY_UNIQUE_SYMBOL cvl
 #include "module.h"
 #include "geoidobject.h"
-#include "lineobject.h"
 #include "meshobject.h"
 #include "referenceframeobject.h"
-#include "surfaceobject.h"
 
 #include <numpy/arrayobject.h>
 
@@ -48,9 +46,10 @@ static int cvl_module_add_types(PyObject *mod)
         PyType_Spec *spec;
         PyTypeObject **dst;
     } types_to_add[] = {
-        {&pyvl_geoid_typespec, &state->geoid_type},  {&pyvl_line_typespec, &state->line_type},
-        {&pyvl_surface_typespec, &state->surf_type}, {&pyvl_reference_frame_typespec, &state->rf_type},
-        {&pyvl_mesh_typespec, &state->mesh_type},    {0},
+        {&pyvl_geoid_typespec, &state->geoid_type},
+        {&pyvl_reference_frame_typespec, &state->rf_type},
+        {&pyvl_mesh_typespec, &state->mesh_type},
+        {0},
     };
     for (unsigned i = 0; types_to_add[i].spec != NULL; ++i)
     {

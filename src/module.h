@@ -23,8 +23,6 @@
 typedef struct
 {
     PyTypeObject *geoid_type;
-    PyTypeObject *line_type;
-    PyTypeObject *surf_type;
     PyTypeObject *mesh_type;
     PyTypeObject *rf_type;
 } module_state_t;

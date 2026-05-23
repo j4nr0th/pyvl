@@ -300,3 +300,12 @@ void mesh_free(mesh_t *this, const allocator_t *allocator)
     allocator->deallocate(allocator->state, this->lines);
     *this = (mesh_t){};
 }
+
+unsigned mesh_get_surface(const mesh_t *const this, const unsigned idx, const geo_id_t **const p_lines)
+{
+    const unsigned start = this->surface_offsets[idx];
+    const unsigned end = this->surface_offsets[idx + 1];
+
+    *p_lines = this->surface_lines + start;
+    return end - start;
+}

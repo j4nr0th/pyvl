@@ -70,7 +70,6 @@ def test_mesh_surface_centers():
 
 def test_mesh_merge():
     """Check that multiple meshes can be successfully merged."""
-    np.random.seed(5463546)
     msh1 = Mesh(6, [[0, 1, 2, 3], [2, 3, 4], [0, 1, 4], [2, 4, 5]])
     msh2 = Mesh(6, [[2, 1, 0], [1, 2, 3], [4, 1, 5]])
     msh3 = Mesh(6, [[4, 1, 0], [5, 2, 4]])
@@ -85,18 +84,18 @@ def test_mesh_merge():
     point_offset = 0
     for m in (msh1, msh2, msh3):
         for i_s in range(m.n_surfaces):
-            sm = merged.get_surface(n_surfaces)
-            so = m.get_surface(i_s)
-            for l1, l2 in zip(sm.lines, so.lines, strict=True):
-                assert l1.begin == l2.begin + point_offset
-                assert l1.end == l2.end + point_offset
+            sm = merged.get_surface_lines(n_surfaces)
+            so = m.get_surface_lines(i_s)
+            for l1, l2 in zip(sm, so, strict=True):
+                assert l1.index == l2.index + n_lines
+                assert l1.orientation == l2.orientation
             n_surfaces += 1
 
         for i_l in range(m.n_lines):
-            lm = merged.get_line(n_lines)
-            lo = m.get_line(i_l)
-            assert lm.begin == lo.begin + point_offset
-            assert lm.end == lo.end + point_offset
+            lm = merged.get_line_points(n_lines)
+            lo = m.get_line_points(i_l)
+            assert lm[0] == lo[0] + point_offset
+            assert lm[1] == lo[1] + point_offset
             n_lines += 1
 
         point_offset += m.n_points
@@ -109,7 +108,3 @@ def test_overlap_induction_matrix() -> None:
     test_mat = msh.line_induction_matrix(1e-6, positions, positions)
     for i in range(4):
         assert all(test_mat[i, i, :] == (0, 0, 0))
-
-
-if __name__ == "__main__":
-    test_mesh_surface_normals()

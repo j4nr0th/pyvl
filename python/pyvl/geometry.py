@@ -284,6 +284,168 @@ class Geometry:
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
 
+    def _propagate_edges(
+        self, seed_edges: Iterable[int], max_angle: float, dual: Mesh
+    ) -> npt.NDArray[np.uint]:
+        """Propagate edge selection based on angle between direction vectors."""
+        selected = set()
+        edges_to_check = list(seed_edges)
+
+        while edges_to_check:
+            curr = edges_to_check.pop()
+            if curr in selected:
+                # Skip already selected edges
+                continue
+            selected.add(curr)
+            # Get the primal line and compute the direction vector
+            pi1, pi2 = self.msh.get_line_points(curr)
+            p1 = self.positions[pi1]
+            p2 = self.positions[pi2]
+            d = p2 - p1
+            norm = np.linalg.norm(d)
+            curr_dir = d / norm if norm > 0 else np.zeros(3)
+            # Get the neighbors from the dual mesh
+            neighbors = set()
+            for pt in (pi1, pi2):
+                surface_lines = dual.get_surface_lines(pt)
+                for edge in surface_lines:
+                    neighbors |= {edge}
+
+            for neighbor in neighbors:
+                if neighbor in selected:
+                    # Skip already selected neighbors
+                    continue
+
+                # Get the direction vector of the neighbor edge
+                pi1_n, pi2_n = self.msh.get_line_points(neighbor)
+                p1_n = self.positions[pi1_n]
+                p2_n = self.positions[pi2_n]
+                d_n = p2_n - p1_n
+                norm_n = np.linalg.norm(d_n)
+                neighbor_dir = d_n / norm_n if norm_n > 0 else np.zeros(3)
+                # Absolute value of DP to allow for opposite directions
+                cos_theta = np.abs(np.dot(curr_dir, neighbor_dir))
+                angle = np.arccos(np.clip(cos_theta, -1.0, 1.0))
+                if angle <= max_angle:
+                    edges_to_check.append(neighbor)
+
+        return np.array(np.sort(list(selected)), dtype=np.uint)
+
+    def detect_trailing_edge_manual(self) -> npt.NDArray[np.uint]:
+        """Interactively detect trailing edge by picking seed edge and the max angle.
+
+        Returns
+        -------
+        array
+            Indices of the detected trailing edge edges.
+        """
+        plotter = pv.Plotter()
+        plotter.add_mesh(self.as_polydata(), opacity=0.5, label=f"{self.label} surface")
+
+        dual = self.msh.compute_dual()
+        pos = self.positions
+        lines = self.msh.line_data
+        cell = pv.CellArray.from_regular_cells(np.astype(lines, int))
+        edge_pd = pv.PolyData(pos, lines=cell)
+        # Add the edges as a separate mesh to allow picking them separately
+        plotter.add_mesh(
+            edge_pd, color="black", line_width=2, label=f"{self.label} edges"
+        )
+
+        state = {"seed": None, "max_angle": 0.0, "selected": np.array([], dtype=np.uint)}
+
+        def update_selection():
+            if state["seed"] is None:
+                return
+
+            res = self._propagate_edges([state["seed"]], state["max_angle"], dual)
+            state["selected"] = res
+
+            if hasattr(plotter, "selection_mesh"):
+                plotter.remove_actor(plotter.selection_mesh)
+
+            selected_indices = state["selected"]
+            if len(selected_indices) == 0:
+                return
+
+            idx_into_flat = np.zeros(2 * len(selected_indices), dtype=int)
+            idx_into_flat[0::2] = 2 * selected_indices
+            idx_into_flat[1::2] = 2 * selected_indices + 1
+            sel_lines = lines[idx_into_flat]
+
+            sel_cell = pv.CellArray.from_regular_cells(np.astype(sel_lines, int))
+            sel_pd = pv.PolyData(pos, lines=sel_cell)
+            plotter.selection_mesh = plotter.add_mesh(sel_pd, color="red", line_width=5)
+            plotter.render()
+
+        def on_pick(edge_msh: pv.UnstructuredGrid):
+            # Get the picked edge index from the mesh with one line
+            edge_id = edge_msh.cell_data["vtkOriginalCellIds"][0]
+            state["seed"] = edge_id
+            print("Picked edge index:", edge_id)
+            update_selection()
+
+        def on_slider(value):
+            state["max_angle"] = value
+            update_selection()
+
+        plotter.enable_element_picking(callback=on_pick, show_message=True)
+        plotter.add_slider_widget(
+            callback=on_slider,
+            rng=[0, np.pi / 2],
+            value=0.0,
+            title="Max Angle (rad)",
+            pointa=(0.7, 0.1),
+            pointb=(0.9, 0.1),
+        )
+
+        plotter.show()
+        return state["selected"]
+
+    def detect_trailing_edge_automatic(
+        self,
+        inflow_direction: npt.ArrayLike,
+        max_angle: float,
+        seed_angle: float = np.radians(80),
+    ) -> npt.NDArray[np.uint]:
+        """Automatically detect trailing edges based on inflow direction and angle.
+
+        Parameters
+        ----------
+        inflow_direction : array_like
+            Direction vector of the expected inflow.
+
+        max_angle : float
+            Maximum allowed angle between neighboring edges during propagation.
+
+        seed_angle : float, optional
+            Angle relative to the inflow vector used to identify initial seed edges.
+            Defaults to 80 degrees.
+
+        Returns
+        -------
+        array
+            Indices of the detected trailing edge edges.
+        """
+        inflow_dir = np.asarray(inflow_direction, dtype=np.double).reshape((3,))
+        inflow_dir /= np.linalg.norm(inflow_dir)
+
+        seeds = []
+        for i_line in range(self.msh.n_lines):
+            ip1, ip2 = self.msh.get_line_points(i_line)
+            p1 = self.positions[ip1]
+            p2 = self.positions[ip2]
+            d = p2 - p1
+            norm = np.linalg.norm(d)
+            if norm > 0:
+                d /= norm
+            cos_theta = np.abs(np.dot(d, inflow_dir))
+            angle = np.arccos(np.clip(cos_theta, -1.0, 1.0))
+            if angle >= seed_angle:
+                seeds.append(i_line)
+
+        return self._propagate_edges(seeds, max_angle, self.msh.compute_dual())
+
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Save geometry into a HirearchicalMap.
 
@@ -496,8 +658,8 @@ class SimulationGeometry(Mapping):
             dual = g.msh.compute_dual()
             closed = True
             for il in range(dual.n_lines):
-                ln = dual.get_line(il)
-                if ln.begin == INVALID_ID or ln.end == INVALID_ID:
+                ln1, ln2 = dual.get_line_points(il)
+                if ln1 == INVALID_ID or ln2 == INVALID_ID:
                     closed = False
                     break
             info[g.label] = GeometryInfo(
@@ -701,10 +863,10 @@ class SimulationGeometry(Mapping):
         bordering_nodes = np.empty((len(lines), 2), np.uint)
         adjacent_surfaces = np.empty((len(lines), 2), np.uint)
         for i, line_id in enumerate(lines):
-            primal_line = self.mesh.get_line(line_id)
-            dual_line = self.dual.get_line(line_id)
-            bordering_nodes[i, :] = (primal_line.begin, primal_line.end)
-            adjacent_surfaces[i, :] = (dual_line.begin, dual_line.end)
+            primal_line = self.mesh.get_line_points(line_id)
+            dual_line = self.dual.get_line_points(line_id)
+            bordering_nodes[i, :] = primal_line
+            adjacent_surfaces[i, :] = dual_line
         return (bordering_nodes, adjacent_surfaces)
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:

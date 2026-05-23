@@ -130,3 +130,38 @@ PyType_Spec pyvl_geoid_typespec = {
             {0}, // sentinel
         },
 };
+
+CVL_INTERNAL
+bool pyvl_geoid_from_pyvalue(const module_state_t *const state, PyObject *const o, geo_id_t *const p_val)
+{
+    if (PyObject_TypeCheck(o, state->geoid_type))
+    {
+        // it is already a GeoID object
+        const PyVL_GeoIDObject *const id = (PyVL_GeoIDObject *)o;
+        *p_val = id->id;
+        return true;
+    }
+
+    if (PyNumber_Check(o))
+    {
+        const Py_ssize_t sz = PyNumber_AsSsize_t(o, NULL);
+        if (PyErr_Occurred())
+            return false;
+
+        *p_val = (geo_id_t){.value = sz, .orientation = 0};
+        return true;
+    }
+
+    PyErr_Format(PyExc_TypeError, "Cannot convert a %s object to GeoID value.", Py_TYPE(o)->tp_name);
+    return false;
+}
+
+PyVL_GeoIDObject *pyvl_geoid_new(const module_state_t *state, const geo_id_t id)
+{
+    PyVL_GeoIDObject *const this = (PyVL_GeoIDObject *)state->geoid_type->tp_alloc(state->geoid_type, 0);
+    if (!this)
+        return NULL;
+
+    this->id = id;
+    return this;
+}

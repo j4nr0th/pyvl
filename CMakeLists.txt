@@ -25,8 +25,6 @@ list(
         src/module.c
         src/allocator.c
         src/geoidobject.c
-        src/lineobject.c
-        src/surfaceobject.c
         src/meshobject.c
         src/referenceframeobject.c
 )
@@ -36,8 +34,6 @@ list(
         src/module.h
         src/allocator.h
         src/geoidobject.h
-        src/lineobject.h
-        src/surfaceobject.h
         src/meshobject.h
         src/referenceframeobject.h
 )

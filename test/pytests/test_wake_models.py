@@ -44,8 +44,8 @@ def test_explicit_unsteady():
     # )
 
     assert len(trailing_edge) == 1
-    ln = sim_geo.mesh.get_line(trailing_edge[0])
-    assert (ln.begin == 0 and ln.end == 3) or (ln.begin == 3 and ln.begin == 0)
+    ln = sim_geo.mesh.get_line_points(trailing_edge[0])
+    assert (ln[0] == 0 and ln[1] == 3) or (ln[0] == 3 and ln[1] == 0)
     fc = FlowConditionsUniform(-1, 0, 0)
     settings = SolverSettings(fc, ModelSettings(1e-6))
     shedding_lines = sim_geo.te_normal_criterion(-0.5)
@@ -120,10 +120,10 @@ def test_explicit_unsteady2():
     # )
 
     assert len(trailing_edge) == 2
-    ln = sim_geo.mesh.get_line(trailing_edge[0])
-    assert (ln.begin == 0 and ln.end == 3) or (ln.begin == 3 and ln.begin == 0)
-    ln = sim_geo.mesh.get_line(trailing_edge[1])
-    assert (ln.begin == 3 and ln.end == 6) or (ln.begin == 6 and ln.begin == 3)
+    ln = sim_geo.mesh.get_line_points(trailing_edge[0])
+    assert (ln[0] == 0 and ln[1] == 3) or (ln[0] == 3 and ln[1] == 0)
+    ln = sim_geo.mesh.get_line_points(trailing_edge[1])
+    assert (ln[0] == 3 and ln[1] == 6) or (ln[0] == 6 and ln[1] == 3)
     fc = FlowConditionsUniform(-1, 0, 0)
     settings = SolverSettings(fc, ModelSettings(1e-6))
     shedding_lines = sim_geo.te_normal_criterion(-0.5)

@@ -5,10 +5,10 @@
 #include <numpy/arrayobject.h>
 
 #include "allocator.h"
-#include "lineobject.h"
-#include "surfaceobject.h"
 
 // Should be the last to be included
+#include "geoidobject.h"
+
 #include <cpyutl.h>
 
 static PyObject *pyvl_mesh_str(PyObject *self)
@@ -230,69 +230,108 @@ static bool ensure_mesh_and_state(PyTypeObject *defining_class, PyObject *self, 
     return true;
 }
 
-static PyObject *pyvl_mesh_get_line(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
-                                    const Py_ssize_t nargs, const PyObject *kwnames)
+static PyObject *pyvl_mesh_get_line_points(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                           const Py_ssize_t nargs, const PyObject *kwnames)
 {
     const PyVL_MeshObject *this;
     const module_state_t *state;
     if (!ensure_mesh_and_state(defining_class, self, &this, &state))
         return NULL;
 
-    Py_ssize_t idx;
+    PyObject *o;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_SSIZE, .p_val = &idx},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&o, .kwname = "i"},
                 {0},
             },
             args, nargs, kwnames) < 0)
         return NULL;
 
-    if (idx >= (long)this->mesh.n_lines || idx < -(long)this->mesh.n_lines)
+    geo_id_t line_id;
+    if (!pyvl_geoid_from_pyvalue(state, o, &line_id))
+        return NULL;
+
+    if (line_id.value >= this->mesh.n_lines)
     {
-        PyErr_Format(PyExc_IndexError, "Index %ld is our of bounds for a mesh with %u lines.", idx, this->mesh.n_lines);
+        PyErr_Format(PyExc_IndexError, "Index %u is our of bounds for a mesh with %u lines.", line_id.value,
+                     this->mesh.n_lines);
         return NULL;
     }
-    unsigned i;
-    if (idx < 0)
+
+    const line_t line = this->mesh.lines[line_id.value];
+
+    PyObject *const out = PyTuple_New(2);
+    if (!out)
+        return NULL;
+
+    unsigned start, end;
+    if (line_id.orientation)
     {
-        i = (unsigned)((long)this->mesh.n_lines + idx);
+        start = line.p2.value;
+        end = line.p1.value;
     }
     else
     {
-        i = (unsigned)idx;
+        start = line.p1.value;
+        end = line.p2.value;
     }
-    return (PyObject *)pyvl_line_from_indices(state->line_type, this->mesh.lines[i].p1.value,
-                                              this->mesh.lines[i].p2.value);
+
+    return cpyutl_output_create_check(CPYOUT_TYPE_TUPLE, (const cpyutl_output_t[]){
+                                                             {.type = CPYOUT_TYPE_PYINT, .value_int = start},
+                                                             {.type = CPYOUT_TYPE_PYINT, .value_int = end},
+                                                             {0},
+                                                         });
 }
 
-static PyObject *pyvl_mesh_get_surface(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
-                                       const Py_ssize_t nargs, const PyObject *kwnames)
+static PyObject *pyvl_mesh_get_surface_lines(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                             const Py_ssize_t nargs, const PyObject *kwnames)
 {
     const PyVL_MeshObject *this;
     const module_state_t *state;
     if (!ensure_mesh_and_state(defining_class, self, &this, &state))
         return NULL;
 
-    Py_ssize_t idx;
+    PyObject *o;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_SSIZE, .p_val = &idx},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&o, .kwname = "i"},
                 {0},
             },
             args, nargs, kwnames) < 0)
         return NULL;
 
-    unsigned i;
-    if (idx < 0)
+    geo_id_t surface_id;
+    if (!pyvl_geoid_from_pyvalue(state, o, &surface_id))
+        return NULL;
+
+    if (surface_id.value >= this->mesh.n_surfaces)
     {
-        i = (unsigned)((long)this->mesh.n_surfaces + idx);
+        PyErr_Format(PyExc_IndexError, "Index %u is our of bounds for a mesh with %u surfaces.", surface_id.value,
+                     this->mesh.n_surfaces);
+        return NULL;
     }
-    else
+
+    const geo_id_t *lines;
+    const unsigned n_lines = mesh_get_surface(&this->mesh, surface_id.value, &lines);
+    PyObject *out = PyTuple_New(n_lines);
+    if (!out)
+        return NULL;
+
+    for (unsigned i = 0; i < n_lines; ++i)
     {
-        i = (unsigned)idx;
+        geo_id_t id = lines[surface_id.orientation ? n_lines - 1 - i : i];
+        if (surface_id.orientation)
+            id.orientation = !id.orientation;
+        PyVL_GeoIDObject *const gid = pyvl_geoid_new(state, id);
+        if (!gid)
+        {
+            Py_DECREF(out);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(out, i, gid);
     }
-    return (PyObject *)pyvl_surface_from_mesh_surface(state->surf_type, &this->mesh,
-                                                      (geo_id_t){.orientation = 0, .value = i});
+
+    return out;
 }
 
 static bool ensure_mesh_and_state_noargs(PyTypeObject *defining_class, PyObject *self, PyObject *const *args,
@@ -449,21 +488,27 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
-                {.type = CPYARG_TYPE_PYTHON, .kwname = "positions", .type_check = &PyArray_Type, .p_val = &pos_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "positions",
+                 .type_check = &PyArray_Type,
+                 .p_val = (void *)&pos_array},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "control_points",
                  .type_check = &PyArray_Type,
-                 .p_val = &in_array},
-                {.type = CPYARG_TYPE_PYTHON, .kwname = "normals", .type_check = &PyArray_Type, .p_val = &norm_array},
+                 .p_val = (void *)&in_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "normals",
+                 .type_check = &PyArray_Type,
+                 .p_val = (void *)&norm_array},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "out",
                  .type_check = &PyArray_Type,
-                 .p_val = &out_array,
+                 .p_val = (void *)&out_array,
                  .optional = true},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "line_buffer",
                  .type_check = &PyArray_Type,
-                 .p_val = &line_buffer_opt,
+                 .p_val = (void *)&line_buffer_opt,
                  .optional = true},
                 {.type = CPYARG_TYPE_SSIZE, .kwname = "thread_count", .p_val = &thrd_cnt, .optional = true},
                 {0}, // sentinel
@@ -668,8 +713,8 @@ static PyObject *pyvl_line_velocities_from_point_velocities(PyObject *self, PyTy
     PyArrayObject *point_velocities, *line_buffer;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_PYTHON, .p_val = &point_velocities, .type_check = &PyArray_Type},
-                {.type = CPYARG_TYPE_PYTHON, .p_val = &line_buffer, .type_check = &PyArray_Type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&point_velocities, .type_check = &PyArray_Type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&line_buffer, .type_check = &PyArray_Type},
                 {0},
             },
             args, nargs, kwnames) < 0)
@@ -752,7 +797,7 @@ static PyObject *pyvl_mesh_merge(PyTypeObject *subtype, PyObject *const *args, c
     for (unsigned i = 0; i < (unsigned)nargs; ++i)
     {
         const PyVL_MeshObject *const m = (PyVL_MeshObject *)args[i];
-        // Lines are copied, but incremented
+        // Lines are copied but incremented
         for (unsigned il = 0; il < m->mesh.n_lines; ++il)
         {
             const line_t *p_line = m->mesh.lines + il;
@@ -1248,7 +1293,7 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyTypeObject *d
 }
 
 static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *args, const Py_ssize_t nargs,
-                                       PyObject *kwnames)
+                                       const PyObject *kwnames)
 {
     const module_state_t *const state = get_module_state(subtype);
     if (!state)
@@ -1364,16 +1409,44 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
 
 static PyMethodDef pyvl_mesh_methods[] = {
     {
-        .ml_name = "get_line",
-        .ml_meth = (void *)pyvl_mesh_get_line,
+        .ml_name = "get_line_points",
+        .ml_meth = (void *)pyvl_mesh_get_line_points,
         .ml_flags = METH_METHOD | METH_KEYWORDS | METH_FASTCALL,
-        .ml_doc = "Get the line from the mesh.",
+        .ml_doc = "get_line_points(i: GeoID | int) -> tuple[int, int]\n"
+                  "Get the indices of points that make up the line from the mesh.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "i : GeoID or int\n"
+                  "    ID of the line to get the points of. If an int is given, negative value\n"
+                  "    means a reverse orientation.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "int\n"
+                  "    Index of the point at the start of the line.\n"
+                  "\n"
+                  "int\n"
+                  "    Index of the point at the end of the line.\n",
     },
     {
-        .ml_name = "get_surface",
-        .ml_meth = (void *)pyvl_mesh_get_surface,
+        .ml_name = "get_surface_lines",
+        .ml_meth = (void *)pyvl_mesh_get_surface_lines,
         .ml_flags = METH_METHOD | METH_KEYWORDS | METH_FASTCALL,
-        .ml_doc = "Get the surface from the mesh.",
+        .ml_doc = "get_surface_lines(i: GeoID | int) -> tuple[GeoID, ...]\n"
+                  "Get IDs of lines that make up the surface from the mesh.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "i : GeoID or int\n"
+                  "    ID of the surface to get the lines of. If an int is given, negative value\n"
+                  "    means a reverse orientation.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "tuple[GeoID, ...]\n"
+                  "    Tuple of IDs of lines that make up the surface. When reversed orientation is\n"
+                  "    requested, the order and orientation of the lines is reversed as well.\n",
     },
     {
         .ml_name = "compute_dual",
@@ -1520,7 +1593,7 @@ static PyObject *pyvl_mesh_rich_compare(PyObject *self, PyObject *other, const i
         res = false;
     }
 
-    res = (op == Py_EQ ? res : !res) != 0;
+    res = (op == Py_EQ ? (int)res : !res) != 0;
     if (res)
     {
         Py_RETURN_TRUE;
