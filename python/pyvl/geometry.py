@@ -13,7 +13,7 @@ import numpy.typing as npt
 import pyvista as pv
 
 from pyvl._typing import CallableDeserializer, CallableSerializer
-from pyvl.cvl import INVALID_ID, Mesh, ReferenceFrame
+from pyvl.cvl import INVALID_ID, GeoID, Mesh, ReferenceFrame
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import reference_frame_from_serial
 
@@ -288,8 +288,10 @@ class Geometry:
         self, seed_edges: Iterable[int], max_angle: float, dual: Mesh
     ) -> npt.NDArray[np.uint]:
         """Propagate edge selection based on angle between direction vectors."""
-        selected = set()
-        edges_to_check = list(seed_edges)
+        selected: set[GeoID] = set()
+        edges_to_check = list(GeoID(e) for e in seed_edges) + list(
+            GeoID(e, orientation=True) for e in seed_edges
+        )
 
         while edges_to_check:
             curr = edges_to_check.pop()
@@ -299,17 +301,14 @@ class Geometry:
             selected.add(curr)
             # Get the primal line and compute the direction vector
             pi1, pi2 = self.msh.get_line_points(curr)
-            p1 = self.positions[pi1]
-            p2 = self.positions[pi2]
-            d = p2 - p1
+            d = self.positions[pi2] - self.positions[pi1]
             norm = np.linalg.norm(d)
             curr_dir = d / norm if norm > 0 else np.zeros(3)
             # Get the neighbors from the dual mesh
-            neighbors = set()
-            for pt in (pi1, pi2):
-                surface_lines = dual.get_surface_lines(pt)
-                for edge in surface_lines:
-                    neighbors |= {edge}
+            neighbors: list[GeoID] = list()
+            neighbors.extend(-e for e in dual.get_surface_lines(pi1))
+            neighbors.extend(e for e in dual.get_surface_lines(pi2))
+            neighbors.remove(-curr)  # Remove the current edge from neighbors if present
 
             for neighbor in neighbors:
                 if neighbor in selected:
@@ -317,22 +316,38 @@ class Geometry:
                     continue
 
                 # Get the direction vector of the neighbor edge
+                # One of these is either p1 or p2
                 pi1_n, pi2_n = self.msh.get_line_points(neighbor)
-                p1_n = self.positions[pi1_n]
-                p2_n = self.positions[pi2_n]
-                d_n = p2_n - p1_n
+                assert pi1_n == pi2 or pi2_n == pi1, (
+                    "Neighbor edge should share a point with the current edge."
+                )
+                d_n = self.positions[pi2_n] - self.positions[pi1_n]
+
+                # if pi2_n == pi2 or pi1_n == pi1:
+                #     # Direction should always go away from the current line,
+                #     # so if the edge ends at one of the current line's points,
+                #     # the direction should be flipped.
+                #     d_n = -d_n
+
                 norm_n = np.linalg.norm(d_n)
                 neighbor_dir = d_n / norm_n if norm_n > 0 else np.zeros(3)
-                # Absolute value of DP to allow for opposite directions
-                cos_theta = np.abs(np.dot(curr_dir, neighbor_dir))
-                angle = np.arccos(np.clip(cos_theta, -1.0, 1.0))
-                if angle <= max_angle:
+                # Absolute value of DP would for opposite directions
+                cos_theta = np.dot(curr_dir, neighbor_dir)
+                if cos_theta >= np.cos(max_angle):
                     edges_to_check.append(neighbor)
 
-        return np.array(np.sort(list(selected)), dtype=np.uint)
+        return np.array(np.unique([edge.index for edge in selected]), dtype=np.uint)
 
-    def detect_trailing_edge_manual(self) -> npt.NDArray[np.uint]:
+    def detect_trailing_edge_manual(
+        self, initial_angle: float = 0.05
+    ) -> npt.NDArray[np.uint]:
         """Interactively detect trailing edge by picking seed edge and the max angle.
+
+        Parameters
+        ----------
+        initial_angle : float, default: 0.05
+            Initial value of the maximum angle between two edges which still lets them
+            be connected as a part of the trailing edge.
 
         Returns
         -------
@@ -352,55 +367,67 @@ class Geometry:
             edge_pd, color="black", line_width=2, label=f"{self.label} edges"
         )
 
-        state = {"seed": None, "max_angle": 0.0, "selected": np.array([], dtype=np.uint)}
+        @dataclass
+        class _TESelectionState:
+            seed: int | None
+            max_angle: float
+            selected: npt.NDArray[np.uint]
+            selection_mesh: pv.Actor | None
+
+        state = _TESelectionState(
+            seed=None,
+            max_angle=initial_angle,
+            selected=np.array([], dtype=np.uint),
+            selection_mesh=None,
+        )
 
         def update_selection():
-            if state["seed"] is None:
+            if state.seed is None:
                 return
 
-            res = self._propagate_edges([state["seed"]], state["max_angle"], dual)
-            state["selected"] = res
+            res = self._propagate_edges([state.seed], state.max_angle, dual)
+            state.selected = res
 
-            if hasattr(plotter, "selection_mesh"):
-                plotter.remove_actor(plotter.selection_mesh)
+            if state.selection_mesh is not None:
+                plotter.remove_actor(state.selection_mesh)
 
-            selected_indices = state["selected"]
+            selected_indices = state.selected
             if len(selected_indices) == 0:
                 return
 
-            idx_into_flat = np.zeros(2 * len(selected_indices), dtype=int)
-            idx_into_flat[0::2] = 2 * selected_indices
-            idx_into_flat[1::2] = 2 * selected_indices + 1
-            sel_lines = lines[idx_into_flat]
+            sel_lines = lines[selected_indices, :]
 
             sel_cell = pv.CellArray.from_regular_cells(np.astype(sel_lines, int))
             sel_pd = pv.PolyData(pos, lines=sel_cell)
-            plotter.selection_mesh = plotter.add_mesh(sel_pd, color="red", line_width=5)
+            state.selection_mesh = plotter.add_mesh(sel_pd, color="red", line_width=5)
             plotter.render()
 
         def on_pick(edge_msh: pv.UnstructuredGrid):
             # Get the picked edge index from the mesh with one line
             edge_id = edge_msh.cell_data["vtkOriginalCellIds"][0]
-            state["seed"] = edge_id
+            state.seed = edge_id
             print("Picked edge index:", edge_id)
             update_selection()
 
         def on_slider(value):
-            state["max_angle"] = value
+            state.max_angle = value
             update_selection()
 
-        plotter.enable_element_picking(callback=on_pick, show_message=True)
+        plotter.enable_element_picking(
+            callback=on_pick, show_message=True, picker="Volume"
+        )
         plotter.add_slider_widget(
             callback=on_slider,
             rng=[0, np.pi / 2],
-            value=0.0,
+            value=initial_angle,
             title="Max Angle (rad)",
             pointa=(0.7, 0.1),
             pointb=(0.9, 0.1),
         )
+        plotter.add_axes()
 
         plotter.show()
-        return state["selected"]
+        return state.selected
 
     def detect_trailing_edge_automatic(
         self,

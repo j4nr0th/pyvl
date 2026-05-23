@@ -111,7 +111,32 @@ static PyObject *geoid_rich_compare(PyObject *self, PyObject *other, const int o
     return PyBool_FromLong((long)val);
 }
 
+static PyObject *geoid_reverse(PyObject *self)
+{
+    const module_state_t *const state = get_module_state(Py_TYPE(self));
+    if (!state)
+        return NULL;
+    const PyVL_GeoIDObject *const this = (PyVL_GeoIDObject *)self;
+    return (PyObject *)pyvl_geoid_new(state, (geo_id_t){.value = this->id.value, .orientation = !this->id.orientation});
+}
+
 PyDoc_STRVAR(geoid_type_docstring, "Class used to refer to topological objects with orientation.\n");
+
+static Py_hash_t geoid_hash_func(const PyVL_GeoIDObject *this)
+{
+    const geo_id_t id = this->id;
+    if (id.value == INVALID_ID)
+        return INVALID_ID;
+
+    // Use the union to cast the ID to hash.
+    union {
+        geo_id_t id;
+        uint32_t hash;
+    } v = {.hash = 0};
+
+    v.id = id;
+    return (Py_hash_t)v.hash;
+}
 
 PyType_Spec pyvl_geoid_typespec = {
     .basicsize = sizeof(PyVL_GeoIDObject),
@@ -127,6 +152,8 @@ PyType_Spec pyvl_geoid_typespec = {
             {Py_tp_new, geoid_new},
             {Py_tp_richcompare, geoid_rich_compare},
             {Py_tp_traverse, cpyutl_traverse_heap_type},
+            {Py_tp_hash, geoid_hash_func},
+            {Py_nb_negative, geoid_reverse},
             {0}, // sentinel
         },
 };
