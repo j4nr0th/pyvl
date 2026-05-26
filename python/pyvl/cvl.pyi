@@ -1005,3 +1005,8 @@ class ReferenceFrame:
             Array of vectors. If ``out`` was given, then the reference to it is returned.
         """
         ...
+
+    @property
+    def is_moving(self) -> bool:
+        """True if either the reference frame or its ancestors are moving."""
+        ...

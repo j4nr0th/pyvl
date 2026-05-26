@@ -335,6 +335,19 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
     Py_RETURN_TRUE;
 }
 
+static PyObject *pyvl_reference_frame_get_is_moving(PyObject *self, void *Py_UNUSED(closure))
+{
+    for (const PyVL_ReferenceFrame *rf = (PyVL_ReferenceFrame *)self; rf; rf = rf->parent)
+    {
+        // If either velocity or rotation are not constant and zero, it is moving.
+        if (!(rf->velocity.type == PYVL_RF_CONSTANT && real3_all_zero(rf->velocity.value.constant)) ||
+            !(rf->rotation.type == PYVL_RF_CONSTANT && real3_all_zero(rf->rotation.value.constant)))
+            Py_RETURN_TRUE;
+    }
+
+    Py_RETURN_FALSE;
+}
+
 static PyGetSetDef pyvl_reference_frame_getset[] = {
     {
         .name = "parent",
@@ -345,6 +358,11 @@ static PyGetSetDef pyvl_reference_frame_getset[] = {
         .name = "parents",
         .get = pyvl_reference_frame_get_parents,
         .doc = "tuple[ReferenceFrame, ...] : Tuple of all parents of this reference frame.\n",
+    },
+    {
+        .name = "is_moving",
+        .get = pyvl_reference_frame_get_is_moving,
+        .doc = "bool : True if either the reference frame or its ancestors are moving.\n",
     },
     {0},
 };
@@ -1844,7 +1862,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "(3, 3) array\n"
                   "    Inverse rotation matrix at the given time.",
     },
-    //
+    // RF <-> Parent
     {
         .ml_name = "from_parent_position",
         .ml_meth = (void *)pyvl_reference_frame_from_parent_position,
@@ -2035,7 +2053,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "    specified, this return value will be the same object. If ``out`` was not specified,\n"
                   "    then a new array will be allocated.",
     },
-    //
+    // RF <-> Global
     {
         .ml_name = "from_global_position",
         .ml_meth = (void *)pyvl_reference_frame_from_global_position,
@@ -2226,7 +2244,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "    specified, this return value will be the same object. If ``out`` was not specified,\n"
                   "    then a new array will be allocated.",
     },
-    //
+    // Adjusting + save/load
     {
         .ml_name = "rotate_x",
         .ml_meth = (void *)pyvl_reference_frame_rotate_x,
@@ -2348,7 +2366,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "Self\n"
                   "    Deserialized :class:`ReferenceFrame`.\n",
     },
-    //
+    // RF -> RF transformation
     {
         .ml_name = "transform_position",
         .ml_meth = (void *)pyvl_reference_frame_transform_position,

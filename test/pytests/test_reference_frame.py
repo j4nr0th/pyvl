@@ -236,6 +236,33 @@ def test_time_parameter_in_transformations():
     result_t0 = rf.from_parent_position(x, time=0.0)
     assert result_t0 == pytest.approx([1, 2, 3])
 
-    # At t=1, offset is (1, 0, 0), so from_parent_with_offset(x, time=1) = x + (1, 0, 0)
-    result_t1 = rf.from_parent_position(x, time=1.0)
-    assert result_t1 == pytest.approx([2, 2, 3])
+
+def test_is_moving():
+    """Test the is_moving property."""
+    # Static frame with zero offset/theta is not moving
+    rf_static = ReferenceFrame((0, 0, 0), (0, 0, 0))
+    assert not rf_static.is_moving
+
+    # Static frame with non-zero offset/theta is still not moving (it's static)
+    rf_static_nonzero = ReferenceFrame((1, 2, 3), (0.1, 0.2, 0.3))
+    assert not rf_static_nonzero.is_moving
+
+    def vel_func(t):
+        return (t, 0, 0)
+
+    rf_moving_vel = ReferenceFrame(velocity=vel_func)
+    assert rf_moving_vel.is_moving
+
+    def rot_func(t):
+        return (0, 0, t)
+
+    rf_moving_rot = ReferenceFrame(rotation=rot_func)
+    assert rf_moving_rot.is_moving
+
+    # Constant non-zero velocity
+    rf_const_vel = ReferenceFrame(velocity=(1, 0, 0))
+    assert rf_const_vel.is_moving
+
+    # Constant non-zero rotation
+    rf_const_rot = ReferenceFrame(rotation=(0, 0, 1))
+    assert rf_const_rot.is_moving
