@@ -442,27 +442,45 @@ class ReferenceFrame:
         position: npt.ArrayLike,
         velocity: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.double] | None = None,
+        out_position: npt.NDArray[np.double] | None = None,
+        out_velocity: npt.NDArray[np.double] | None = None,
     ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
-        r"""Map position vector from parent reference frame to the child reference frame.
+        r"""Map velocity vectors from parent reference frame to the local reference frame.
 
         Parameters
         ----------
-        x : (N, 3) array
-            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in parent reference frame.
+        position : (N, 3) array
+            Array of :math:`N` position vectors in :math:`\mathbb{R}^3` in parent
+            reference frame.
+
+        velocity : (N, 3) array
+            Array of :math:`N` velocity vectors in :math:`\mathbb{R}^3` in parent
+            reference frame.
+
         time : float, default: 0.0
             Time at which to evaluate the transformation.
-        out : (N, 3) array, optional
-            Array which receives the mapped vectors. Must have the exact shape of ``x``.
-            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
-            aligned, C-contiguous, and writable.
+
+        out_position : (N, 3) array, optional
+            Array which receives the mapped position vectors. Must have the exact shape of
+            ``position``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
+
+        out_velocity : (N, 3) array, optional
+            Array which receives the mapped velocity vectors. Must have the exact shape of
+            ``velocity``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
 
         Returns
         -------
         (N, 3) array
-            Position vectors mapped to the child reference frame. If the ``out``
-            parameter was specified, this return value will be the same object. If ``out``
-            was not specified, then a new array will be allocated.
+            Position vectors mapped to the local reference frame. If the ``out_position``
+            parameter was specified, this return value will be the same object. If
+            ``out_position`` was not specified, then a new array will be allocated.
+
+        (N, 3) array
+            Velocity vectors mapped to the local reference frame. If the ``out_velocity``
+            parameter was specified, this return value will be the same object. If
+            ``out_velocity`` was not specified, then a new array will be allocated.
         """
         ...
 
@@ -527,27 +545,45 @@ class ReferenceFrame:
         position: npt.ArrayLike,
         velocity: npt.ArrayLike,
         time: float = 0.0,
-        out: npt.NDArray[np.double] | None = None,
+        out_position: npt.NDArray[np.double] | None = None,
+        out_velocity: npt.NDArray[np.double] | None = None,
     ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
-        r"""Map position vector from child reference frame to the parent reference frame.
+        r"""Map velocity vectors from local reference frame to the parent reference frame.
 
         Parameters
         ----------
-        x : (N, 3) array
-            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        position : (N, 3) array
+            Array of :math:`N` position vectors in :math:`\mathbb{R}^3` in local reference
+            frame.
+
+        velocity : (N, 3) array
+            Array of :math:`N` velocity vectors in :math:`\mathbb{R}^3` in local reference
+            frame.
+
         time : float, default: 0.0
             Time at which to evaluate the transformation.
-        out : (N, 3) array, optional
-            Array which receives the mapped vectors. Must have the exact shape of ``x``.
-            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
-            aligned, C-contiguous, and writable.
+
+        out_position : (N, 3) array, optional
+            Array which receives the mapped position vectors. Must have the exact shape of
+            ``position``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
+
+        out_velocity : (N, 3) array, optional
+            Array which receives the mapped velocity vectors. Must have the exact shape of
+            ``velocity``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
 
         Returns
         -------
         (N, 3) array
-            Position vectors mapped to the parent reference frame. If the ``out``
+            Position vectors mapped to the parent reference frame. If the ``out_position``
             parameter was specified, this return value will be the same object. If
-            ``out`` was not specified, then a new array will be allocated.
+            ``out_position`` was not specified, then a new array will be allocated.
+
+        (N, 3) array
+            Velocity vectors mapped to the parent reference frame. If the ``out_velocity``
+            parameter was specified, this return value will be the same object. If
+            ``out_velocity`` was not specified, then a new array will be allocated.
         """
         ...
 
@@ -611,29 +647,46 @@ class ReferenceFrame:
         self,
         position: npt.ArrayLike,
         velocity: npt.ArrayLike,
-        /,
         time: float = 0.0,
-        out: npt.NDArray[np.double] | None = None,
+        out_position: npt.NDArray[np.double] | None = None,
+        out_velocity: npt.NDArray[np.double] | None = None,
     ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
-        r"""Map direction vector from global reference frame to the child reference frame.
+        r"""Map velocity vectors from global reference frame to the local reference frame.
 
         Parameters
         ----------
-        x : (N, 3) array
-            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in global reference frame.
+        position : (N, 3) array
+            Array of :math:`N` position vectors in :math:`\mathbb{R}^3` in global
+            reference frame.
+
+        velocity : (N, 3) array
+            Array of :math:`N` velocity vectors in :math:`\mathbb{R}^3` in global
+            reference frame.
+
         time : float, default: 0.0
             Time at which to evaluate the transformation.
-        out : (N, 3) array, optional
-            Array which receives the mapped vectors. Must have the exact shape of ``x``.
-            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
-            aligned, C-contiguous, and writable.
+
+        out_position : (N, 3) array, optional
+            Array which receives the mapped position vectors. Must have the exact shape of
+            ``position``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
+
+        out_velocity : (N, 3) array, optional
+            Array which receives the mapped velocity vectors. Must have the exact shape of
+            ``velocity``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
 
         Returns
         -------
         (N, 3) array
-            Direction vectors mapped to the child reference frame. If the ``out``
-            parameter was specified, this return value will be the same object. If ``out``
-            was not specified, then a new array will be allocated.
+            Position vectors mapped to the local reference frame. If the ``out_position``
+            parameter was specified, this return value will be the same object. If
+            ``out_position`` was not specified, then a new array will be allocated.
+
+        (N, 3) array
+            Velocity vectors mapped to the local reference frame. If the ``out_velocity``
+            parameter was specified, this return value will be the same object. If
+            ``out_velocity`` was not specified, then a new array will be allocated.
         """
         ...
 
@@ -697,29 +750,46 @@ class ReferenceFrame:
         self,
         position: npt.ArrayLike,
         velocity: npt.ArrayLike,
-        /,
         time: float = 0.0,
-        out: npt.NDArray[np.double] | None = None,
+        out_position: npt.NDArray[np.double] | None = None,
+        out_velocity: npt.NDArray[np.double] | None = None,
     ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
-        r"""Map position vector from child reference frame to the global reference frame.
+        r"""Map velocity vectors from local reference frame to the global reference frame.
 
         Parameters
         ----------
-        x : (N, 3) array
-            Array of :math:`N` vectors in :math:`\mathbb{R}^3` in child reference frame.
+        position : (N, 3) array
+            Array of :math:`N` position vectors in :math:`\mathbb{R}^3` in local reference
+            frame.
+
+        velocity : (N, 3) array
+            Array of :math:`N` velocity vectors in :math:`\mathbb{R}^3` in local reference
+            frame.
+
         time : float, default: 0.0
             Time at which to evaluate the transformation.
-        out : (N, 3) array, optional
-            Array which receives the mapped vectors. Must have the exact shape of ``x``.
-            It must also have the :class:`dtype` for :class:`numpy.double`, as well as be
-            aligned, C-contiguous, and writable.
+
+        out_position : (N, 3) array, optional
+            Array which receives the mapped position vectors. Must have the exact shape of
+            ``position``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
+
+        out_velocity : (N, 3) array, optional
+            Array which receives the mapped velocity vectors. Must have the exact shape of
+            ``velocity``. It must also have the :class:`dtype` for :class:`numpy.double`,
+            as well as be aligned, C-contiguous, and writable.
 
         Returns
         -------
         (N, 3) array
-            Position vectors mapped to the global reference frame. If the ``out``
-            parameter was specified, this return value will be the same object. If ``out``
-            was not specified, then a new array will be allocated.
+            Position vectors mapped to the global reference frame. If the ``out_position``
+            parameter was specified, this return value will be the same object. If
+            ``out_position`` was not specified, then a new array will be allocated.
+
+        (N, 3) array
+            Velocity vectors mapped to the global reference frame. If the ``out_velocity``
+            parameter was specified, this return value will be the same object. If
+            ``out_velocity`` was not specified, then a new array will be allocated.
         """
         ...
 
@@ -924,10 +994,11 @@ class ReferenceFrame:
         velocity: npt.ArrayLike,
         start: ReferenceFrame | None = None,
         end: ReferenceFrame | None = None,
+        time: float = 0.0,
         out_position: npt.NDArray[np.double] | None = None,
         out_velocity: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]:
-        """Transform position and velocity vectors from one reference frame to another.
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
+        r"""Transform position and velocity vectors from one reference frame to another.
 
         Parameters
         ----------
@@ -964,7 +1035,7 @@ class ReferenceFrame:
             to it is returned.
 
         array
-            Array of velocity vectors. If ``out_velocity` was given, then the reference
+            Array of velocity vectors. If ``out_velocity`` was given, then the reference
             to it is returned.
         """
         ...
@@ -975,6 +1046,7 @@ class ReferenceFrame:
         x: npt.ArrayLike,
         start: ReferenceFrame | None = None,
         end: ReferenceFrame | None = None,
+        time: float = 0.0,
         out: npt.NDArray[np.double] | None = None,
     ) -> npt.NDArray[np.double]:
         """Transform vectors from one reference frame to another.
