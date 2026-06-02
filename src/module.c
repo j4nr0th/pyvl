@@ -4,6 +4,7 @@
 #include "meshobject.h"
 #include "referenceframeobject.h"
 
+#include "methods.h"
 #include <numpy/arrayobject.h>
 
 static int create_type_and_add_it(PyType_Spec *const specs, PyObject *const mod, PyTypeObject **const p_out)
@@ -57,6 +58,10 @@ static int cvl_module_add_types(PyObject *mod)
         if (res != 0)
             return res;
     }
+
+    const int res = PyModule_AddFunctions(mod, cvl_methods);
+    if (res != 0)
+        return res;
 
     // Just add the INVALID_ID at the end here
     return PyModule_AddIntConstant(mod, "INVALID_ID", INVALID_ID);

@@ -1082,3 +1082,99 @@ class ReferenceFrame:
     def is_moving(self) -> bool:
         """True if either the reference frame or its ancestors are moving."""
         ...
+
+def quad_induction(
+    tol: float,
+    quad_positions: npt.ArrayLike,
+    quad_circulations: npt.ArrayLike,
+    target_positions: npt.ArrayLike,
+    out_velocity: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
+) -> npt.NDArray[np.double]:
+    """Compute the influence of quadrilateral circulation filaments at input positions.
+
+    This is mainly used for computing the influence of the wake, which contains quads,
+    which are considered separate (hence no mesh).
+
+    Parameters
+    ----------
+    tol : float
+        Distance at which the induced velocity is set to zero due to being too
+        close to the vortex line.
+
+    quad_positions : (M, 4, 3) array
+        Array of positions of the corners of the quadrilateral filaments. The first
+        dimension corresponds to the filaments, while the second dimension corresponds to
+        the corners of each filament.
+
+    quad_circulations : (M,) array
+        Array of circulations for each quadrilateral filament.
+
+    target_positions : (K, 3) array
+        Array of positions at which to compute the velocity influence.
+
+    out_velocity : (K, 3) array, optional
+        Output array to write the computed velocities to. If not given, a new one is
+        created.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocities.
+
+    Returns
+    -------
+    (K, 3) array
+        Array of velocity vectors at the target positions induced by the quadrilateral
+        filaments. If ``out_velocity`` was given, then the reference to it is returned.
+    """
+    ...
+
+def quad_normal_induction(
+    tol: float,
+    quad_positions: npt.ArrayLike,
+    quad_circulations: npt.ArrayLike,
+    target_positions: npt.ArrayLike,
+    target_normals: npt.ArrayLike,
+    out_velocity: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
+) -> npt.NDArray[np.double]:
+    """Compute the normal velocity induced by the quad filaments at the given positions.
+
+    This is mainly used for computing the influence of the wake, which contains quads,
+    which are considered separate (hence no mesh).
+
+    Parameters
+    ----------
+    tol : float
+        Distance at which the induced velocity is set to zero due to being too
+        close to the vortex line.
+
+    quad_positions : (M, 4, 3) array
+        Array of positions of the corners of the quadrilateral filaments. The first
+        dimension corresponds to the filaments, while the second dimension corresponds to
+        the corners of each filament.
+
+    quad_circulations : (M,) array
+        Array of circulations for each quadrilateral filament.
+
+    target_positions : (K, 3) array
+        Array of positions at which to compute the velocity influence.
+
+    target_normals : (K, 3) array
+        Array of normal vectors at the target positions. The normal vectors should be
+        normalized.
+
+    out_velocity : (K, 3) array, optional
+        Output array to write the computed velocities to. If not given, a new one is
+        created.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocities.
+
+    Returns
+    -------
+    (K,) array
+        Array of normal components of velocity vectors at the target positions induced by
+        the quad filaments. If ``out_velocity`` was given, then the reference to it is
+        returned.
+    """
+    ...

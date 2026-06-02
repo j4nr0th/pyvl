@@ -83,6 +83,31 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
     }
 }
 
+real3_t compute_filament_induction(const real_t tol, const real3_t r1, const real3_t r2, const real3_t direction,
+                                   const real3_t control_point)
+{
+    const real3_t dr1 = real3_sub(control_point, r1);
+    const real3_t dr2 = real3_sub(control_point, r2);
+
+    const real_t tan_dist1 = real3_dot(direction, dr1);
+    const real_t tan_dist2 = real3_dot(direction, dr2);
+
+    const real_t norm_dist1 = real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1);
+    const real_t norm_dist2 = real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2);
+
+    const real_t norm_dist_squared = (norm_dist1 + norm_dist2) / 2.0;
+
+    if (norm_dist_squared < tol * tol)
+    {
+        //  Filament is too short
+        return (real3_t){0};
+    }
+
+    const real_t norm_dist = sqrt(norm_dist_squared);
+    const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
+    const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
+    return vel_dir;
+}
 void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
                             const unsigned n_positions,
                             const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions), const unsigned n_cpts,
@@ -100,42 +125,22 @@ void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(l
         const real3_t r2 = positions[pt2];
         real3_t direction = real3_sub(r2, r1);
         const real_t len = real3_mag(direction);
+        if (len < tol)
+        {
+            //  Filament is too short, all control points get zero influence
+            for (unsigned icp = 0; icp < n_cpts; ++icp)
+                out[icp * n_lines + iln] = (real3_t){0};
+
+            continue;
+        }
+
         direction.v0 /= len;
         direction.v1 /= len;
         direction.v2 /= len;
+
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
-            const real3_t control_point = cpts[icp];
-            if (len < tol)
-            {
-                //  Filament is too short
-                out[icp * n_lines + iln] = (real3_t){0};
-                continue;
-            }
-
-            const real3_t dr1 = real3_sub(control_point, r1);
-            const real3_t dr2 = real3_sub(control_point, r2);
-
-            const real_t tan_dist1 = real3_dot(direction, dr1);
-            const real_t tan_dist2 = real3_dot(direction, dr2);
-
-            const real_t norm_dist1 = real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1);
-            const real_t norm_dist2 = real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2);
-
-            const real_t norm_dist_squared = (norm_dist1 + norm_dist2) / 2.0;
-
-            if (norm_dist_squared < tol * tol)
-            {
-                //  Filament is too short
-                out[icp * n_lines + iln] = (real3_t){0};
-                continue;
-            }
-            const real_t norm_dist = sqrt(norm_dist_squared);
-
-            const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
-            // const real3_t dr_avg = (real3_mul1(real3_add(dr1, dr2), 0.5));
-            const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
-            out[icp * n_lines + iln] = vel_dir;
+            out[icp * n_lines + iln] = compute_filament_induction(tol, r1, r2, direction, cpts[icp]);
         }
     }
 }
