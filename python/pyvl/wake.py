@@ -82,6 +82,11 @@ class WakeState:
         out_velocity: npt.NDArray[np.double] | None = None,
     ) -> npt.NDArray[np.double]:
         """Compute the velocity induced by the wake at the given positions."""
+        if self.quad_count == 0:
+            if out_velocity is not None:
+                out_velocity[:] = 0.0
+                return out_velocity
+            return np.zeros_like(positions, dtype=np.double)
         return quad_induction(
             tol=tol,
             quad_positions=self.quad_positions[: self.quad_count],
@@ -98,6 +103,11 @@ class WakeState:
         out_velocity: npt.NDArray[np.double] | None = None,
     ) -> npt.NDArray[np.double]:
         """Compute the normal velocity induced by the wake at the given control points."""
+        if self.quad_count == 0:
+            if out_velocity is not None:
+                out_velocity[:] = 0.0
+                return out_velocity
+            return np.zeros(control_pts.shape[0], dtype=np.double)
         return quad_normal_induction(
             tol=tol,
             quad_positions=self.quad_positions[: self.quad_count],
@@ -204,7 +214,7 @@ class WakeState:
             reference to the same object, otherwise a new wake state object will be
             returned.
         """
-        if velocities.shape != (self.quad_count, *self.quad_positions.shape[:2]):
+        if velocities.shape != (self.quad_count, 4, 3):
             raise ValueError("Velocities must have the same shape as quad positions.")
 
         out_positions = (

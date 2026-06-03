@@ -34,7 +34,7 @@ class SolverResults:
             model_settings=settings.model_settings,
             time_settings=settings.time_settings,
         )
-        self.wake_models = list()
+        self.wake_states = list()
         self.circulations = np.empty(
             (settings.time_settings.output_times.size, geo.n_surfaces), np.double
         )
@@ -254,14 +254,24 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     wake_pos = wake.positions
-    wake_ind_mat = geometry.mesh.induction_matrix(
-        tol=tol,
-        positions=pos,
-        control_points=wake_pos,
+    if wake.quad_count == 0:
+        wake_mesh_induction = np.zeros((0, 4, 3), dtype=np.double)
+    else:
+        # Reshape wake positions to (M*4, 3) to use induction_matrix
+        wake_pos_flat = wake_pos.reshape(-1, 3)
+        wake_ind_mat_flat = geometry.mesh.induction_matrix(
+            tol=tol,
+            positions=pos,
+            control_points=wake_pos_flat,
+        )
+        # Reshape back to (M, 4, n_surfaces, 3)
+        wake_ind_mat = wake_ind_mat_flat.reshape(wake.quad_count, 4, -1, 3)
+        wake_mesh_induction = np.sum(wake_ind_mat * out_circ[None, None, :, None], axis=2)
+
+    wake_self_induction = wake.induced_velocity(
+        tol=tol, positions=wake_pos[: wake.quad_count]
     )
-    wake_mesh_induction = np.sum(wake_ind_mat * out_circ[None, :, None], axis=1)
-    wake_self_induction = wake.induced_velocity(tol=tol, positions=wake_pos)
-    wake_freestream = flow_cond.get_velocity(target_time, wake_pos)
+    wake_freestream = flow_cond.get_velocity(target_time, wake_pos[: wake.quad_count])
 
     # update the wake model
     wake.update_wake(
