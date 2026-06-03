@@ -34,16 +34,12 @@ def compute_velocities(
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
         pos = results.geometry.positions_at_time(t)
-        ind_mat = msh.induction_matrix(
-            results.settings.model_settings.vortex_limit,
-            pos,
-            cpts,
-        )
+        tol = results.settings.model_settings.vortex_limit
+        ind_mat = msh.induction_matrix(tol, pos, cpts)
         np.vecdot(ind_mat, circulation[None, :, None], axis=1, out=output_array[i, :, :])  # type: ignore
         output_array[i, :, :] += results.settings.flow_conditions.get_velocity(t, cpts)
-        wm = results.wake_models[i]
-        if wm is not None:
-            output_array[i, :, :] += wm.get_velocity(cpts)
+        wm = results.wake_states[i]
+        output_array[i, :, :] += wm.induced_velocity(tol, cpts)
     return output_array
 
 
@@ -76,14 +72,10 @@ def compute_velocities_variable(
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
         pos = results.geometry.positions_at_time(t)
-        ind_mat = msh.induction_matrix(
-            results.settings.model_settings.vortex_limit,
-            pos,
-            cpts,
-        )
+        tol = results.settings.model_settings.vortex_limit
+        ind_mat = msh.induction_matrix(tol, pos, cpts)
         out_list.append(np.vecdot(ind_mat, circulation[None, :, None], axis=1))  # type: ignore
         out_list[-1] += results.settings.flow_conditions.get_velocity(t, cpts)
-        wm = results.wake_models[i]
-        if wm is not None:
-            out_list[-1] += wm.get_velocity(cpts)
+        wm = results.wake_states[i]
+        out_list[-1] += wm.induced_velocity(tol, cpts)
     return out_list

@@ -14,18 +14,17 @@ from pyvl._typing import CallableDeserializer, CallableSerializer
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationFunction
 from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
-from pyvl.fio.type_resolution import wake_model_from_serial
 from pyvl.geometry import SimulationGeometry
 from pyvl.settings import SolverSettings
-from pyvl.wake import WakeModel
+from pyvl.wake import WakeState
 
 
 class SolverResults:
     """Class containing results of a solver."""
 
     geometry: SimulationGeometry
-    circulations: npt.NDArray[np.float64]
-    wake_models: list[WakeModel | None]
+    circulations: npt.NDArray[np.double]
+    wake_states: list[WakeState]
     settings: SolverSettings
 
     def __init__(self, geo: SimulationGeometry, settings: SolverSettings):
@@ -37,57 +36,30 @@ class SolverResults:
         )
         self.wake_models = list()
         self.circulations = np.empty(
-            (settings.time_settings.output_times.size, geo.n_surfaces), np.float64
+            (settings.time_settings.output_times.size, geo.n_surfaces), np.double
         )
 
 
+@dataclass(frozen=True)
 class SolverState:
     """State of the solver at a specific moment."""
 
-    positions: npt.NDArray[np.float64]
-    normals: npt.NDArray[np.float64]
-    control_points: npt.NDArray[np.float64]
-    cp_velocity: npt.NDArray[np.float64]
-    circulation: npt.NDArray[np.float64]
+    time: float
+    cp_velocity: npt.NDArray[np.double]
+    circulation: npt.NDArray[np.double]
     geometry: SimulationGeometry
     settings: SolverSettings
-    wake_model: WakeModel | None
-    iteration: int
-
-    def __init__(
-        self,
-        geometry: SimulationGeometry,
-        settings: SolverSettings,
-        wake_model: WakeModel | None,
-    ) -> None:
-        self.geometry = geometry
-        self.positions = np.empty((geometry.n_points, 3), np.float64)
-        self.normals = np.empty((geometry.n_surfaces, 3), np.float64)
-        self.control_points = np.empty((geometry.n_surfaces, 3), np.float64)
-        self.cp_velocity = np.empty((geometry.n_surfaces, 3), np.float64)
-        self.circulation = np.empty((geometry.n_surfaces,), np.float64)
-        self.settings = settings
-        self.wake_model = wake_model
+    wake: WakeState
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize current state to a HirearchicalMap."""
         out = HirearchicalMap()
-        out.insert_array("positions", self.positions)
-        out.insert_array("normals", self.normals)
-        out.insert_array("control_points", self.control_points)
+        out.insert_scalar("time", self.time)
         out.insert_array("cp_velocity", self.cp_velocity)
         out.insert_array("circulation", self.circulation)
-        out.insert_int("iteration", self.iteration)
-        out.insert_hirearchycal_map("solver_settings", self.settings.save())
-        out.insert_hirearchycal_map("simulation_geometry", self.geometry.save(serializer))
-        if self.wake_model is not None:
-            wake_model = HirearchicalMap()
-            wake_model.insert_string(
-                "type",
-                type(self.wake_model).__module__ + "." + type(self.wake_model).__name__,
-            )
-            wake_model.insert_hirearchycal_map("data", self.wake_model.save())
-            out.insert_hirearchycal_map("wake_model", wake_model)
+        out.insert_hirearchical_map("solver_settings", self.settings.save(serializer))
+        out.insert_hirearchical_map("simulation_geometry", self.geometry.save(serializer))
+        out.insert_hirearchical_map("wake", self.wake.save())
         return out
 
     @classmethod
@@ -110,25 +82,40 @@ class SolverState:
         allow_override : bool, default: False
             If True, custom types can override built-in types.
         """
-        geometry = SimulationGeometry.load(
-            hmap.get_hirearchical_map("simulation_geometry"), deserializer
+        return cls(
+            time=hmap.get_scalar("time"),
+            geometry=SimulationGeometry.load(
+                hmap.get_hirearchical_map("simulation_geometry"), deserializer
+            ),
+            settings=SolverSettings.load(
+                hmap.get_hirearchical_map("solver_settings"),
+                deserializer,
+                custom_types,
+                allow_override,
+            ),
+            wake=WakeState.load(hmap.get_hirearchical_map("wake")),
+            cp_velocity=hmap.get_array("cp_velocity"),
+            circulation=hmap.get_array("circulation"),
         )
-        settings = SolverSettings.load(
-            hmap.get_hirearchical_map("solver_settings"), custom_types, allow_override
-        )
-        wake_model = None
-        if "wake_model" in hmap:
-            wm_hmap = hmap.get_hirearchical_map("wake_model")
-            wake_model = wake_model_from_serial(wm_hmap, custom_types, allow_override)
-        self = cls(geometry=geometry, settings=settings, wake_model=wake_model)
-        self.iteration = hmap.get_int("iteration")
-        self.positions[:] = hmap.get_array("positions")
-        self.normals[:] = hmap.get_array("normals")
-        self.control_points[:] = hmap.get_array("control_points")
-        self.circulation[:] = hmap.get_array("circulation")
-        self.cp_velocity[:] = hmap.get_array("cp_velocity")
 
-        return self
+    @classmethod
+    def create_new(
+        cls,
+        time: float,
+        geometry: SimulationGeometry,
+        settings: SolverSettings,
+    ) -> Self:
+        """Create a new :class:`SolverState` object with uninitialized state."""
+        return cls(
+            time=time,
+            geometry=geometry,
+            settings=settings,
+            wake=WakeState.empty(
+                settings.model_settings.wake_settings.wake_element_capacity
+            ),
+            cp_velocity=np.empty((geometry.n_surfaces, 3), np.double),
+            circulation=np.empty(geometry.n_surfaces, np.double),
+        )
 
 
 OutputFileType = Literal["HDF5", "JSON"]
@@ -174,10 +161,133 @@ class OutputSettings:
         )
 
 
+def update_simulation_state(
+    state: SolverState,
+    target_time: float,
+    out_state: SolverState | None = None,
+) -> SolverState:
+    """Update the simulation state by applying the wake model's update method.
+
+    Parameters
+    ----------
+    state : SolverState
+        The current state of the solver.
+
+    target_time : float
+        The target simulation time.
+
+    out_state : SolverState, optional
+        The state to write the updated values to. If not provided,
+        the input state will be updated in-place.
+
+    Returns
+    -------
+    SolverState
+        Updated solver state. If the output state is provided,
+        this will be the reference to the same object, otherwise a new
+        state object will be returned.
+    """
+    # Check that we are not going back in time
+    if target_time < state.time:
+        raise ValueError(
+            f"Target time {target_time} is less than current time {state.time}."
+        )
+
+    geometry = state.geometry
+    settings = state.settings
+    tol = settings.model_settings.vortex_limit
+    flow_cond = settings.flow_conditions
+    wake = state.wake
+
+    # Ensure output state
+    if out_state is None:
+        out_cp_vel = np.empty_like(state.cp_velocity)
+        out_circ = np.empty_like(state.circulation)
+        out_wake = WakeState.empty(capacity=state.wake.capacity)
+    else:
+        out_cp_vel = out_state.cp_velocity
+        out_circ = out_state.circulation
+        out_wake = out_state.wake
+
+    # Compute the positions and velocities of the geometry at the current time step
+    pos, vel = geometry.geometry_at_time(target_time)
+
+    # Compute the positions, normals, and velocities of the control points
+    norm = geometry.mesh.surface_normal(pos)
+    cp_pos = geometry.mesh.surface_average_vec3(pos)
+    cp_vel = geometry.mesh.surface_average_vec3(vel)
+
+    # Compute the wake model's effect
+    wake.induced_normal_velocity(
+        tol=tol,
+        control_pts=cp_pos,
+        normals=norm,
+        out_velocity=out_circ,
+    )
+
+    # Compute flow velocity
+    element_velocity = flow_cond.get_velocity(target_time, cp_pos)
+    # Add the control point velocities
+    element_velocity -= cp_vel
+    # Compute flow penetration at control points
+    out_circ[:] -= np.sum(norm * element_velocity, axis=1)
+    # Compute normal induction
+    system_matrix = geometry.mesh.induction_matrix3(
+        tol=tol,
+        positions=pos,
+        control_points=cp_pos,
+        normals=norm,
+    )
+
+    # Decompose the system matrix to allow for solving multiple times
+    decomp = la.lu_factor(system_matrix, overwrite_a=True)
+
+    # Solve the linear system
+    # By setting overwrite_b=True, rhs is where the output is written to
+    out_circ[:] = np.asarray(la.lu_solve(decomp, out_circ, overwrite_b=True), np.double)
+    # Adjust circulations of closed surfaces to have zero mean circulation
+    for geo_name in geometry:
+        info = geometry[geo_name]
+        if not info.closed:
+            continue
+        out_circ[info.surfaces] -= np.mean(out_circ[info.surfaces])
+
+    # Compute the velocities of wake elements at this time step
+    wake_pos = wake.positions
+    wake_ind_mat = geometry.mesh.induction_matrix(
+        tol=tol,
+        positions=pos,
+        control_points=wake_pos,
+    )
+    wake_mesh_induction = np.sum(wake_ind_mat * out_circ[None, :, None], axis=1)
+    wake_self_induction = wake.induced_velocity(tol=tol, positions=wake_pos)
+    wake_freestream = flow_cond.get_velocity(target_time, wake_pos)
+
+    # update the wake model
+    wake.update_wake(
+        dt=target_time - state.time,
+        velocities=wake_freestream + wake_mesh_induction + wake_self_induction,
+        out_state=out_wake,
+    )
+
+    # TODO: add new wake elements based on shedding
+
+    if out_state is None:
+        return SolverState(
+            time=target_time,
+            cp_velocity=out_cp_vel,
+            circulation=out_circ,
+            geometry=state.geometry,
+            settings=state.settings,
+            wake=out_wake,
+        )
+
+    return out_state
+
+
 def run_solver(
     geometry: SimulationGeometry,
     settings: SolverSettings,
-    wake_model: WakeModel | None,
     output_settings: OutputSettings | None,
 ) -> SolverResults:
     """Run the flow solver to obtain specified circulations.
@@ -186,101 +296,43 @@ def run_solver(
     ----------
     geometry : SimulationGeometry
         Geometry to solver for.
+
     settings : SolverSettings
         Settings of the solver.
-    wake_model : WakeModel, optional
-        Model with which to model the wake with.
+
     output_settings : OutputSettings, optional
         Settings related to file IO.
     """
     results = SolverResults(geometry, settings)
-    times: npt.NDArray[np.float64]
+    times: npt.NDArray[np.double]
     if settings.time_settings is None:
-        times = np.array((0,), np.float64)
+        times = np.array((0,), np.double)
     else:
         times = np.astype(
-            np.arange(settings.time_settings.nt) * settings.time_settings.dt, np.float64
+            np.arange(settings.time_settings.nt) * settings.time_settings.dt, np.double
         )
 
     i_out = 0
 
-    state = SolverState(geometry, settings, wake_model)
+    # Main state
+    state = SolverState.create_new(times[0], geometry, settings)
+    # Output state to avoid unnecessary allocations during the loop
+    out_state = SolverState.create_new(times[0], geometry, settings)
 
     for iteration, time in enumerate(times):
-        state.iteration = iteration
         iteration_begin_time = perf_counter()
-        for geo_name in geometry:
-            info = geometry[geo_name]
-            positions = np.array(info.pos)
-            velocities = np.zeros_like(positions)
-            info.rf
-            positions, velocities = info.rf.to_global_velocity(
-                positions, velocities, time=time
-            )
-            # Update the properties in the global reference frame
-            state.positions[info.points] = positions
-            state.control_points[info.surfaces] = info.msh.surface_average_vec3(positions)
-            state.cp_velocity[info.surfaces] = info.msh.surface_average_vec3(velocities)
-            state.normals[info.surfaces] = info.msh.surface_normal(positions)
-
-        # Compute flow velocity
-        element_velocity = settings.flow_conditions.get_velocity(
-            time, state.control_points
-        )
-        # Add the control point velocities
-        element_velocity -= state.cp_velocity
-        # Compute flow penetration at control points
-        np.vecdot(state.normals, -element_velocity, out=state.circulation, axis=1)  # type: ignore
-        # if updated != 0:
-        # Compute normal induction
-        system_matrix = geometry.mesh.induction_matrix3(
-            settings.model_settings.vortex_limit,
-            state.positions,
-            state.control_points,
-            state.normals,
-        )
-
-        # Apply the wake model's effect
-        if state.wake_model is not None and iteration > 0:
-            state.wake_model.apply_corrections(
-                state.control_points, state.normals, system_matrix, state.circulation
-            )
-
-        # Decompose the system matrix to allow for solving multiple times
-        decomp = la.lu_factor(system_matrix, overwrite_a=True)
-
-        # Solve the linear system
-        # By setting overwrite_b=True, rhs is where the output is written to
-        circulation = np.asarray(
-            la.lu_solve(decomp, state.circulation, overwrite_b=True), np.double
-        )
-        # Adjust circulations
-        for geo_name in geometry:
-            info = geometry[geo_name]
-            if not info.closed:
-                continue
-            circulation[info.surfaces] -= np.mean(circulation[info.surfaces])
-
-        # update the wake model
-        if state.wake_model is not None:
-            state.wake_model.update(
-                time, geometry, state.positions, circulation, settings.flow_conditions
-            )
-
+        update_simulation_state(state, time, out_state=out_state)
         iteration_end_time = perf_counter()
+        # Swap the states for the next iteration
+        state, out_state = out_state, state
+
         if (
             settings.time_settings is None
             or (settings.time_settings.output_interval is None)
             or (iteration % settings.time_settings.output_interval == 0)
         ):
-            results.circulations[i_out, :] = circulation
-            wm = state.wake_model
-
-            if wm is not None:
-                results.wake_models.append(type(wm).load(wm.save()))  # type: ignore it is not ABC
-            else:
-                results.wake_models.append(None)
-
+            results.circulations[i_out, :] = state.circulation
+            results.wake_states.append(state.wake)
             if output_settings is not None:
                 output_settings.serialization_fn(
                     state.save(output_settings.callable_serializer),
@@ -293,17 +345,3 @@ def run_solver(
         )
 
     return results
-
-
-def compute_induced_velocities(
-    state: SolverState,
-    positions: npt.ArrayLike,
-) -> npt.NDArray:
-    """Compute velocity induced by the mesh with circulation."""
-    points = np.asarray(positions, np.float64).reshape((-1, 3))
-    ind_mat = state.geometry.mesh.induction_matrix(
-        state.settings.model_settings.vortex_limit,
-        points,
-        state.positions,
-    )
-    return np.vecdot(ind_mat, state.circulation[None, :, None], axis=1)  # type: ignore

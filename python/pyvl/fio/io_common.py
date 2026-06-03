@@ -11,12 +11,39 @@ from numpy import typing as npt
 
 
 class HirearchicalMap(MutableMapping[str, Any]):
-    """Mapping which contains other hierarchical mappings or values uniquly."""
+    """Mapping which contains other hierarchical mappings or values uniquly.
+
+    This is a thin wrapper around a dictionary, which provides some type checking and
+    some convenience functions for inserting and retrieving values. It also provides
+    some protection against cyclical hierarchies, which would cause infinite recursion.
+
+    The reason for using this is to provide a way to serialize and deserialize objects in
+    a structured way, which can then be used with any serializer and deserializer,
+    such as JSON, YAML, HDF5, or any other format which allows for hierarchical data.
+    """
 
     _map: dict[str, HirearchicalMap | Any]
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs) -> None:
         self._map = dict()
+        for key in kwargs:
+            val = kwargs[key]
+            match val:
+                case HirearchicalMap():
+                    self.insert_hirearchical_map(key, val)
+                case str():
+                    self.insert_string(key, val)
+                case int():
+                    self.insert_int(key, val)
+                case float():
+                    self.insert_scalar(key, val)
+                case _:
+                    if isinstance(val, np.ndarray):
+                        self.insert_array(key, val)
+                    else:
+                        raise TypeError(
+                            f"Value of type {type(val).__name__} is not supported."
+                        )
 
     def __getitem__(self, key: str) -> Any:
         """Return the value associated with the key."""
@@ -61,7 +88,7 @@ class HirearchicalMap(MutableMapping[str, Any]):
 
         return False
 
-    def insert_hirearchycal_map(self, key: str, value: HirearchicalMap) -> None:
+    def insert_hirearchical_map(self, key: str, value: HirearchicalMap) -> None:
         """Insert another mapping into the mapping."""
         if self._recursion_check(value):
             raise ValueError(
@@ -139,7 +166,12 @@ DeserializationFunction = Callable[[Path | str], HirearchicalMap]
 
 
 class PythonSerializer:
-    """Serializer for the current Python session."""
+    """Serializer for the current Python session.
+
+    This is a very basic serializer, which allows to serialize and deserialize callables,
+    such as functions for the current Python session, as it keeps everything as in-memory
+    reference.
+    """
 
     _contents: dict[str, Callable]
 

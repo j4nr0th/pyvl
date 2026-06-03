@@ -27,6 +27,7 @@ list(
         src/geoidobject.c
         src/meshobject.c
         src/referenceframeobject.c
+        src/methods.c
 )
 
 list(
@@ -36,6 +37,7 @@ list(
         src/geoidobject.h
         src/meshobject.h
         src/referenceframeobject.h
+        src/methods.h
 )
 
 list(

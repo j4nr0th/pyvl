@@ -8,11 +8,7 @@ import numpy as np
 import pytest
 from pyvl import Geometry, ReferenceFrame, fio, mesh_from_mesh_io
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer
-from pyvl.fio.type_resolution import (
-    flow_conditions_from_serial,
-    reference_frame_from_serial,
-    wake_model_from_serial,
-)
+from pyvl.fio.type_resolution import flow_conditions_from_serial
 from pyvl.flow_conditions import FlowConditionsUniform
 from pyvl.geometry import rf_from_serial, rf_to_serial
 
@@ -197,14 +193,3 @@ def test_flow_conditions_override() -> None:
 
     fc = flow_conditions_from_serial(group, custom_types, allow_override=True)
     assert isinstance(fc, CustomFlowConditions)
-
-
-def test_wake_model_unknown_type() -> None:
-    """Test that unknown WakeModel type raises TypeError."""
-    group = HirearchicalMap()
-    group.insert_string("type", "pyvl.nonexistent.CustomWakeModel")
-    data = HirearchicalMap()
-    group.insert_hirearchycal_map("data", data)
-
-    with pytest.raises(TypeError, match="Unknown WakeModel type"):
-        wake_model_from_serial(group)

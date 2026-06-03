@@ -33,11 +33,7 @@ from pyvl.settings import TimeSettings as TimeSettings
 
 # Solver
 from pyvl.solver import OutputSettings as OutputSettings
-from pyvl.solver import compute_induced_velocities as compute_induced_velocities
 from pyvl.solver import run_solver as run_solver
 
-# Wake models
-from pyvl.wake import WakeModel as WakeModel
-from pyvl.wake_models import (
-    WakeModelLineExplicitUnsteady as WakeModelLineExplicitUnsteady,
-)
+# Wake
+from pyvl.wake import WakeState as WakeState

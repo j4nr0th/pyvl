@@ -2,14 +2,16 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Self
+from typing import Protocol, Self
 
 import numpy as np
 import numpy.typing as npt
 
+from pyvl._typing import CallableDeserializer, CallableSerializer
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import flow_conditions_from_serial
 from pyvl.flow_conditions import FlowConditions
+from pyvl.geometry import SimulationGeometry
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,105 @@ class TimeSettings:
         return cls(nt=nt, dt=dt, output_interval=output_interval)
 
 
+class ShedderCallback(Protocol):
+    """Protocol for wake shedding functions."""
+
+    def __call__(
+        self,
+        geometry: SimulationGeometry,
+        positions: npt.NDArray[np.double],
+        velocity: npt.NDArray[np.double],
+        time: float,
+    ) -> npt.ArrayLike:
+        """Determine what elements should shed vorticity from the geometry.
+
+        Parameters
+        ----------
+        geometry : SimulationGeometry
+            The geometry to shed the wake from.
+
+        positions : array
+            Positions of the geometry points in the global coordinate system.
+
+        velocity : array
+            Velocity of the geometry points in the global coordinate system.
+
+        time : float
+            The current simulation time.
+
+        Returns
+        -------
+        array_like
+            Indices of lines which should shed vorticity from the geometry.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class WakeShedderCallback:
+    """Dataclass specifying wake shedding based on a callback."""
+
+    shedder: ShedderCallback
+    """Function to determine which elements should shed vorticity from the geometry."""
+
+
+@dataclass(frozen=True)
+class WakeShedderUniform:
+    """Dataclass specifying uniform wake shedding."""
+
+    indices: npt.NDArray[np.uint]
+
+    def __init__(self, indices: npt.ArrayLike) -> None:
+        idx = np.asarray(indices, dtype=np.uint)
+        if idx.ndim != 1:
+            raise ValueError("Indices must be a 1D array.")
+        object.__setattr__(self, "indices", idx)
+
+
+@dataclass(frozen=True)
+class WakeSettings:
+    """Dataclass for wake model settings."""
+
+    wake_shedder: WakeShedderUniform | WakeShedderCallback
+    """Function to determine which elements should shed vorticity from the geometry."""
+
+    wake_element_capacity: int = 1000
+    """The maximum number of wake elements to store in the wake model."""
+
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
+        """Serialize the object into a HirearchicalMap.
+
+        Returns
+        -------
+        HirearchicalMap
+            Serialized state of the :class:`WakeSettings` object.
+        """
+        hm = HirearchicalMap()
+        if isinstance(self.wake_shedder, WakeShedderUniform):
+            hm.insert_string("type", "uniform")
+            hm.insert_array("indices", self.wake_shedder.indices)
+        else:
+            hm.insert_string("type", "callback")
+            hm.insert_string("callable", serializer(self.wake_shedder.shedder))
+        return hm
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
+        """Deserialize the object from a HirearchicalMap."""
+        shedder_type = hmap.get_string("type")
+        match shedder_type:
+            case "uniform":
+                indices = hmap.get_array("indices")
+                wake_shedder = WakeShedderUniform(indices)
+            case "callback":
+                callable_name = hmap.get_string("callable")
+                shedder_callable = deserializer(callable_name)
+                wake_shedder = WakeShedderCallback(shedder_callable)
+            case _:
+                raise ValueError(f"Unknown shedder type: {shedder_type}")
+        return cls(wake_shedder=wake_shedder)
+
+
 @dataclass
 class ModelSettings:
     """Class for specifying model settings.
@@ -94,6 +195,9 @@ class ModelSettings:
     ----------
     vortex_limit : float
         Minimum distance at which the vortex line induces and velocity.
+
+    wake_element_capacity : int, default: 1000
+        The maximum number of wake elements to store in the wake model.
     """
 
     vortex_limit: float
@@ -124,7 +228,9 @@ class ModelSettings:
     other, as the induction might become too large and make the results unstable.
     """
 
-    def save(self) -> HirearchicalMap:
+    wake_settings: WakeSettings
+
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
 
         Returns
@@ -134,10 +240,11 @@ class ModelSettings:
         """
         hm = HirearchicalMap()
         hm.insert_scalar("vortex_limit", self.vortex_limit)
+        hm.insert_hirearchical_map("wake_settings", self.wake_settings.save(serializer))
         return hm
 
     @classmethod
-    def load(cls, hmap: HirearchicalMap) -> Self:
+    def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Deserialize the object from a HirearchicalMap.
 
         Parameters
@@ -151,10 +258,12 @@ class ModelSettings:
         Self
             Deserialized :class:`ModelSettings` object.
         """
-        return cls(vortex_limit=hmap.get_scalar("vortex_limit"))
-
-
-# TODO: symmetry settings
+        return cls(
+            vortex_limit=hmap.get_scalar("vortex_limit"),
+            wake_settings=WakeSettings.load(
+                hmap.get_hirearchical_map("wake_settings"), deserializer
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -172,17 +281,13 @@ class SolverSettings:
     time_setting : TimeSettings, default : TimeSettings(1, 1, None)
         Time iterations at which to run the solver. By default, a single iteration
         at time :math:`t = 0` will be run and the result recorded.
-
-    wake_model : WakeModel, optional
-        Model used to correct for the shedding of a wake from the geometry as
-        a result of circulation. If not provided, no model will be used.
     """
 
     flow_conditions: FlowConditions
     model_settings: ModelSettings
     time_settings: TimeSettings = TimeSettings(1, 1, None)
 
-    def save(self) -> HirearchicalMap:
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
 
         Returns
@@ -199,18 +304,19 @@ class SolverSettings:
             + "."
             + type(self.flow_conditions).__name__,
         )
-        fc.insert_hirearchycal_map("data", self.flow_conditions.save())
-        hm.insert_hirearchycal_map("flow_conditions", fc)
+        fc.insert_hirearchical_map("data", self.flow_conditions.save())
+        hm.insert_hirearchical_map("flow_conditions", fc)
         # Model settings
-        hm.insert_hirearchycal_map("model_settings", self.model_settings.save())
+        hm.insert_hirearchical_map("model_settings", self.model_settings.save(serializer))
         # Time settings
-        hm.insert_hirearchycal_map("time_settings", self.time_settings.save())
+        hm.insert_hirearchical_map("time_settings", self.time_settings.save())
         return hm
 
     @classmethod
     def load(
         cls,
         hmap: HirearchicalMap,
+        deserializer: CallableDeserializer,
         custom_types: Mapping[str, type] | None = None,
         allow_override: bool = False,
     ) -> Self:
@@ -235,7 +341,9 @@ class SolverSettings:
         flow_conditions = flow_conditions_from_serial(fc, custom_types, allow_override)
 
         # Model settings
-        model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))
+        model_settings = ModelSettings.load(
+            hmap.get_hirearchical_map("model_settings"), deserializer
+        )
         # Time settings
         time_settings = TimeSettings.load(hmap.get_hirearchical_map("time_settings"))
         return cls(

@@ -18,7 +18,7 @@ from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import reference_frame_from_serial
 
 
-def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
+def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.double], Mesh]:
     """Convert a meshio.Mesh object into position array and pyvl.Mesh.
 
     This function extracts 2D cell blocks from the meshio mesh and converts them
@@ -48,7 +48,7 @@ def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.float64], Mesh]:
             continue
         for element in c.data:
             connections.append(np.asarray(element, np.uint32))
-    return (np.asarray(m.points, dtype=np.float64), Mesh(m.points.shape[0], connections))
+    return (np.asarray(m.points, dtype=np.double), Mesh(m.points.shape[0], connections))
 
 
 def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
@@ -85,9 +85,10 @@ def rf_to_serial(self: ReferenceFrame, serializer: CallableSerializer) -> Hirear
     """Serialize the ReferenceFrame into a HirearchicalMap."""
     out = HirearchicalMap()
     self.save(out, serializer)
+    print(f"DEBUG: ReferenceFrame keys after save: {list(out.keys())}")
     if self.parent is not None:
         parent = rf_to_serial(self.parent, serializer)
-        out.insert_hirearchycal_map("parent", parent)
+        out.insert_hirearchical_map("parent", parent)
     return out
 
 
@@ -172,7 +173,7 @@ class Geometry:
 
     label: str
     reference_frame: ReferenceFrame
-    positions: npt.NDArray[np.float64]
+    positions: npt.NDArray[np.double]
     msh: Mesh
 
     def __init__(
@@ -196,7 +197,7 @@ class Geometry:
                 f"mesh must be a either Mesh object, instead it was {type(mesh)}."
             )
         try:
-            pos = np.array(positions, np.float64).reshape((-1, 3))
+            pos = np.array(positions, np.double).reshape((-1, 3))
         except Exception as e:
             raise ValueError("Positions must be a (N, 3) array.") from e
 
@@ -486,9 +487,9 @@ class Geometry:
         out = HirearchicalMap()
         out.insert_array("positions", self.positions)
         mesh_group = mesh_to_serial(self.msh)
-        out.insert_hirearchycal_map("mesh", mesh_group)
+        out.insert_hirearchical_map("mesh", mesh_group)
         rf_group = rf_to_serial(self.reference_frame, serializer)
-        out.insert_hirearchycal_map("reference_frame", rf_group)
+        out.insert_hirearchical_map("reference_frame", rf_group)
         return out
 
     @classmethod
@@ -536,7 +537,7 @@ class Geometry:
         )
 
     @property
-    def normals(self) -> npt.NDArray[np.float64]:
+    def normals(self) -> npt.NDArray[np.double]:
         r"""Normals to geometry surfaces in the global reference frame.
 
         This property computes the unit normal vectors to each surface. The normal
@@ -561,7 +562,7 @@ class Geometry:
         return self.reference_frame.from_parent_vector(n, out=n)
 
     @property
-    def centers(self) -> npt.NDArray[np.float64]:
+    def centers(self) -> npt.NDArray[np.double]:
         r"""Compute centers of geometry sufraces in the global reference frame.
 
         These are computed by simply finding the average position vector:
@@ -585,8 +586,7 @@ class GeometryInfo:
     """Class containing information about geometry."""
 
     rf: ReferenceFrame
-    msh: Mesh
-    pos: npt.NDArray[np.float64]
+    pos: npt.NDArray[np.double]
     closed: bool
     points: slice
     lines: slice
@@ -598,13 +598,46 @@ class GeometryInfo:
             return False
         return (
             self.rf == other.rf
-            and self.msh == other.msh
             and np.allclose(self.pos, other.pos)
             and self.closed == other.closed
             and self.points == other.points
             and self.lines == other.lines
             and self.surfaces == other.surfaces
         )
+
+    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
+        """Save geometry info into a HirearchicalMap."""
+        out = HirearchicalMap()
+        out.insert_array("pos", self.pos)
+        out.insert_hirearchical_map("reference_frame", rf_to_serial(self.rf, serializer))
+        out.insert_int("closed", self.closed)
+        out.insert_int("points_start", self.points.start)
+        out.insert_int("points_stop", self.points.stop)
+        out.insert_int("lines_start", self.lines.start)
+        out.insert_int("lines_stop", self.lines.stop)
+        out.insert_int("surfaces_start", self.surfaces.start)
+        out.insert_int("surfaces_stop", self.surfaces.stop)
+        return out
+
+    @classmethod
+    def load(cls, group: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
+        """Load geometry info from a HirearchicalMap."""
+        pos = group.get_array("pos")
+        rf = rf_from_serial(group.get_hirearchical_map("reference_frame"), deserializer)
+        closed = bool(group.get_int("closed"))
+        points = slice(
+            group.get_int("points_start"),
+            group.get_int("points_stop"),
+        )
+        lines = slice(
+            group.get_int("lines_start"),
+            group.get_int("lines_stop"),
+        )
+        surfaces = slice(
+            group.get_int("surfaces_start"),
+            group.get_int("surfaces_stop"),
+        )
+        return cls(rf, pos, closed, points, lines, surfaces)
 
 
 @dataclass(frozen=True)
@@ -661,11 +694,21 @@ class SimulationGeometry(Mapping):
     _info: dict[str, GeometryInfo]
     mesh: Mesh
     dual: Mesh
-    n_surfaces: int
-    n_lines: int
-    n_points: int
 
-    def __init__(self, *geometries: Geometry) -> None:
+    @classmethod
+    def from_geometries(cls, *geometries: Geometry) -> SimulationGeometry:
+        """Create a SimulationGeometry from multiple Geometry objects.
+
+        Parameters
+        ----------
+        *geometries: Geometry
+            The individual geometries to add in the :class:`SimulationGeometry`.
+
+        Returns
+        -------
+        SimulationGeometry
+            The created :class:`SimulationGeometry` object.
+        """
         geos = {g.label: g for g in geometries}
         meshes: list[Mesh] = []
         info: dict[str, GeometryInfo] = {}
@@ -691,7 +734,6 @@ class SimulationGeometry(Mapping):
                     break
             info[g.label] = GeometryInfo(
                 g.reference_frame,
-                g.msh,
                 g.positions,
                 closed,
                 slice(n_points, n_points + c_p),
@@ -702,12 +744,12 @@ class SimulationGeometry(Mapping):
             n_lines += c_l
             n_surfaces += c_s
 
-        object.__setattr__(self, "_info", info)
-        object.__setattr__(self, "mesh", Mesh.merge_meshes(*meshes))
-        object.__setattr__(self, "dual", self.mesh.compute_dual())
-        object.__setattr__(self, "n_points", n_points)
-        object.__setattr__(self, "n_lines", n_lines)
-        object.__setattr__(self, "n_surfaces", n_surfaces)
+        merged_mesh = Mesh.merge_meshes(*meshes)
+        return cls(
+            _info=info,
+            mesh=merged_mesh,
+            dual=merged_mesh.compute_dual(),
+        )
 
     def __getitem__(self, key: str) -> GeometryInfo:
         """Return the Geometry corresponding to the key."""
@@ -737,7 +779,24 @@ class SimulationGeometry(Mapping):
         """Return the view of the values."""
         return self._info.values()
 
-    def positions_at_time(self, t: float) -> npt.NDArray[np.float64]:
+    @property
+    def n_surfaces(self) -> int:
+        """Return the total number of surfaces in the simulation geometry."""
+        return self.mesh.n_surfaces
+
+    @property
+    def n_lines(self) -> int:
+        """Return the total number of lines in the simulation geometry."""
+        return self.mesh.n_lines
+
+    @property
+    def n_points(self) -> int:
+        """Return the total number of points in the simulation geometry."""
+        return self.mesh.n_points
+
+    def positions_at_time(
+        self, t: float, out_pos: npt.NDArray[np.double] | None = None
+    ) -> npt.NDArray[np.double]:
         """Return the point positions at the specified time.
 
         This uses the different reference frames of the individual :class:`Geometry`
@@ -746,44 +805,91 @@ class SimulationGeometry(Mapping):
         Parameters
         ----------
         t : float
-            Time at which to get the positions at.
+            Time at which to get the positions and velocities at.
+
+        out_pos : (N, 3) array, optional
+            Optional array to store the positions in. If not provided, a new array will
+            be created.
 
         Returns
         -------
         (N, 3) array
             Array of position vectors of individual points of the geometries.
         """
-        pos = np.empty((self.n_points, 3), np.float64)
+        if out_pos is None:
+            pos = np.empty((self.n_points, 3), np.double)
+        else:
+            pos = out_pos
+
         for geo_name in self._info:
             info = self._info[geo_name]
-            pos[info.points] = info.rf.to_global_position(info.pos, time=t)
+            rf = info.rf
+            # pos = np.array(info.pos)
+            rf.to_global_position(
+                x=pos,
+                time=t,
+                # This output array should be fine, since it should be contiguous
+                out=pos[info.points],
+            )
+
         return pos
 
-    def velocity_at_time(self, t: float) -> npt.NDArray[np.float64]:
-        """Return the point velocities at the specified time.
+    def geometry_at_time(
+        self,
+        t: float,
+        out_pos: npt.NDArray[np.double] | None = None,
+        out_vel: npt.NDArray[np.double] | None = None,
+    ) -> tuple[npt.NDArray[np.double], npt.NDArray[np.double]]:
+        """Return the point positions and velocities at the specified time.
 
         This uses the different reference frames of the individual :class:`Geometry`
-        objects to determine their velocities in the global reference frame.
+        objects to determine their positions and velocities in the global reference frame.
 
         Parameters
         ----------
         t : float
-            Time at which to get the velocities at.
+            Time at which to get the positions and velocities at.
+
+        out_pos : (N, 3) array, optional
+            Optional array to store the positions in. If not provided, a new array will
+            be created.
+
+        out_vel : (N, 3) array, optional
+            Optional array to store the velocities in. If not provided, a new array will
+            be created.
 
         Returns
         -------
         (N, 3) array
+            Array of position vectors of individual points of the geometries.
+        (N, 3) array
             Array of velocity vectors of individual points of the geometries.
         """
-        vel = np.empty((self.n_points, 3), np.float64)
+        if out_pos is None:
+            pos = np.empty((self.n_points, 3), np.double)
+        else:
+            pos = out_pos
+
+        if out_vel is None:
+            vel = np.empty((self.n_points, 3), np.double)
+        else:
+            vel = out_vel
+
         for geo_name in self._info:
             info = self._info[geo_name]
             rf = info.rf
-            pos = np.array(info.pos)
+            # pos = np.array(info.pos)
             v = np.zeros_like(vel[info.points])
-            _, vel[info.points] = rf.to_global_velocity(pos, v)
+            rf.to_global_velocity(
+                position=pos,
+                velocity=v,
+                time=t,
+                # These output arrays should be fine, since they should be contiguous
+                out_position=pos[info.points],
+                out_velocity=vel[info.points],
+            )
 
-        return vel
+        return pos, vel
 
     def polydata_at_time(self, t: float) -> pv.PolyData:
         """Return the geometry as polydata at the specified time.
@@ -847,10 +953,9 @@ class SimulationGeometry(Mapping):
         array
             Array of sorted indices of edges which meet the criterion.
         """
-        normals = np.empty((self.n_surfaces, 3), np.float64)
-        for name in self._info:
-            info = self._info[name]
-            normals[info.surfaces] = info.msh.surface_normal(info.pos)
+        normals = self.mesh.surface_normal(
+            np.concatenate([info.pos for info in self._info.values()], axis=0)
+        )
         return self.dual.dual_normal_criterion(crit, normals)
 
     def te_free_criterion(self) -> npt.NDArray[np.uint]:
@@ -905,10 +1010,14 @@ class SimulationGeometry(Mapping):
             State serialized into a :class:`HirearchicalMap` object.
         """
         out = HirearchicalMap()
+        out_info = HirearchicalMap()
         for geo_name in self._info:
-            info = self._info[geo_name]
-            geo_group = Geometry(geo_name, info.rf, info.msh, info.pos).save(serializer)
-            out.insert_hirearchycal_map(geo_name, geo_group)
+            geo_group = self._info[geo_name].save(serializer)
+            out_info.insert_hirearchical_map(geo_name, geo_group)
+
+        mesh_group = mesh_to_serial(self.mesh)
+        out.insert_hirearchical_map("mesh", mesh_group)
+        out.insert_hirearchical_map("info", out_info)
         return out
 
     @classmethod
@@ -925,12 +1034,18 @@ class SimulationGeometry(Mapping):
         Self
             De-serialized :class:`SimulationGeometry` object.
         """
-        geometries: list[Geometry] = []
-        for geo_name in group:
-            sub_group = group.get_hirearchical_map(geo_name)
-            geo = Geometry.load(geo_name, sub_group, deserializer)
-            geometries.append(geo)
-        return cls(*geometries)
+        info_group = group.get_hirearchical_map("info")
+        info: dict[str, GeometryInfo] = {}
+        for geo_name in info_group:
+            geo_info = GeometryInfo.load(
+                info_group.get_hirearchical_map(geo_name), deserializer
+            )
+            info[geo_name] = geo_info
+
+        mesh_group = group.get_hirearchical_map("mesh")
+        mesh = mesh_from_serial(mesh_group)
+
+        return cls(_info=info, mesh=mesh, dual=mesh.compute_dual())
 
     def __eq__(self, other) -> bool:
         """Check for equality."""
@@ -953,7 +1068,7 @@ def geometry_show_pyvista(
     """Show the geometry using PyVista."""
     show = plt is None
     if plt is None:
-        plt = pv.Plotter(theme=pv.themes.DocumentProTheme())
+        plt = pv.Plotter()  # theme=pv.themes.DocumentProTheme())
         plt.theme.show_edges = True
         plt.theme.show_scalar_bar = False
 

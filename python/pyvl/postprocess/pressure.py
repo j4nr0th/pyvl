@@ -28,24 +28,19 @@ def compute_surface_dynamic_pressure(
     for i, t in enumerate(out_times):
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
-        pos = results.geometry.positions_at_time(t)
+        pos, vel = results.geometry.geometry_at_time(t)
         cpts = results.geometry.mesh.surface_average_vec3(pos)
-        ind_mat = msh.induction_matrix(
-            results.settings.model_settings.vortex_limit,
-            pos,
-            cpts,
-        )
+        tol = results.settings.model_settings.vortex_limit
+        ind_mat = msh.induction_matrix(tol, pos, cpts)
         induced_velocity: npt.NDArray[np.float64] = np.vecdot(  # type: ignore
             ind_mat, circulation[None, :, None], axis=1
         )
-        vel = results.geometry.velocity_at_time(t)
         cp_vel = results.geometry.mesh.surface_average_vec3(vel)
         induced_velocity -= cp_vel
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
 
-        wm = results.wake_models[i]
-        if wm is not None:
-            induced_velocity += wm.get_velocity(cpts)
+        wm = results.wake_states[i]
+        induced_velocity += wm.induced_velocity(tol, cpts)
 
         pressure = np.vecdot(  # type: ignore
             induced_velocity, 0.5 * induced_velocity + freestream_velocity, axis=-1
@@ -85,20 +80,16 @@ def compute_dynamic_pressure_variable(
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
         pos = results.geometry.positions_at_time(t)
-        ind_mat = msh.induction_matrix(
-            results.settings.model_settings.vortex_limit,
-            pos,
-            cpts,
-        )
-        induced_velocity = np.vecdot(ind_mat, circulation[None, :, None], axis=1)  # type: ignore
+        tol = results.settings.model_settings.vortex_limit
+        ind_mat = msh.induction_matrix(tol, pos, cpts)
+        induced_velocity = np.sum(ind_mat * circulation[None, :, None], axis=1)
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
 
-        wm = results.wake_models[i]
-        if wm is not None:
-            induced_velocity += wm.get_velocity(cpts)
+        wm = results.wake_states[i]
+        induced_velocity += wm.induced_velocity(tol, cpts)
 
-        pressure = np.vecdot(  # type: ignore
-            induced_velocity, 0.5 * induced_velocity + freestream_velocity, axis=-1
+        pressure = np.sum(
+            induced_velocity * (0.5 * induced_velocity + freestream_velocity), axis=-1
         )
         pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure
         out_list.append(pressure)

@@ -41,7 +41,7 @@ def deserialize_hdf5(path: Path | str) -> HirearchicalMap:
                 if isinstance(val, h5py.Group):
                     iterators.append((it, hm, src))
                     new_hm = HirearchicalMap()
-                    hm.insert_hirearchycal_map(key, new_hm)
+                    hm.insert_hirearchical_map(key, new_hm)
                     iterators.append((iter(val), new_hm, val))
                     break
                 assert not isinstance(val, h5py.Datatype)

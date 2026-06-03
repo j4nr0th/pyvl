@@ -2,156 +2,259 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Self
 
 import numpy as np
+import pyvista as pv
 from numpy import typing as npt
 
+from pyvl.cvl import quad_induction, quad_normal_induction
 from pyvl.fio.io_common import HirearchicalMap
-from pyvl.flow_conditions import FlowConditions
-from pyvl.geometry import SimulationGeometry
 
 
-class WakeModel(ABC):
-    """A model of the wake, which can be used for simulation using the VLM.
+@dataclass(frozen=True)
+class WakeState:
+    """State of the wake at a given time step."""
 
-    Requirements for a Wake Model
-    -----------------------------
+    quad_positions: npt.NDArray[np.double]
+    quad_circulations: npt.NDArray[np.double]
+    quad_count: int
+    next_insertion_index: int
 
-    The wake model must be capable of performing the following functions:
+    @property
+    def positions(self) -> npt.NDArray[np.double]:
+        """Return the positions of the quads in the wake."""
+        return self.quad_positions[: self.quad_count]
 
-    - RWM1: Shall allow for saving and loading its current state.
-    - RWM2: Shall be updated each iteration.
-    - RWM3: Shall provide corrections to the induction system:
-        - RWM3.1: Correct the system matrix (implicit correction).
-        - RWM3.2: Correct the induced velocity (explicit correction).
-    - RWM4: Shall provide a way to visualize its effects with PyVista
-    - RWM5: Shall allow for a way to compute induced velocity (connected with RWM3.2).
-    """
+    def circulations(self) -> npt.NDArray[np.double]:
+        """Return the circulations of the quads in the wake."""
+        return self.quad_circulations[: self.quad_count]
 
-    @abstractmethod
-    def update(
-        self,
-        time: float,
-        geometry: SimulationGeometry,
-        positions: npt.NDArray[np.float64],
-        circulation: npt.NDArray[np.float64],
-        flow: FlowConditions,
-    ) -> None:
-        """Update the wake model.
+    @property
+    def capacity(self) -> int:
+        """Return the maximum number of quads that can be stored in the wake state."""
+        return self.quad_positions.shape[0]
 
-        .. deprecated:: 0.0.1
+    def __post_init__(self) -> None:
+        """Validate the input data."""
+        if self.quad_circulations.ndim != 1:
+            raise ValueError("Circulations must be a 1D array.")
+        if (
+            self.quad_positions.ndim != 3
+            or self.quad_positions.shape[1] != 4
+            or self.quad_positions.shape[2] != 3
+        ):
+            raise ValueError("Positions must be a 3D array with shape (N, 4, 3).")
 
-            The ``positions`` argument will be removed, since information is already
-            passed through the ``geometry`` argument.
+        if self.quad_positions.shape[0] != self.quad_circulations.size:
+            raise ValueError("The number of positions and circulations must be the same.")
 
-        Parameters
-        ----------
-        time : float
-            The time at which the wake model should now be at.
-        geometry : SimulationGeometry
-            The state of the :class:`SimulationGeometry` at the current time step.
-        positions : (N, 3) array
-            Positions of the mesh points.
-        circulation : (N,) array
-            Circulation values of vortex ring elements.
-        flow : FlowConditions
-            Flow conditions of the simulation.
-        """
-        ...
+        if self.quad_count > 0 or self.quad_count > self.quad_positions.shape[0]:
+            raise ValueError(
+                "The quad count must be a non-negative integer and less than or equal to "
+                "the capacity of the wake."
+            )
 
-    @abstractmethod
-    def apply_corrections(
-        self,
-        control_pts: npt.NDArray[np.float64],
-        normals: npt.NDArray[np.float64],
-        mat_in: npt.NDArray[np.float64],
-        rhs_in: npt.NDArray[np.float64],
-    ) -> None:
-        """Return implicit and explicit corrections for the no-prenetration conditions.
-
-        Parameters
-        ----------
-        control_pts : (N, 3) array
-            Positions where the no-penetration condition will be applied.
-        normals : (N, 3) array
-            Surface normals at the control points.
-        mat_in : (N, N) array
-            Left-hand side of the circulation equation. Describes normal velocity
-            induction at the control points due to unknown circulations.
-        rhs_in : (N,) array
-            Right-hand side of the circulation equation. Describes the normal velocity
-            induction at the control points due to know sources and free-stream.
-        """
-        ...
-
-    @abstractmethod
-    def get_velocity(
-        self,
-        positions: npt.NDArray[np.float64],
-    ) -> npt.NDArray[np.float64]:
-        """Compute velocity induced by wake at requested positions.
-
-        Parameters
-        ----------
-        positions : (N, 3) array
-            Array of positions where the velocity should be computed.
-        """
-        ...
-
-    @abstractmethod
-    def correct_forces(
-        self,
-        line_forces: npt.NDArray[np.float64],
-        geometry: SimulationGeometry,
-        positions: npt.NDArray[np.float64],
-        circulation: npt.NDArray[np.float64],
-        flow: FlowConditions,
-    ) -> None:
-        """Apply correction to force vectors at different mesh lines.
-
-        Parameters
-        ----------
-        line_forces : (N, 3) array
-            Array of force vectors at different mesh lines. Corrections should be
-            added or subtracted in-place.
-        geometry : SimulationGeometry
-            The state of the :class:`SimulationGeometry` at the current time step.
-        positions : (N, 3) array
-            Positions of the mesh points.
-        circulation : (N,) array
-            Circulation values of vortex ring elements.
-        flow : FlowConditions
-            Flow conditions of the simulation.
-        """
-        ...
-
-    @abstractmethod
-    def save(self) -> HirearchicalMap:
-        """Serialize the object into a HirearchicalMap.
-
-        Returns
-        -------
-        HirearchicalMap
-            Serialized state of the :class:`WakeModel` object.
-        """
-        ...
+        if (
+            self.next_insertion_index < 0
+            or self.next_insertion_index > self.quad_positions.shape[0]
+        ):
+            raise ValueError(
+                "The next insertion index must be a non-negative integer and less than or"
+                " equal to the capacity of the wake."
+            )
 
     @classmethod
-    @abstractmethod
-    def load(cls, group: HirearchicalMap) -> Self:
-        """Deserialize the object from a HirearchicalMap.
+    def empty(cls, capacity: int) -> Self:
+        """Create an empty wake state with the given capacity."""
+        return cls(
+            quad_positions=np.zeros((capacity, 4, 3), dtype=np.double),
+            quad_circulations=np.zeros(capacity, dtype=np.double),
+            quad_count=0,
+            next_insertion_index=0,
+        )
+
+    def induced_velocity(
+        self,
+        tol: float,
+        positions: npt.NDArray[np.double],
+        out_velocity: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        """Compute the velocity induced by the wake at the given positions."""
+        return quad_induction(
+            tol=tol,
+            quad_positions=self.quad_positions[: self.quad_count],
+            quad_circulations=self.quad_circulations[: self.quad_count],
+            target_positions=positions,
+            out_velocity=out_velocity,
+        )
+
+    def induced_normal_velocity(
+        self,
+        tol: float,
+        control_pts: npt.NDArray[np.double],
+        normals: npt.NDArray[np.double],
+        out_velocity: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        """Compute the normal velocity induced by the wake at the given control points."""
+        return quad_normal_induction(
+            tol=tol,
+            quad_positions=self.quad_positions[: self.quad_count],
+            quad_circulations=self.quad_circulations[: self.quad_count],
+            target_positions=control_pts,
+            target_normals=normals,
+            out_velocity=out_velocity,
+        )
+
+    def add_quads(
+        self,
+        new_positions: npt.NDArray[np.double],
+        new_circulations: npt.NDArray[np.double],
+        out_state: WakeState | None = None,
+    ) -> WakeState:
+        """Add new quads to the wake state.
+
+        If not there is not enough space to add all the new quads, oldest ones will be
+        replaced.
 
         Parameters
         ----------
-        hmap : HirearchicalMap
-            Serialized state of the :class:`WakeModel` object created by a call
-            to :meth:`WakeModel.save`.
+        new_positions : (N, 4, 3) array
+            Positions of the new quads to be added.
+
+        new_circulations : (N,) array
+            Circulations of the new quads to be added.
+
+        out_state : WakeState, optional
+            The wake state to write the updated state to. If not provided, new wake state
+            will be created and returned.
 
         Returns
         -------
-        Self
-            Deserialized :class:`WakeModel` object.
+        WakeState
+            Updated wake state. If the output wake state is provided, this will be the
+            reference to the same object, otherwise a new wake state object will be
+            returned.
         """
-        ...
+        # Validate input shapes
+        if new_circulations.ndim != 1:
+            raise ValueError("Circulations must be a 1D array.")
+        new_quads = new_circulations.size
+        if new_positions.shape != (new_quads, 4, 3):
+            raise ValueError("New positions must have shape (N, 4, 3).")
+        # Ensure we have an output state
+        if out_state is None:
+            out_positions = np.empty_like(self.quad_positions)
+            out_circulations = np.empty_like(self.quad_circulations)
+        else:
+            out_positions = out_state.quad_positions
+            out_circulations = out_state.quad_circulations
+
+        # Check how many we can add to the end of the array
+        append_count = min(new_quads, self.capacity - self.next_insertion_index)
+        out_positions[
+            self.next_insertion_index : self.next_insertion_index + append_count
+        ] = new_positions[:append_count]
+        out_circulations[
+            self.next_insertion_index : self.next_insertion_index + append_count
+        ] = new_circulations[:append_count]
+        out_insertion_index = self.next_insertion_index + append_count
+        if remainder := new_quads - append_count:
+            out_positions[:remainder] = new_positions[append_count:]
+            out_circulations[:remainder] = new_circulations[append_count:]
+            out_insertion_index = remainder
+
+        out_quad_count = min(self.quad_count + new_quads, self.capacity)
+
+        return WakeState(
+            quad_positions=out_positions,
+            quad_circulations=out_circulations,
+            quad_count=out_quad_count,
+            next_insertion_index=out_insertion_index,
+        )
+
+    def update_wake(
+        self,
+        dt: float,
+        velocities: npt.NDArray[np.double],
+        out_state: WakeState | None = None,
+    ) -> WakeState:
+        """Update the wake state to the given time step.
+
+        This method is used to advect the wake elements based on the
+        velocities at the positions of the corners of the quads.
+
+        Parameters
+        ----------
+        dt : float
+            The time step for the update.
+
+        velocities : (N, 3) array
+            Velocities at the positions of the corners of the quads.
+
+        out_state : WakeState, optional
+            The wake state to write the updated state to. If not provided, new wake state
+            will be created and returned.
+
+        Returns
+        -------
+        WakeState
+            Updated wake state. If the output wake state is provided, this will be the
+            reference to the same object, otherwise a new wake state object will be
+            returned.
+        """
+        if velocities.shape != (self.quad_count, *self.quad_positions.shape[:2]):
+            raise ValueError("Velocities must have the same shape as quad positions.")
+
+        out_positions = (
+            out_state.quad_positions
+            if out_state is not None
+            else np.empty_like(self.quad_positions)
+        )
+        out_positions[: self.quad_count] = (
+            self.quad_positions[: self.quad_count] + velocities * dt
+        )
+        if out_state is not None:
+            return out_state
+
+        return WakeState(
+            quad_positions=out_positions,
+            quad_circulations=self.quad_circulations.copy(),
+            quad_count=self.quad_count,
+            next_insertion_index=self.next_insertion_index,
+        )
+
+    def as_polydata(self) -> pv.PolyData:
+        """Convert the wake state to a PyVista PolyData object for visualization."""
+        if self.quad_count == 0:
+            return pv.PolyData()
+
+        # Create a PolyData object with the quad vertices
+        points = self.quad_positions[: self.quad_count].reshape(-1, 3)
+        quads = np.astype(np.arange(self.quad_count * 4).reshape(-1, 4), int)
+        polydata = pv.PolyData.from_regular_faces(points, quads)
+
+        # Add circulations as cell data
+        polydata.cell_data["circulation"] = self.quad_circulations[: self.quad_count]
+
+        return polydata
+
+    def save(self) -> HirearchicalMap:
+        """Serialize the wake state into a HirearchicalMap."""
+        hmap = HirearchicalMap()
+        hmap.insert_array("quad_positions", self.quad_positions)
+        hmap.insert_array("quad_circulations", self.quad_circulations)
+        hmap.insert_int("quad_count", self.quad_count)
+        hmap.insert_int("next_insertion_index", self.next_insertion_index)
+        return hmap
+
+    @classmethod
+    def load(cls, hmap: HirearchicalMap) -> Self:
+        """Deserialize the wake state from a HirearchicalMap."""
+        return cls(
+            quad_positions=hmap.get_array("quad_positions"),
+            quad_circulations=hmap.get_array("quad_circulations"),
+            quad_count=hmap.get_int("quad_count"),
+            next_insertion_index=hmap.get_int("next_insertion_index"),
+        )
