@@ -147,7 +147,7 @@ def test_flow_conditions_unknown_type() -> None:
     group = HirearchicalMap()
     group.insert_string("type", "pyvl.nonexistent.CustomFlowConditions")
     data = HirearchicalMap()
-    group.insert_hirearchycal_map("data", data)
+    group.insert_hirearchical_map("data", data)
 
     with pytest.raises(TypeError, match="Unknown FlowConditions type"):
         flow_conditions_from_serial(group)
@@ -157,12 +157,14 @@ def test_flow_conditions_custom_types() -> None:
     """Test that custom types can be registered for FlowConditions."""
 
     class CustomFlowConditions(FlowConditionsUniform):
+        """Custom flow conditions for testing."""
+
         pass
 
     group = HirearchicalMap()
     group.insert_string("type", "my.custom.FlowConditions")
     data = FlowConditionsUniform(1.0, 2.0, 3.0).save()
-    group.insert_hirearchycal_map("data", data)
+    group.insert_hirearchical_map("data", data)
 
     custom_types = {"my.custom.FlowConditions": CustomFlowConditions}
     with pytest.raises(
@@ -178,12 +180,14 @@ def test_flow_conditions_override() -> None:
     """Test that custom types can override built-in FlowConditions."""
 
     class CustomFlowConditions(FlowConditionsUniform):
+        """Custom flow conditions for testing."""
+
         pass
 
     group = HirearchicalMap()
     group.insert_string("type", "pyvl.flow_conditions.FlowConditionsUniform")
     data = FlowConditionsUniform(1.0, 2.0, 3.0).save()
-    group.insert_hirearchycal_map("data", data)
+    group.insert_hirearchical_map("data", data)
 
     custom_types = {"pyvl.flow_conditions.FlowConditionsUniform": CustomFlowConditions}
     with pytest.raises(

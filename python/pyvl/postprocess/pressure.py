@@ -10,7 +10,7 @@ from pyvl.solver import SolverResults
 
 def compute_surface_dynamic_pressure(
     results: SolverResults,
-) -> list[npt.NDArray[np.float64]]:
+) -> list[npt.NDArray[np.double]]:
     """Compute dynamic pressure on the surface centers of the mesh.
 
     Parameters
@@ -24,7 +24,7 @@ def compute_surface_dynamic_pressure(
         List with array of pressure values for each output step.
     """
     out_times = results.settings.time_settings.output_times
-    out_list: list[npt.NDArray[np.float64]] = []
+    out_list: list[npt.NDArray[np.double]] = []
     for i, t in enumerate(out_times):
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
@@ -32,7 +32,7 @@ def compute_surface_dynamic_pressure(
         cpts = results.geometry.mesh.surface_average_vec3(pos)
         tol = results.settings.model_settings.vortex_limit
         ind_mat = msh.induction_matrix(tol, pos, cpts)
-        induced_velocity: npt.NDArray[np.float64] = np.vecdot(  # type: ignore
+        induced_velocity: npt.NDArray[np.double] = np.vecdot(  # type: ignore
             ind_mat, circulation[None, :, None], axis=1
         )
         cp_vel = results.geometry.mesh.surface_average_vec3(vel)
@@ -53,7 +53,7 @@ def compute_surface_dynamic_pressure(
 
 def compute_dynamic_pressure_variable(
     results: SolverResults, positions: Iterable[npt.NDArray]
-) -> list[npt.NDArray[np.float64]]:
+) -> list[npt.NDArray[np.double]]:
     """Compute dynamic pressure at the specified positions for each time step.
 
     Parameters
@@ -67,12 +67,12 @@ def compute_dynamic_pressure_variable(
     Returns
     -------
     list of (N,) array
-        List of velocity vectors for each output step.
+        List of pressure values for each output step.
     """
     out_times = results.settings.time_settings.output_times
-    out_list: list[npt.NDArray[np.float64]] = list()
+    out_list: list[npt.NDArray[np.double]] = list()
     for i, (t, pts) in enumerate(zip(out_times, positions, strict=True)):
-        cpts = np.ascontiguousarray(pts, dtype=np.float64)
+        cpts = np.ascontiguousarray(pts, dtype=np.double)
         if len(cpts.shape) != 2 or cpts.shape[1] != 3:
             raise ValueError(
                 "Positions must be an array of 3 component position vectors."

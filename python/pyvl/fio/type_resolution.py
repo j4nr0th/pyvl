@@ -29,10 +29,15 @@ def reference_frame_from_serial(
     ----------
     group : HirearchicalMap
         The serialized data containing the ReferenceFrame information.
+
+    deserializer : CallableDeserializer
+        The deserializer to use.
+
     custom_types : Mapping[str, type], optional
         A mapping of type names to types, allowing registration of custom
         ReferenceFrame subclasses. If ``allow_override`` is True, these can
         override the built-in types.
+
     allow_override : bool, default: False
         If True, custom types from ``custom_types`` will be checked first and
         can override built-in types. If False, custom types are only used when

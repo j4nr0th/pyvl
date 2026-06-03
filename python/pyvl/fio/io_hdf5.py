@@ -11,7 +11,15 @@ from pyvl.fio.io_common import (
 
 
 def serialize_hdf5(hmap: HirearchicalMap, path: Path | str) -> None:
-    """Save a HirearchicalMap into a HDF5 file."""
+    """Save a HirearchicalMap into a HDF5 file.
+
+    Parameters
+    ----------
+    hmap : HirearchicalMap
+        The mapping to save.
+    path : Path | str
+        The path to the HDF5 file.
+    """
     with h5py.File(path, "w") as f_out:
         iterators: list[tuple[Iterator[str], HirearchicalMap, h5py.Group | h5py.File]] = [
             (iter(hmap), hmap, f_out)
@@ -28,7 +36,18 @@ def serialize_hdf5(hmap: HirearchicalMap, path: Path | str) -> None:
 
 
 def deserialize_hdf5(path: Path | str) -> HirearchicalMap:
-    """Load a HirearchicalMap from a HDF5 file."""
+    """Load a HirearchicalMap from a HDF5 file.
+
+    Parameters
+    ----------
+    path : Path | str
+        The path to the HDF5 file.
+
+    Returns
+    -------
+    HirearchicalMap
+        The loaded map.
+    """
     hmap = HirearchicalMap()
     with h5py.File(path, "r") as f_in:
         iterators: list[tuple[Iterator, HirearchicalMap, h5py.Group | h5py.File]] = [

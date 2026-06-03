@@ -52,7 +52,18 @@ def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.double], Mesh]:
 
 
 def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
-    """Convert mesh into PolyData faces."""
+    """Convert mesh into PolyData faces.
+
+    Parameters
+    ----------
+    m : Mesh
+        Mesh object to convert.
+
+    Returns
+    -------
+    list of ndarray
+        List containing connectivity faces.
+    """
     nper_elem, indices = m.to_element_connectivity()
     offsets = np.pad(np.cumsum(nper_elem), (1, 0))
     faces = [indices[offsets[i] : offsets[i + 1]] for i in range(nper_elem.size)]
@@ -60,7 +71,18 @@ def mesh_to_polydata_faces(m: Mesh) -> list[npt.NDArray]:
 
 
 def mesh_to_serial(m: Mesh) -> HirearchicalMap:
-    """Serialize the mesh into a HirearchicalMap."""
+    """Serialize the mesh into a HirearchicalMap.
+
+    Parameters
+    ----------
+    m : Mesh
+        Mesh object to serialize.
+
+    Returns
+    -------
+    HirearchicalMap
+        Serialized mesh data.
+    """
     out = HirearchicalMap()
     out.insert_int("n_points", m.n_points)
     n_per_element, flattened_elements = m.to_element_connectivity()
@@ -70,7 +92,18 @@ def mesh_to_serial(m: Mesh) -> HirearchicalMap:
 
 
 def mesh_from_serial(group: HirearchicalMap) -> Mesh:
-    """Deserialize the mesh from a HirearchicalMap."""
+    """Deserialize the mesh from a HirearchicalMap.
+
+    Parameters
+    ----------
+    group : HirearchicalMap
+        Serialized mesh data.
+
+    Returns
+    -------
+    Mesh
+        Deserialized Mesh object.
+    """
     n_points = group.get_int("n_points")
     n_per_element = group.get_array("n_per_element")
     flattened_elements = np.asarray(group.get_array("flattened_elements"), np.uint32)
@@ -81,13 +114,26 @@ def mesh_from_serial(group: HirearchicalMap) -> Mesh:
     return Mesh(n_points=n_points, connectivity=faces)
 
 
-def rf_to_serial(self: ReferenceFrame, serializer: CallableSerializer) -> HirearchicalMap:
-    """Serialize the ReferenceFrame into a HirearchicalMap."""
+def rf_to_serial(rf: ReferenceFrame, serializer: CallableSerializer) -> HirearchicalMap:
+    """Serialize the ReferenceFrame into a HirearchicalMap.
+
+    Parameters
+    ----------
+    rf : ReferenceFrame
+        Reference frame object to serialize.
+    serializer : CallableSerializer
+        Serializer for callables.
+
+    Returns
+    -------
+    HirearchicalMap
+        Serialized reference frame data.
+    """
     out = HirearchicalMap()
-    self.save(out, serializer)
+    rf.save(out, serializer)
     print(f"DEBUG: ReferenceFrame keys after save: {list(out.keys())}")
-    if self.parent is not None:
-        parent = rf_to_serial(self.parent, serializer)
+    if rf.parent is not None:
+        parent = rf_to_serial(rf.parent, serializer)
         out.insert_hirearchical_map("parent", parent)
     return out
 
@@ -101,6 +147,8 @@ def rf_from_serial(
     ----------
     group : HirearchicalMap
         The serialized reference frame data.
+    deserializer : CallableDeserializer
+        The deserializer for callables.
 
     Returns
     -------
@@ -183,6 +231,19 @@ class Geometry:
         mesh: Mesh,
         positions: npt.ArrayLike,
     ) -> None:
+        """Initialize the Geometry object.
+
+        Parameters
+        ----------
+        label : str
+            Label of the geometry.
+        reference_frame : ReferenceFrame
+            Reference frame of the geometry.
+        mesh : Mesh
+            Mesh connectivity.
+        positions : array_like
+            Point positions.
+        """
         if not isinstance(label, str):
             raise TypeError(
                 f"label must be a string, instead it was {type(label).__name__}."
@@ -288,7 +349,22 @@ class Geometry:
     def _propagate_edges(
         self, seed_edges: Iterable[int], max_angle: float, dual: Mesh
     ) -> npt.NDArray[np.uint]:
-        """Propagate edge selection based on angle between direction vectors."""
+        """Propagate edge selection based on angle between direction vectors.
+
+        Parameters
+        ----------
+        seed_edges : Iterable[int]
+            Initial edges to start propagation from.
+        max_angle : float
+            Maximum angle for propagation.
+        dual : Mesh
+            The dual mesh.
+
+        Returns
+        -------
+        array
+            Indices of the selected edges.
+        """
         selected: set[GeoID] = set()
         edges_to_check = list(GeoID(e) for e in seed_edges) + list(
             GeoID(e, orientation=True) for e in seed_edges
@@ -370,6 +446,20 @@ class Geometry:
 
         @dataclass
         class _TESelectionState:
+            """State for trailing edge selection.
+
+            Attributes
+            ----------
+            seed : int | None
+                Seed edge index.
+            max_angle : float
+                Maximum angle for selection.
+            selected : npt.NDArray[np.uint]
+                Currently selected edges.
+            selection_mesh : pv.Actor | None
+                Actor representing the selection mesh.
+            """
+
             seed: int | None
             max_angle: float
             selected: npt.NDArray[np.uint]
@@ -382,7 +472,8 @@ class Geometry:
             selection_mesh=None,
         )
 
-        def update_selection():
+        def update_selection() -> None:
+            """Update the current edge selection."""
             if state.seed is None:
                 return
 
@@ -403,14 +494,28 @@ class Geometry:
             state.selection_mesh = plotter.add_mesh(sel_pd, color="red", line_width=5)
             plotter.render()
 
-        def on_pick(edge_msh: pv.UnstructuredGrid):
+        def on_pick(edge_msh: pv.UnstructuredGrid) -> None:
+            """Pick an edge.
+
+            Parameters
+            ----------
+            edge_msh : pv.UnstructuredGrid
+                Picked edge mesh.
+            """
             # Get the picked edge index from the mesh with one line
             edge_id = edge_msh.cell_data["vtkOriginalCellIds"][0]
             state.seed = edge_id
             print("Picked edge index:", edge_id)
             update_selection()
 
-        def on_slider(value):
+        def on_slider(value: float) -> None:
+            """Change the maximum angle.
+
+            Parameters
+            ----------
+            value : float
+                Slider value.
+            """
             state.max_angle = value
             update_selection()
 
@@ -686,7 +791,7 @@ class SimulationGeometry(Mapping):
 
     .. jupyter-execute::
 
-        >>> sim_geo = pyvl.SimulationGeometry(geo_wing, geo_fus)
+        >>> sim_geo = pyvl.SimulationGeometry.from_geometries(geo_wing, geo_fus)
         >>> sim_geo.polydata_at_time(0.0).plot(interactive=False)
 
     """
@@ -826,7 +931,7 @@ class SimulationGeometry(Mapping):
             rf = info.rf
             # pos = np.array(info.pos)
             rf.to_global_position(
-                x=pos,
+                x=pos[info.points],
                 time=t,
                 # This output array should be fine, since it should be contiguous
                 out=pos[info.points],
@@ -862,6 +967,7 @@ class SimulationGeometry(Mapping):
         -------
         (N, 3) array
             Array of position vectors of individual points of the geometries.
+
         (N, 3) array
             Array of velocity vectors of individual points of the geometries.
         """
@@ -989,6 +1095,7 @@ class SimulationGeometry(Mapping):
         -------
         (N, 2) array
             Array with indices of nodes which the lines connect.
+
         (N, 2) array
             Array with indices of surfaces which the lines border.
         """
@@ -1065,7 +1172,15 @@ class SimulationGeometry(Mapping):
 def geometry_show_pyvista(
     geometries: Iterable[Geometry], plt: pv.Plotter | None = None
 ) -> None:
-    """Show the geometry using PyVista."""
+    """Show the geometry using PyVista.
+
+    Parameters
+    ----------
+    geometries : Iterable[Geometry]
+        Geometries to plot.
+    plt : pv.Plotter, optional
+        Plotter to use. If None, a new one is created.
+    """
     show = plt is None
     if plt is None:
         plt = pv.Plotter()  # theme=pv.themes.DocumentProTheme())

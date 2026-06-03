@@ -36,17 +36,17 @@ class TimeSettings:
     output_interval: int | None = None
 
     @property
-    def simulation_times(self) -> npt.NDArray[np.float64]:
+    def simulation_times(self) -> npt.NDArray[np.double]:
         """Times where simulation will run."""
-        return np.arange(self.nt, dtype=np.float64) * np.float64(self.dt)
+        return np.arange(self.nt, dtype=np.double) * np.double(self.dt)
 
     @property
-    def output_times(self) -> npt.NDArray[np.float64]:
+    def output_times(self) -> npt.NDArray[np.double]:
         """Times where simulation will create output."""
         if self.output_interval is None or self.output_interval == 0:
             return self.simulation_times
-        return np.float64(self.dt) * np.arange(
-            self.nt, step=self.output_interval, dtype=np.float64
+        return np.double(self.dt) * np.arange(
+            self.nt, step=self.output_interval, dtype=np.double
         )  # type: ignore
 
     def save(self) -> HirearchicalMap:

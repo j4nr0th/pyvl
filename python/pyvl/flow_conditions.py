@@ -23,9 +23,9 @@ class FlowConditions(ABC):
     def get_velocity(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return velocity at the specified positions at given time.
 
         Parameters
@@ -53,9 +53,9 @@ class FlowConditions(ABC):
     def get_density(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return density at the specified positions at given time.
 
         Parameters
@@ -83,9 +83,9 @@ class FlowConditions(ABC):
     def get_pressure(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return pressure at the specified positions at given time.
 
         Parameters
@@ -201,9 +201,9 @@ class FlowConditionsUniform(FlowConditions):
     def get_velocity(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return velocity at the specified positions at given time.
 
         Parameters
@@ -226,7 +226,7 @@ class FlowConditionsUniform(FlowConditions):
             of this function.
         """
         del time
-        v = np.array((self.vx, self.vy, self.vz), np.float64)
+        v = np.array((self.vx, self.vy, self.vz), np.double)
         if out_array is not None:
             out_array[:, :] = v[None, :]
             return out_array
@@ -235,9 +235,9 @@ class FlowConditionsUniform(FlowConditions):
     def get_density(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return density at the specified positions at given time.
 
         Parameters
@@ -268,9 +268,9 @@ class FlowConditionsUniform(FlowConditions):
     def get_pressure(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return pressure at the specified positions at given time.
 
         Parameters
@@ -412,9 +412,9 @@ class FlowConditionsRotating(FlowConditions):
     def get_velocity(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return velocity at the specified positions at given time.
 
         Parameters
@@ -436,20 +436,22 @@ class FlowConditionsRotating(FlowConditions):
             the parameter ``out_array`` was specified, it should also be the return value
             of this function.
         """
-        del time, out_array
+        del time
+        if out_array is None:
+            out_array = np.empty_like(positions)
         pos = positions - np.array(
-            ((self.center_x, self.center_y, self.center_z),), np.float64
+            ((self.center_x, self.center_y, self.center_z),), np.double
         )
-        omg = np.array((self.omega_x, self.omega_y, self.omega_z), np.float64)
-        v = np.linalg.cross(pos, omg)
-        return np.astype(v, np.float64)
+        omg = np.array((self.omega_x, self.omega_y, self.omega_z), np.double)
+        out_array[:] = np.linalg.cross(pos, omg)
+        return np.astype(out_array, np.double)
 
     def get_density(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return density at the specified positions at given time.
 
         Parameters
@@ -480,9 +482,9 @@ class FlowConditionsRotating(FlowConditions):
     def get_pressure(
         self,
         time: float,
-        positions: npt.NDArray[np.float64],
-        out_array: npt.NDArray[np.float64] | None = None,
-    ) -> npt.NDArray[np.float64]:
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
         """Return pressure at the specified positions at given time.
 
         Parameters

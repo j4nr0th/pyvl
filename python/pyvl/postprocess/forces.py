@@ -7,9 +7,9 @@ from pyvl.cvl import Mesh
 from pyvl.solver import SolverResults
 
 
-def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.float64]]:
+def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.double]]:
     """Compute forces resulting from the mesh circulation."""
-    out: list[npt.NDArray[np.float64]] = list()
+    out: list[npt.NDArray[np.double]] = list()
     for i, t in enumerate(results.settings.time_settings.output_times):
         reduced_c = results.circulations[i, :] / (2 * np.pi)
         positions, motion = results.geometry.geometry_at_time(t)

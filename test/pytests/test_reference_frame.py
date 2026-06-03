@@ -5,7 +5,7 @@ import pytest
 from pyvl import ReferenceFrame
 
 
-def test_creation_and_getset():
+def test_creation_and_getset() -> None:
     """Test that it can be created and that getters/setters work as expected."""
     theta_x = 0.2
     theta_y = 0.3
@@ -25,7 +25,7 @@ def test_creation_and_getset():
     assert np.cos(angles) == pytest.approx(np.cos([theta_x, theta_y, theta_z]))
 
 
-def test_parents():
+def test_parents() -> None:
     """Test that parent-related functions work."""
     rng = np.random.default_rng(0)
     rf_0 = ReferenceFrame(rng.random(3), rng.random(3), rng.random(3), rng.random(3))
@@ -36,7 +36,7 @@ def test_parents():
     assert rf_2.parents == (rf_1, rf_0)
 
 
-def test_rotate_by_and_offset():
+def test_rotate_by_and_offset() -> None:
     """Test that rotation and offset changes work."""
     rng = np.random.default_rng(14)
     rf_0 = ReferenceFrame(rng.random(3), rng.random(3))
@@ -76,7 +76,7 @@ def test_rotate_by_and_offset():
     assert all(rf_5.angles_at() == angles_1)
 
 
-def test_rotation_is_orthonormal():
+def test_rotation_is_orthonormal() -> None:
     """Check that for all angles the rotation is orthonormal."""
     rng = np.random.default_rng(0)
     for _ in range(100):
@@ -86,7 +86,7 @@ def test_rotation_is_orthonormal():
         assert pytest.approx(rot_mat @ rot_mat.T) == np.eye(3)
 
 
-def test_transformations_are_inverse():
+def test_transformations_are_inverse() -> None:
     """Check that transformations of reference frames are inverse."""
     rng = np.random.default_rng(592)
     for _ in range(10):
@@ -105,55 +105,33 @@ def test_transformations_are_inverse():
         assert pytest.approx(x) == rf.to_parent_vector(rf.from_parent_vector(x))
 
 
-def test_transformation_output():
+def test_transformation_output() -> None:
     """Check that transformation function with out argument behave properly."""
     rng = np.random.default_rng(124590)
     rf = ReferenceFrame(rng.random(3), rng.random(3))
     real_shape_in = (3, 1, 4, 10, 3)
     x_in = rng.random(real_shape_in)
     # Passing some random object won't work as second positional arg (time)
-    caught = False
-    try:
-        _ = rf.to_parent_position(x_in, "SOME random object")
-    except TypeError:
-        caught = True
-    assert caught
-
-    caught = False
+    with pytest.raises(TypeError):
+        _ = rf.to_parent_position(x_in, "roku-nana")  # type: ignore
 
     # Passing array-like also won't work
-    caught = False
-    try:
-        _ = rf.to_parent_position(x_in, out=[0, 1, [0, 2, 3]])
-    except TypeError:
-        caught = True
-    assert caught
+    with pytest.raises(TypeError):
+        _ = rf.to_parent_position(x_in, out=[0, 1, [0, 2, 3]])  # type: ignore
 
     # Passing array of wrong shape as out
-    caught = False
-    try:
+    with pytest.raises(ValueError):
         _ = rf.to_parent_position(x_in, out=np.array([[0, 2, 3]]))
-    except ValueError:
-        caught = True
-    assert caught
 
     # Passing array of wrong data type
-    caught = False
-    try:
+    with pytest.raises(ValueError):
         x_out = np.empty_like(x_in, dtype=np.float32)
-        _ = rf.to_parent_position(x_in, out=x_out)
-    except ValueError:
-        caught = True
-    assert caught
+        _ = rf.to_parent_position(x_in, out=x_out)  # type: ignore
 
     # Passing array that is non-contiguous won't work either
-    caught = False
-    try:
-        x_out = np.empty(real_shape_in + (4,), dtype=np.float64)
+    with pytest.raises(ValueError):
+        x_out = np.empty(real_shape_in + (4,), dtype=np.double)
         _ = rf.to_parent_position(x_in, out=(x_out[..., 2]).reshape(real_shape_in))
-    except ValueError:
-        caught = True
-    assert caught
 
     # Reference to the array should still be returned
     x_out = np.empty_like(x_in)
@@ -168,7 +146,7 @@ def test_transformation_output():
     assert np.all(res_out == x_in)
 
 
-def test_simple_transformations():
+def test_simple_transformations() -> None:
     """Manually check some basic transformations."""
     eye = np.eye(3)
     rf1 = ReferenceFrame(offset=(0, 1.0, 0), theta=(np.pi / 2, 0, 0))
@@ -184,7 +162,7 @@ def test_simple_transformations():
     assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
 
 
-def test_angles_from_rotation():
+def test_angles_from_rotation() -> None:
     """Check that the static method angles_from_rotation recovers the angles."""
     rng = np.random.default_rng(0)
     rf = ReferenceFrame(theta=rng.random(3))
@@ -194,13 +172,37 @@ def test_angles_from_rotation():
     assert rf.angles_at() == pytest.approx(recovered)
 
 
-def test_time_varying_reference_frame():
+def test_time_varying_reference_frame() -> None:
     """Test callable-based reference frame."""
 
-    def pos_func(t):
+    def pos_func(t: float) -> tuple[float, float, float]:
+        """Compute position.
+
+        Parameters
+        ----------
+        t : float
+            Time.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            Position.
+        """
         return (t, 2 * t, 3 * t)
 
-    def ori_func(t):
+    def ori_func(t: float) -> tuple[float, float, float]:
+        """Compute orientation.
+
+        Parameters
+        ----------
+        t : float
+            Time.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            Orientation.
+        """
         return (t * 0.1, t * 0.2, t * 0.3)
 
     rf = ReferenceFrame(offset=pos_func, theta=ori_func)
@@ -222,13 +224,25 @@ def test_time_varying_reference_frame():
     assert pos2 == pytest.approx([2, 4, 6])
 
 
-def test_time_parameter_in_transformations():
+def test_time_parameter_in_transformations() -> None:
     """Test that transformation methods accept time parameter."""
 
-    def pos_func(t):
-        return (t, 0, 0)
+    def pos_func(t: float) -> tuple[float, float, float]:
+        """Compute position.
 
-    rf = ReferenceFrame(offset=pos_func, theta=(0, 0, 0))
+        Parameters
+        ----------
+        t : float
+            Time.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            Position.
+        """
+        return (t, 0.0, 0.0)
+
+    rf = ReferenceFrame(offset=pos_func, theta=(0.0, 0.0, 0.0))
 
     x = np.array([1.0, 2.0, 3.0])
 
@@ -237,7 +251,7 @@ def test_time_parameter_in_transformations():
     assert result_t0 == pytest.approx([1, 2, 3])
 
 
-def test_is_moving():
+def test_is_moving() -> None:
     """Test the is_moving property."""
     # Static frame with zero offset/theta is not moving
     rf_static = ReferenceFrame((0, 0, 0), (0, 0, 0))
@@ -247,22 +261,43 @@ def test_is_moving():
     rf_static_nonzero = ReferenceFrame((1, 2, 3), (0.1, 0.2, 0.3))
     assert not rf_static_nonzero.is_moving
 
-    def vel_func(t):
-        return (t, 0, 0)
+    def vel_func(t: float) -> tuple[float, float, float]:
+        """Compute velocity.
 
-    rf_moving_vel = ReferenceFrame(velocity=vel_func)
-    assert rf_moving_vel.is_moving
+        Parameters
+        ----------
+        t : float
+            Time.
 
-    def rot_func(t):
-        return (0, 0, t)
+        Returns
+        -------
+        tuple[float, float, float]
+            Velocity.
+        """
+        return (t, 0.0, 0.0)
+
+    def rot_func(t: float) -> tuple[float, float, float]:
+        """Compute rotation.
+
+        Parameters
+        ----------
+        t : float
+            Time.
+
+        Returns
+        -------
+        tuple[float, float, float]
+            Rotation.
+        """
+        return (0.0, 0.0, t)
 
     rf_moving_rot = ReferenceFrame(rotation=rot_func)
     assert rf_moving_rot.is_moving
 
     # Constant non-zero velocity
-    rf_const_vel = ReferenceFrame(velocity=(1, 0, 0))
+    rf_const_vel = ReferenceFrame(velocity=(1.0, 0.0, 0.0))
     assert rf_const_vel.is_moving
 
     # Constant non-zero rotation
-    rf_const_rot = ReferenceFrame(rotation=(0, 0, 1))
+    rf_const_rot = ReferenceFrame(rotation=(0.0, 0.0, 1.0))
     assert rf_const_rot.is_moving

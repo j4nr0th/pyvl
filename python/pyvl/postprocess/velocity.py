@@ -10,7 +10,7 @@ from pyvl.solver import SolverResults
 
 def compute_velocities(
     results: SolverResults, positions: npt.NDArray
-) -> npt.NDArray[np.float64]:
+) -> npt.NDArray[np.double]:
     """Compute velocity at the specified positions for each time step.
 
     Parameters
@@ -26,10 +26,10 @@ def compute_velocities(
         Array of velocity vectors for each output step.
     """
     out_times = results.settings.time_settings.output_times
-    cpts = np.ascontiguousarray(positions, dtype=np.float64)
+    cpts = np.ascontiguousarray(positions, dtype=np.double)
     if len(cpts.shape) != 2 or cpts.shape[1] != 3:
         raise ValueError("Positions must be an array of 3 component position vectors.")
-    output_array = np.empty((out_times.size, cpts.shape[0], 3), np.float64)
+    output_array = np.empty((out_times.size, cpts.shape[0], 3), np.double)
     for i, t in enumerate(out_times):
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
@@ -45,7 +45,7 @@ def compute_velocities(
 
 def compute_velocities_variable(
     results: SolverResults, positions: Iterable[npt.NDArray]
-) -> list[npt.NDArray[np.float64]]:
+) -> list[npt.NDArray[np.double]]:
     """Compute velocity at the specified positions for each time step.
 
     Parameters
@@ -62,9 +62,9 @@ def compute_velocities_variable(
         List of velocity vectors for each output step.
     """
     out_times = results.settings.time_settings.output_times
-    out_list: list[npt.NDArray[np.float64]] = list()
+    out_list: list[npt.NDArray[np.double]] = list()
     for i, (t, pts) in enumerate(zip(out_times, positions, strict=True)):
-        cpts = np.ascontiguousarray(pts, dtype=np.float64)
+        cpts = np.ascontiguousarray(pts, dtype=np.double)
         if len(cpts.shape) != 2 or cpts.shape[1] != 3:
             raise ValueError(
                 "Positions must be an array of 3 component position vectors."

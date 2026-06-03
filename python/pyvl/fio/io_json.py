@@ -16,7 +16,18 @@ class _CustomJSONEncoder(json.JSONEncoder):
     """Custom encoder to handle HirearchicalMap objects."""
 
     def default(self, o: Any) -> Any:
-        """Return a seriazible object."""
+        """Return a serializable object.
+
+        Parameters
+        ----------
+        o : Any
+            The object to serialize.
+
+        Returns
+        -------
+        Any
+            The serializable representation of the object.
+        """
         if isinstance(o, HirearchicalMap):
             return o._map
         if isinstance(o, np.ndarray):
@@ -25,14 +36,33 @@ class _CustomJSONEncoder(json.JSONEncoder):
 
 
 def serialize_json(hmap: HirearchicalMap, path: Path | str) -> None:
-    """Save a HirearchicalMap into a JSON file."""
+    """Save a HirearchicalMap into a JSON file.
+
+    Parameters
+    ----------
+    hmap : HirearchicalMap
+        The mapping to save.
+    path : Path | str
+        The path to the JSON file.
+    """
     encoder = _CustomJSONEncoder()
     with open(path, "w") as f_out:
         f_out.write(encoder.encode(hmap))
 
 
 def _deserialize_function(arg: dict[Any, Any]) -> HirearchicalMap:
-    """Deserialized into a HirearchicalMap."""
+    """Deserialize into a HirearchicalMap.
+
+    Parameters
+    ----------
+    arg : dict[Any, Any]
+        The dictionary to deserialize.
+
+    Returns
+    -------
+    HirearchicalMap
+        The deserialized map.
+    """
     hm = HirearchicalMap()
     for key in arg:
         v = arg[key]
@@ -44,6 +74,17 @@ def _deserialize_function(arg: dict[Any, Any]) -> HirearchicalMap:
 
 
 def deserialize_json(path: Path | str) -> HirearchicalMap:
-    """Load a HirearchicalMap from a JSON file."""
+    """Load a HirearchicalMap from a JSON file.
+
+    Parameters
+    ----------
+    path : Path | str
+        The path to the JSON file.
+
+    Returns
+    -------
+    HirearchicalMap
+        The loaded map.
+    """
     with open(path, "r") as f_in:
         return json.load(f_in, object_hook=_deserialize_function)
