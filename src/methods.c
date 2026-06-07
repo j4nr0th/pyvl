@@ -18,7 +18,7 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     Py_ssize_t n_threads = 1;
 
     // Parse arguments
-    if (!parse_arguments_check(
+    if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "quad_positions"},
@@ -29,12 +29,11 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
                     .p_val = (void *)&out_velocity,
                     .kwname = "out_velocity",
                     .optional = true,
-                    .type_check = &PyArray_Type,
                 },
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &n_threads, .kwname = "n_threads", .optional = true},
                 {0},
             },
-            args, nargs, kwnames))
+            args, nargs, kwnames) < 0)
         return NULL;
 
     if (n_threads < 0)
@@ -74,7 +73,7 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
 
     // If the output is present, ensure it has the correct size, otherwise create it
     const npy_intp out_dims[2] = {(npy_intp)n_targets, 3};
-    if (out_velocity)
+    if (out_velocity && !Py_IsNone((PyObject *)out_velocity))
     {
         if (check_input_array(out_velocity, 2, out_dims, NPY_DOUBLE,
                               NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, "out_velocity") < 0)
@@ -206,7 +205,7 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     Py_ssize_t n_threads = 1;
 
     // Parse arguments
-    if (!parse_arguments_check(
+    if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "quad_positions"},
@@ -218,12 +217,11 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
                     .p_val = (void *)&out_velocity,
                     .kwname = "out_velocity",
                     .optional = true,
-                    .type_check = &PyArray_Type,
                 },
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &n_threads, .kwname = "n_threads", .optional = true},
                 {0},
             },
-            args, nargs, kwnames))
+            args, nargs, kwnames) < 0)
         return NULL;
 
     if (n_threads < 0)
@@ -268,7 +266,7 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
 
     // If the output is present, ensure it has the correct size, otherwise create it
     const npy_intp out_dims[1] = {(npy_intp)n_targets};
-    if (out_velocity)
+    if (out_velocity && !Py_IsNone((PyObject *)out_velocity))
     {
         if (check_input_array(out_velocity, 1, out_dims, NPY_DOUBLE,
                               NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, "out_velocity") < 0)

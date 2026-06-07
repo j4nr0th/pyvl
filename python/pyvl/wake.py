@@ -50,7 +50,7 @@ class WakeState:
         if self.quad_positions.shape[0] != self.quad_circulations.size:
             raise ValueError("The number of positions and circulations must be the same.")
 
-        if self.quad_count > 0 or self.quad_count > self.quad_positions.shape[0]:
+        if self.quad_count < 0 or self.quad_count > self.quad_positions.shape[0]:
             raise ValueError(
                 "The quad count must be a non-negative integer and less than or equal to "
                 "the capacity of the wake."

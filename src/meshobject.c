@@ -1391,11 +1391,13 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
         real_t line_circ = 0;
         if (dual_line.p1.value != INVALID_ID)
         {
-            line_circ += cir[dual_line.p1.value];
+            const real_t v = cir[dual_line.p1.value];
+            line_circ = dual_line.p1.orientation ? -v : +v;
         }
         if (dual_line.p2.value != INVALID_ID)
         {
-            line_circ -= cir[dual_line.p2.value];
+            const real_t v = cir[dual_line.p2.value];
+            line_circ += dual_line.p2.orientation ? -v : +v;
         }
 
         const real3_t avg_vel_circ =
@@ -1489,11 +1491,13 @@ static PyObject *pyvl_mesh_line_circulations(PyObject *self, PyTypeObject *defin
         real_t circ = 0;
         if (dual_line.p1.value != INVALID_ID)
         {
-            circ += dual_line.p1.orientation ? -circulations[dual_line.p1.value] : +circulations[dual_line.p1.value];
+            const real_t v = circulations[dual_line.p1.value];
+            circ += dual_line.p1.orientation ? -v : +v;
         }
         if (dual_line.p2.value != INVALID_ID)
         {
-            circ += dual_line.p2.orientation ? -circulations[dual_line.p2.value] : +circulations[dual_line.p2.value];
+            const real_t v = circulations[dual_line.p2.value];
+            circ += dual_line.p2.orientation ? -v : +v;
         }
 
         // Store the resulting circulation
@@ -1544,7 +1548,6 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
                     .type = CPYARG_TYPE_PYTHON,
                     .p_val = (void *)&out_arr,
                     .kwname = "out",
-                    .type_check = &PyArray_Type,
                     .optional = true,
                 },
                 {
@@ -1841,7 +1844,7 @@ static PyMethodDef pyvl_mesh_methods[] = {
     {
         .ml_name = "induction_velocity",
         .ml_meth = (void *)pyvl_mesh_induction_velocity,
-        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
         .ml_doc = "induction_velocity"
                   "(tol: float, positions: numpy.typing.NDArray[numpy.double], control_points: "
                   "numpy.typing.NDArray[numpy.double], "
@@ -1888,14 +1891,14 @@ static PyMethodDef pyvl_mesh_methods[] = {
         .ml_name = "line_circulations",
         .ml_meth = (void *)pyvl_mesh_line_circulations,
         .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
-        .ml_doc = "line_circulations(surface_circulations: numpy.typing.NDArray[numpy.double], out: "
+        .ml_doc = "line_circulations(circulation: numpy.typing.NDArray[numpy.double], out: "
                   "numpy.typing.NDArray[numpy.double] | None = None, n_threads: int = 1) -> "
                   "numpy.typing.NDArray[numpy.double]\n"
                   "Compute circulations based of lines using the dual mesh.\n"
                   "\n"
                   "Parameters\n"
                   "----------\n"
-                  "surface_circulations : array\n"
+                  "circulation : array\n"
                   "    Array of surface circulation values. Must match the number of points in the\n"
                   "    dual mesh.\n"
                   "\n"

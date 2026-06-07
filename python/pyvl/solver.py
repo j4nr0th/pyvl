@@ -435,7 +435,7 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    line_circulations = geometry.mesh.line_circulations(surface_circulations=out_circ)
+    line_circulations = geometry.dual.line_circulations(circulation=out_circ)
     if wake.quad_count > 0:
         # Get wake induced velocity
         wake_ind_vel = _compute_induced_velocity(
@@ -527,8 +527,8 @@ def update_simulation_state(
     new_quads[:, 0, :] = pos[shedding_points[:, 0], :]
     new_quads[:, 1, :] = pos[shedding_points[:, 1], :]
     # Remaining two are computed by the velocity at the shedding points
-    new_quads[:, 2, :] = new_quads[:, 1, :] + dt * induced_vel[1, :]
-    new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[0, :]
+    new_quads[:, 2, :] = new_quads[:, 1, :] + dt * induced_vel[:, 1, :]
+    new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[:, 0, :]
 
     # Finally, update the wake if we can
     if wake_ind_vel is not None:
@@ -538,7 +538,7 @@ def update_simulation_state(
     # Add wake quads
     wake.add_quads(
         new_positions=new_quads,
-        new_circulations=line_circulations,
+        new_circulations=line_circulations[shedding_lines],
         out_state=out_wake,
     )
 

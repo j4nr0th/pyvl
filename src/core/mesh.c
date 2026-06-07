@@ -93,7 +93,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
                 const geo_id_t line_id = primal->surface_lines[i_surf_line];
                 if (line_id.value == i_line)
                 {
-                    surf_ids[!line_id.orientation].value = i_surf;
+                    surf_ids[cnt] = (geo_id_t){.orientation = line_id.orientation, .value = i_surf};
                     cnt += 1;
                     break;
                 }
@@ -121,7 +121,7 @@ int mesh_dual_from_primal(mesh_t *p_out, const mesh_t *primal, const allocator_t
         line_count += cnt;
     }
 
-    /* Allocate memory for dual surface offsets and lines */
+    /* Allocate memory for the dual surface offsets and lines */
     geo_id_t *const surface_lines = allocator->allocate(allocator->state, line_count * sizeof(*surface_lines));
     unsigned *const surface_offsets =
         allocator->allocate(allocator->state, (dual.n_surfaces + 1) * sizeof(*surface_offsets));

@@ -163,7 +163,7 @@ class Mesh:
 
     def line_circulations(
         self,
-        surface_circulations: npt.NDArray[np.double],
+        circulation: npt.NDArray[np.double],
         out: npt.NDArray[np.double] | None = None,
         n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
@@ -171,7 +171,7 @@ class Mesh:
 
         Parameters
         ----------
-        surface_circulations : array
+        circulation : array
             Array of surface circulation values. Must match the number of points in the
             dual mesh.
 

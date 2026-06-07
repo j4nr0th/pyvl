@@ -985,9 +985,9 @@ class SimulationGeometry(Mapping):
             info = self._info[geo_name]
             rf = info.rf
             # pos = np.array(info.pos)
-            v = np.zeros_like(vel[info.points])
+            v = np.zeros_like(info.pos)
             rf.to_global_velocity(
-                position=pos,
+                position=info.pos,
                 velocity=v,
                 time=t,
                 # These output arrays should be fine, since they should be contiguous
