@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Self
 
 import numpy as np
+import numpy.typing as npt
 import pyvista as pv
-from numpy import typing as npt
 
 from pyvl.cvl import quad_induction, quad_normal_induction
 from pyvl.fio.io_common import HirearchicalMap

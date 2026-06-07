@@ -1407,6 +1407,277 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
     return (PyObject *)out;
 }
 
+static PyObject *pyvl_mesh_line_circulations(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                             const Py_ssize_clean_t nargs, const PyObject *kwnames)
+{
+    const module_state_t *state;
+    const PyVL_MeshObject *dual;
+    if (!ensure_mesh_and_state(defining_class, self, &dual, &state))
+        return NULL;
+
+    PyArrayObject *circ_arr, *out_arr = NULL;
+    Py_ssize_t n_threads = 1;
+
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&circ_arr,
+                    .kwname = "circulation",
+                    .type_check = &PyArray_Type,
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&out_arr,
+                    .kwname = "out",
+                    .type_check = &PyArray_Type,
+                    .optional = true,
+                },
+                {
+                    .type = CPYARG_TYPE_SSIZE,
+                    .p_val = &n_threads,
+                    .kwname = "n_threads",
+                    .optional = true,
+                },
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    // Check thread count is valid
+    if (n_threads < 0)
+    {
+        PyErr_SetString(PyExc_ValueError, "Thread count cannot be negative.");
+        return NULL;
+    }
+
+    // Check the circulation array is the right size
+    if (check_input_array(circ_arr, 1, (const npy_intp[1]){(npy_intp)dual->mesh.n_points}, NPY_DOUBLE,
+                          NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, "circulation") < 0)
+        return NULL;
+
+    // Ensure we have an output array
+    const npy_intp sz_out = dual->mesh.n_lines;
+    if (out_arr == NULL)
+    {
+        // Create the output array
+        out_arr = (PyArrayObject *)PyArray_EMPTY(1, &sz_out, NPY_DOUBLE, false);
+        if (!out_arr)
+            return NULL;
+    }
+    else
+    {
+        // Check the output array has the right size and flags
+        if (check_input_array(out_arr, 1, &sz_out, NPY_DOUBLE,
+                              NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE, "out") < 0)
+            return NULL;
+        Py_INCREF(out_arr);
+    }
+
+    // Inputs validated, get the C arrays
+    const real_t *const restrict circulations = PyArray_DATA(circ_arr);
+    real_t *const restrict out = PyArray_DATA(out_arr);
+
+    // For each line
+#pragma omp parallel for default(none) num_threads(n_threads) shared(dual, circulations, out)
+    for (unsigned i_line = 0; i_line < dual->mesh.n_lines; ++i_line)
+    {
+        // Find what surfaces it is based on the dual mesh
+        const line_t dual_line = dual->mesh.lines[i_line];
+
+        // Get the dual circulation
+        real_t circ = 0;
+        if (dual_line.p1.value != INVALID_ID)
+        {
+            circ += dual_line.p1.orientation ? -circulations[dual_line.p1.value] : +circulations[dual_line.p1.value];
+        }
+        if (dual_line.p2.value != INVALID_ID)
+        {
+            circ += dual_line.p2.orientation ? -circulations[dual_line.p2.value] : +circulations[dual_line.p2.value];
+        }
+
+        // Store the resulting circulation
+        out[i_line] = circ;
+    }
+
+    return (PyObject *)out_arr;
+}
+
+static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                              const Py_ssize_t nargs, const PyObject *kwnames)
+{
+    const module_state_t *state;
+    const PyVL_MeshObject *this;
+    if (!ensure_mesh_and_state(defining_class, self, &this, &state))
+        return NULL;
+
+    double vortex_tol;
+    PyArrayObject *pos_arr, *cp_arr, *circ_arr, *out_arr = NULL;
+    Py_ssize_t n_threads = 1;
+
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {
+                    .type = CPYARG_TYPE_DOUBLE,
+                    .p_val = &vortex_tol,
+                    .kwname = "tol",
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&pos_arr,
+                    .kwname = "positions",
+                    .type_check = &PyArray_Type,
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&cp_arr,
+                    .kwname = "control_points",
+                    .type_check = &PyArray_Type,
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&circ_arr,
+                    .kwname = "line_circulation",
+                    .type_check = &PyArray_Type,
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&out_arr,
+                    .kwname = "out",
+                    .type_check = &PyArray_Type,
+                    .optional = true,
+                },
+                {
+                    .type = CPYARG_TYPE_SSIZE,
+                    .p_val = &n_threads,
+                    .kwname = "n_threads",
+                    .optional = true,
+                },
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    // Check vortex tol is valid
+    if (vortex_tol < 0)
+    {
+        PyErr_SetString(PyExc_ValueError, "Vortex tolerance cannot be less than zero.");
+        return NULL;
+    }
+
+    // Check thread count is valid
+    if (n_threads < 0)
+    {
+        PyErr_SetString(PyExc_ValueError, "Thread count cannot be negative.");
+        return NULL;
+    }
+
+    // Check the input array
+    if (check_input_array(pos_arr, 2, (const npy_intp[2]){(npy_intp)this->mesh.n_points, 3}, NPY_DOUBLE,
+                          NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, "positions") < 0)
+        return NULL;
+
+    const int ndim_pos = PyArray_NDIM(pos_arr);
+    if (ndim_pos < 2 || PyArray_DIM(pos_arr, ndim_pos - 1) != 3)
+    {
+        PyErr_SetString(PyExc_ValueError, "Position array must have the shape (..., 3).");
+        return NULL;
+    }
+
+    // Check the CP array
+    if (check_input_array(cp_arr, 0, (const npy_intp[0]){}, NPY_DOUBLE, NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS,
+                          "control points") < 0)
+        return NULL;
+
+    const int ndim_cp = PyArray_NDIM(cp_arr);
+    if (ndim_cp < 2 || PyArray_DIM(cp_arr, ndim_cp - 1) != 3)
+    {
+        PyErr_SetString(PyExc_ValueError, "Control point array must have the shape (..., 3).");
+        return NULL;
+    }
+
+    // Count the control points
+    unsigned cp_cnt = 1;
+    for (int i = 0; i < ndim_cp - 1; ++i)
+        cp_cnt *= PyArray_DIM(cp_arr, i);
+
+    // Check the circulation array is the right size
+    if (check_input_array(circ_arr, 1, (const npy_intp[1]){(npy_intp)this->mesh.n_lines}, NPY_DOUBLE,
+                          NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, "circulation") < 0)
+        return NULL;
+
+    // Ensure we have an output array
+    if (out_arr == NULL)
+    {
+        // Create the output array
+        out_arr = (PyArrayObject *)PyArray_EMPTY(ndim_cp, PyArray_DIMS(cp_arr), NPY_DOUBLE, false);
+        if (!out_arr)
+            return NULL;
+    }
+    else
+    {
+        // Check the output array has the right size and flags
+        if (check_input_array(out_arr, PyArray_NDIM(cp_arr), PyArray_DIMS(cp_arr), NPY_DOUBLE,
+                              NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE, "out") < 0)
+            return NULL;
+        Py_INCREF(out_arr);
+    }
+
+    // Inputs validated, get the C arrays
+    const real3_t *const restrict positions = PyArray_DATA(pos_arr);
+    const real3_t *const restrict control_points = PyArray_DATA(cp_arr);
+    const real_t *const restrict circulations = PyArray_DATA(circ_arr);
+    real3_t *const restrict out = PyArray_DATA(out_arr);
+    // Clear the output
+    memset(out, 0, sizeof(*out) * cp_cnt);
+
+    // For each line
+#pragma omp parallel for default(none) num_threads(n_threads)                                                          \
+    shared(this, positions, control_points, circulations, out, vortex_tol, cp_cnt)
+    for (unsigned i_line = 0; i_line < this->mesh.n_lines; ++i_line)
+    {
+        // Get the line circulation
+        const real_t circ = circulations[i_line];
+        // Rare fast path
+        if (circ == 0)
+            continue;
+
+        // Get the line geometry
+        const line_t line = this->mesh.lines[i_line];
+        const real3_t r1 = positions[line.p1.value];
+        const real3_t r2 = positions[line.p2.value];
+        real3_t d = real3_sub(r2, r1);
+        const real_t mag = real3_mag(d);
+        // If the line is too short, skip it
+        if (mag < vortex_tol)
+            continue;
+
+        // Scale d by its magnitude
+        d.x /= mag;
+        d.y /= mag;
+        d.z /= mag;
+
+        // For each of the target points
+        for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
+        {
+            const real3_t cp = control_points[i_cp];
+
+            // Compute induction and scale it by circulation
+            const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
+
+            // Update the result atomically
+#pragma omp atomic
+            out[i_cp].x += ind.x;
+#pragma omp atomic
+            out[i_cp].y += ind.y;
+#pragma omp atomic
+            out[i_cp].z += ind.z;
+        }
+    }
+
+    return (PyObject *)out_arr;
+}
+
 static PyMethodDef pyvl_mesh_methods[] = {
     {
         .ml_name = "get_line_points",
@@ -1566,6 +1837,80 @@ static PyMethodDef pyvl_mesh_methods[] = {
                   "(K, 3) out_array\n"
                   "    If ``out`` was given, it is returned as well. If not, the returned value is a newly allocated\n"
                   "    array of the correct size.\n",
+    },
+    {
+        .ml_name = "induction_velocity",
+        .ml_meth = (void *)pyvl_mesh_induction_velocity,
+        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "induction_velocity"
+                  "(tol: float, positions: numpy.typing.NDArray[numpy.double], control_points: "
+                  "numpy.typing.NDArray[numpy.double], "
+                  "circulation: numpy.typing.NDArray[numpy.double], out: numpy.typing.NDArray[numpy.double] | None = "
+                  "None, line_buffer: "
+                  "numpy.typing.NDArray[numpy.double] | None = None, thread_count: int = 1) -> "
+                  "numpy.typing.NDArray[numpy.double]\n"
+                  "Compute velocity induced by mesh circulation.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "tol : float\n"
+                  "    Minimum distance before the induced velocity is clamped to zero.\n"
+                  "\n"
+                  "positions : array\n"
+                  "    Positions of the geometry points. Must be an aligned, continuous (N, 3) array,\n"
+                  "    where N is the number of points.\n"
+                  "\n"
+                  "control_points : array\n"
+                  "    An (M, 3) array, which specifies the positions of M points.\n"
+                  "\n"
+                  "line_circulation : array\n"
+                  "    Array of circulations for each of the lines.\n"
+                  "\n"
+                  "out : array, optional\n"
+                  "    An array with enough space for M velocity vectors, one for\n"
+                  "    each of the control points.\n"
+                  "\n"
+                  "line_buffer : array, optional\n"
+                  "    An array with enough space for induction vector for each of the\n"
+                  "    mesh lines.\n"
+                  "\n"
+                  "thread_count : int, default: 1\n"
+                  "    Number of threads to use for computing the induction.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "array\n"
+                  "    Resulting induction vectors in an array. If ``out`` was given, the result is\n"
+                  "    written to it and another reference to it returned, otherwise a new array is\n"
+                  "    created.\n",
+    },
+    {
+        .ml_name = "line_circulations",
+        .ml_meth = (void *)pyvl_mesh_line_circulations,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "line_circulations(surface_circulations: numpy.typing.NDArray[numpy.double], out: "
+                  "numpy.typing.NDArray[numpy.double] | None = None, n_threads: int = 1) -> "
+                  "numpy.typing.NDArray[numpy.double]\n"
+                  "Compute circulations based of lines using the dual mesh.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "surface_circulations : array\n"
+                  "    Array of surface circulation values. Must match the number of points in the\n"
+                  "    dual mesh.\n"
+                  "\n"
+                  "out : array, optional\n"
+                  "    Array used to store the output. If not given or ``None``, a new array will\n"
+                  "    be created.\n"
+                  "\n"
+                  "n_threads : int, default: 1\n"
+                  "    Number of threads to use for this calculation.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "array\n"
+                  "    Line circulation values. If ``out`` was not ``None``, a reference to it is\n"
+                  "    returned, otherwise a new array is returned.\n",
     },
     {0},
 };

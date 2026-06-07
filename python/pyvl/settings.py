@@ -95,7 +95,7 @@ class ShedderCallback(Protocol):
         self,
         geometry: SimulationGeometry,
         positions: npt.NDArray[np.double],
-        velocity: npt.NDArray[np.double],
+        velocities: npt.NDArray[np.double],
         time: float,
     ) -> npt.ArrayLike:
         """Determine what elements should shed vorticity from the geometry.
@@ -108,8 +108,8 @@ class ShedderCallback(Protocol):
         positions : array
             Positions of the geometry points in the global coordinate system.
 
-        velocity : array
-            Velocity of the geometry points in the global coordinate system.
+        velocities : array
+            Velocities of the geometry points in the global coordinate system.
 
         time : float
             The current simulation time.

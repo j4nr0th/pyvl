@@ -161,6 +161,81 @@ class Mesh:
         """Compute an induction matrix with normals included."""
         ...
 
+    def line_circulations(
+        self,
+        surface_circulations: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
+        n_threads: int = 1,
+    ) -> npt.NDArray[np.double]:
+        """Compute circulations based of lines using the dual mesh.
+
+        Parameters
+        ----------
+        surface_circulations : array
+            Array of surface circulation values. Must match the number of points in the
+            dual mesh.
+
+        out : array, optional
+            Array used to store the output. If not given or ``None``, a new array will
+            be created.
+
+        n_threads : int, default: 1
+            Number of threads to use for this calculation.
+
+        Returns
+        -------
+        array
+            Line circulation values. If ``out`` was not ``None``, a reference to it is
+            returned, otherwise a new array is returned.
+        """
+        ...
+
+    def induction_velocity(
+        self,
+        tol: float,
+        positions: npt.NDArray[np.double],
+        control_points: npt.NDArray[np.double],
+        line_circulation: npt.NDArray[np.double],
+        out: npt.NDArray[np.double] | None = None,
+        thread_count: int = 1,
+    ) -> npt.NDArray[np.double]:
+        """Compute velocity induced by mesh circulation.
+
+        Parameters
+        ----------
+        tol : float
+            Minimum distance before the induced velocity is clamped to zero.
+
+        positions : array
+            Positions of the geometry points. Must be an aligned, continuous (N, 3) array,
+            where N is the number of points.
+
+        control_points : array
+            An (M, 3) array, which specifies the positions of M points.
+
+        line_circulation : array
+            Array of circulations for each of the lines.
+
+        out : array, optional
+            An array with enough space for M velocity vectors, one for
+            each of the control points.
+
+        line_buffer : array, optional
+            An array with enough space for induction vector for each of the
+            mesh lines.
+
+        thread_count : int, default: 1
+            Number of threads to use for computing the induction.
+
+        Returns
+        -------
+        array
+            Resulting induction vectors in an array. If ``out`` was given, the result is
+            written to it and another reference to it returned, otherwise a new array is
+            created.
+        """
+        ...
+
     def line_velocities_from_point_velocities(
         self,
         point_velocities: npt.NDArray[np.double],

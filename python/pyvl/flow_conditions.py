@@ -50,36 +50,6 @@ class FlowConditions(ABC):
         ...
 
     @abstractmethod
-    def get_density(
-        self,
-        time: float,
-        positions: npt.NDArray[np.double],
-        out_array: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]:
-        """Return density at the specified positions at given time.
-
-        Parameters
-        ----------
-        time : float
-            Time at which the density field should be computed.
-
-        positions : (N, 3) array
-            Array of positions where the flow field should be computed.
-
-        out_array : (N,) array, optional
-            If specified, this array should receive the output values, along with being
-            returned by the function.
-
-        Returns
-        -------
-        (N,) array
-            Array of :math:`N` density values at the specified positions and time. If
-            the parameter ``out_array`` was specified, it should also be the return value
-            of this function.
-        """
-        ...
-
-    @abstractmethod
     def get_pressure(
         self,
         time: float,
