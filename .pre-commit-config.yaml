@@ -11,14 +11,14 @@ repos:
         exclude: "uv.lock"
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: "v22.1.4"
+    rev: "v22.1.5"
     hooks:
       - id: clang-format
         args: [ "--style=Microsoft", "-i" ]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.15.12
+    rev: v0.15.16
     hooks:
       # Run the linter.
       - id: ruff-check
@@ -33,7 +33,7 @@ repos:
           - tomli
 
   - repo: https://github.com/facebook/pyrefly-pre-commit
-    rev: "0.62.0"
+    rev: "1.1.0.dev1"
     hooks:
       - id: pyrefly-check
         name: Pyrefly (type checking)
