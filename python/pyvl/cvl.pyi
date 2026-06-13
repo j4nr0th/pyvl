@@ -1154,6 +1154,47 @@ class ReferenceFrame:
         """True if either the reference frame or its ancestors are moving."""
         ...
 
+    # TODO: C implementation
+    def moved_relative_to(
+        self, other: ReferenceFrame, t_start: float, t_end: float
+    ) -> bool:
+        """Check if the reference frame had motion relative to another.
+
+        This function is intended to be used to determine if relative induction matrices
+        need to be recomputed.
+
+        Parameters
+        ----------
+        other : ReferenceFrame
+            Reference frame to compare it to.
+
+        t_start : float
+            First time to compare to.
+
+        t_end : float
+            Second time to compare to.
+        """
+        ...
+
+    # TODO: C implementation
+    def common_ancestor(self, other: ReferenceFrame | None) -> ReferenceFrame | None:
+        """Find the first common ancestor with another reference frame.
+
+        This function is intended to find the shortest transformation needed by the
+        two reference frames.
+
+        Parameters
+        ----------
+        other : ReferenceFrame or None
+            The reference frame to find the ancestor with.
+
+        Returns
+        -------
+        ReferenceFrame of None
+            The nearest common ancestor of the two reference frames.
+        """
+        ...
+
 def quad_induction(
     tol: float,
     quad_positions: npt.ArrayLike,

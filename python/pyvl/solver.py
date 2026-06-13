@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Literal, Self
+from typing import Any, Callable, Literal, Self
 
 import numpy as np
 import numpy.typing as npt
@@ -19,9 +19,179 @@ from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationF
 from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
 from pyvl.flow_conditions import FlowConditions
-from pyvl.geometry import SimulationGeometry
+from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import SolverSettings, WakeShedderCallback, WakeShedderUniform
 from pyvl.wake import WakeState
+
+
+class SolverSystem:
+    """Type used to hold solver state."""
+
+    geometry: dict[str, Geometry]
+    normal_induction_matrices: dict[tuple[str, str], npt.NDArray[np.double]]
+    self_induction_diags: dict[str, Any]
+    part_order: list[str]
+
+    def compute_induction_matrix(
+        self, source: str, target: str, t: float, tol: float
+    ) -> npt.NDArray[np.double]:
+        """Compute the induction matrix of the source on the target.
+
+        Parameters
+        ----------
+        source : str
+            Label of the source geometry.
+
+        target : str
+            Label of the target geometry.
+
+        t : float
+            Time at which to compute the induction matrices.
+
+        tol : float
+            Tolerance used when computing the induction matrices.
+
+        Returns
+        -------
+        array
+            Induction matrix that was just computed.
+        """
+        source_geo = self.geometry[source]
+        target_geo = self.geometry[target]
+
+        # TODO: cache these in part_positions and part_cpts
+        source_pos = source_geo.reference_frame.to_global_position(
+            source_geo.positions, time=t
+        )
+        target_cpts = target_geo.reference_frame.to_global_position(
+            target_geo.centers, time=t
+        )
+        target_normals = target_geo.reference_frame.to_global_vector(
+            target_geo.normals, time=t
+        )
+        ind_mat = source_geo.msh.induction_matrix3(
+            tol=tol,
+            positions=source_pos,
+            control_points=target_cpts,
+            normals=target_normals,
+            out=self.normal_induction_matrices[(source, target)],
+        )
+
+        return ind_mat
+
+    def update_induction_matrices(self, t_start: float, t_end: float, tol: float) -> bool:
+        """Check if induction matrices must be updated and compute them if needed.
+
+        Parameters
+        ----------
+        t_start : float
+            Previous time for which the matrices are already computed.
+
+        t_end : float
+            New time at which we need the matrices
+
+        tol : float
+            Tolerance used when computing the induction matrices.
+        """
+        if len(self.geometry) == 1:
+            # A single part never moves with respect to itself.
+            return False
+
+        # Groups together parts which do not move relative to each other
+        static_groups: list[list[str]] = list()
+        updated_any = False
+        for i, part_1_name in enumerate(self.part_order):
+            part_1 = self.geometry[part_1_name]
+            for part_2_name in self.part_order[i + 1 :]:
+                part_2 = self.geometry[part_2_name]
+                if not part_1.reference_frame.moved_relative_to(
+                    part_2.reference_frame, t_start=t_start, t_end=t_end
+                ):
+                    # The reference frames did not move relative to one another.
+                    g1 = [g for g in static_groups if part_1_name in g]
+                    g2 = [g for g in static_groups if part_2_name in g]
+                    if not len(g1):
+                        g1 = None
+                    else:
+                        assert len(g1) == 1
+                        g1 = g1[0]
+                    if not len(g2):
+                        g2 = None
+                    else:
+                        assert len(g2) == 1
+                        g2 = g2[0]
+
+                    if g1 is None:
+                        if g2 is None:
+                            static_groups.append([part_1_name, part_2_name])
+                        else:
+                            g2.append(part_1_name)
+                    else:
+                        if g2 is None:
+                            g1.append(part_2_name)
+                        else:
+                            static_groups.remove(g2)
+                            g1.extend(g2)
+                    continue
+
+                updated_any = True
+
+                # They did move, recompute the induction matrices
+                self.compute_induction_matrix(
+                    source=part_1_name, target=part_2_name, t=t_end, tol=tol
+                )
+                self.compute_induction_matrix(
+                    source=part_2_name, target=part_1_name, t=t_end, tol=tol
+                )
+
+        if len(static_groups) == 0:
+            # No parts stayed still relative to one another
+            pass
+
+        else:
+            # We had some parts that did not move relative to one another
+            # Sort the static groups based on the length
+            static_groups = sorted(static_groups, key=lambda g: len(g), reverse=True)
+            # Create a new order, while preserving existing relative order within groups
+            new_order: list[str] = list()
+            for group in static_groups:
+                new_order.extend(sorted(group, key=lambda s: self.part_order.index(s)))
+
+            # Add the parts that were moving with respect to all others
+            new_order.extend([name for name in self.part_order if name not in new_order])
+
+        return updated_any
+
+    def __init__(self, tol: float, *geo: Geometry) -> None:
+        sizes = np.array([g.msh.n_surfaces for g in geo])
+        order = np.argsort(sizes)
+        self.part_order = [geo[int(i)].label for i in order]
+        self.geometry = {g.label: g for g in geo}
+
+        # Compute the self-induction decompositions for all the elements
+        self.self_induction_diags = {
+            g.label: la.lu_factor(
+                g.msh.induction_matrix3(
+                    tol=tol,
+                    positions=g.positions,
+                    control_points=g.centers,
+                    normals=g.normals,
+                )
+            )
+            for g in geo
+        }
+
+        # Prepare memory we will need for non-self-induction matrices
+        self.normal_induction_matrices = dict()
+        for g1 in geo:
+            for g2 in geo:
+                if g1 is g2:
+                    # Skip self-induction
+                    continue
+
+                self.normal_induction_matrices[(g1.label, g2.label)] = np.empty(
+                    (g2.msh.n_surfaces, g1.msh.n_surfaces), np.double
+                )
 
 
 class SolverResults:
@@ -66,6 +236,10 @@ class PyVLComputeMemory:
     vec_w_0: npt.NDArray[np.double]
     vec_w_1: npt.NDArray[np.double]
 
+    # Specific memory buffers
+    line_buffer: npt.NDArray[np.double]
+    mat_buffer: npt.NDArray[np.double]
+
     @classmethod
     def from_solver_settings(
         cls, geometry: SimulationGeometry, settings: SolverSettings
@@ -89,6 +263,8 @@ class PyVLComputeMemory:
                 (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
                 np.double,
             ),
+            line_buffer=np.empty((geometry.n_lines, geometry.n_surfaces, 3)),
+            mat_buffer=np.empty((geometry.n_surfaces, geometry.n_surfaces)),
         )
 
 
@@ -372,6 +548,8 @@ def update_simulation_state(
             (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
             np.double,
         )
+        line_buffer = np.empty((geometry.n_lines, geometry.n_surfaces, 3))
+        mat_buffer = np.empty((geometry.n_surfaces, geometry.n_surfaces))
 
     else:
         work_velocity_p = compute_memory.vec_p_0
@@ -384,6 +562,8 @@ def update_simulation_state(
         work_flux_e1 = compute_memory.scalar_e_0
         work_wake_1 = compute_memory.vec_w_0
         work_wake_2 = compute_memory.vec_w_1
+        line_buffer = compute_memory.line_buffer
+        mat_buffer = compute_memory.mat_buffer
 
     # Compute the positions and velocities of the geometry at the current time step
     pos, vel = geometry.geometry_at_time(
@@ -427,7 +607,8 @@ def update_simulation_state(
         positions=pos,
         control_points=cp_pos,
         normals=norm,
-        # TODO: add memory for line buffer and output
+        out=mat_buffer,
+        line_buffer=line_buffer,
         thread_count=n_threads,
     )
 
