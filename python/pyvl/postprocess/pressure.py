@@ -5,11 +5,11 @@ from collections.abc import Iterable
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.solver import SolverResults
+from pyvl.solver import SolverResults, _compute_induced_velocity
 
 
 def compute_surface_dynamic_pressure(
-    results: SolverResults,
+    results: SolverResults, n_threads: int = 1
 ) -> list[npt.NDArray[np.double]]:
     """Compute dynamic pressure on the surface centers of the mesh.
 
@@ -17,6 +17,9 @@ def compute_surface_dynamic_pressure(
     ----------
     results : SolverResults
         Results of the solver.
+
+    n_threads : int, default: 1
+        Number of threads to use for calculations.
 
     Returns
     -------
@@ -29,21 +32,28 @@ def compute_surface_dynamic_pressure(
         circulation = results.circulations[i, :]
         msh = results.geometry.mesh
         pos, vel = results.geometry.geometry_at_time(t)
-        cpts = results.geometry.mesh.surface_average_vec3(pos)
+        cpts = msh.surface_average_vec3(pos)
         tol = results.settings.model_settings.vortex_limit
-        ind_mat = msh.induction_matrix(tol, pos, cpts)
-        induced_velocity: npt.NDArray[np.double] = np.vecdot(  # type: ignore
-            ind_mat, circulation[None, :, None], axis=1
-        )
-        cp_vel = results.geometry.mesh.surface_average_vec3(vel)
-        induced_velocity -= cp_vel
+        circulation = results.circulations[i, :]
+        line_circulations = results.geometry.dual.line_circulations(circulation)
+        pos = results.geometry.positions_at_time(t)
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
 
         wm = results.wake_states[i]
-        induced_velocity += wm.induced_velocity(tol, cpts)
+        total_velocity = _compute_induced_velocity(
+            time=t,
+            tol=tol,
+            mesh=msh,
+            positions=pos,
+            line_circulation=line_circulations,
+            wake=wm,
+            flow_cond=results.settings.flow_conditions,
+            target=cpts,
+            n_threads=n_threads,
+        )
 
-        pressure = np.vecdot(  # type: ignore
-            induced_velocity, 0.5 * induced_velocity + freestream_velocity, axis=-1
+        pressure = np.sum(
+            total_velocity * (0.5 * total_velocity + freestream_velocity), axis=-1
         )
         pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure
         out_list.append(pressure)
@@ -52,7 +62,7 @@ def compute_surface_dynamic_pressure(
 
 
 def compute_dynamic_pressure_variable(
-    results: SolverResults, positions: Iterable[npt.NDArray]
+    results: SolverResults, positions: Iterable[npt.ArrayLike], n_threads: int = 1
 ) -> list[npt.NDArray[np.double]]:
     """Compute dynamic pressure at the specified positions for each time step.
 
@@ -60,9 +70,13 @@ def compute_dynamic_pressure_variable(
     ----------
     results : SolverResults
         Results of the solver.
-    positions : Iterable of (N, 3) array
+
+    positions : Iterable of (N, 3) array_like
         Iterable which contains arrays of positions where the velocity should be computed
         for each time step.
+
+    n_threads : int, default: 1
+        Number of threads to use for calculations.
 
     Returns
     -------
@@ -78,18 +92,25 @@ def compute_dynamic_pressure_variable(
                 "Positions must be an array of 3 component position vectors."
             )
         circulation = results.circulations[i, :]
-        msh = results.geometry.mesh
+        line_circulations = results.geometry.dual.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
-        tol = results.settings.model_settings.vortex_limit
-        ind_mat = msh.induction_matrix(tol, pos, cpts)
-        induced_velocity = np.sum(ind_mat * circulation[None, :, None], axis=1)
         freestream_velocity = results.settings.flow_conditions.get_velocity(t, cpts)
 
         wm = results.wake_states[i]
-        induced_velocity += wm.induced_velocity(tol, cpts)
+        total_velocity = _compute_induced_velocity(
+            time=t,
+            tol=results.settings.model_settings.vortex_limit,
+            mesh=results.geometry.mesh,
+            positions=pos,
+            line_circulation=line_circulations,
+            wake=wm,
+            flow_cond=results.settings.flow_conditions,
+            target=cpts,
+            n_threads=n_threads,
+        )
 
         pressure = np.sum(
-            induced_velocity * (0.5 * induced_velocity + freestream_velocity), axis=-1
+            total_velocity * (0.5 * total_velocity + freestream_velocity), axis=-1
         )
         pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure
         out_list.append(pressure)

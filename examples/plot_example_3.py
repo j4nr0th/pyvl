@@ -32,7 +32,7 @@ geo = pyvl.Geometry.from_meshio(
     mesh=mio.read(examples.example_file_name("wing1.obj")),
 )
 
-sim_geo = pyvl.SimulationGeometry(geo)
+sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 alpha = np.radians(10)  # 10 degrees
 v_inf = 10  # 10 m/s
@@ -61,7 +61,7 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 # With the settings (an no wake model), the solver can now be run
 
 
-results = pyvl.run_solver(sim_geo, settings, None, None)
+results = pyvl.run_solver(sim_geo, settings, None)
 
 # %%
 #
@@ -185,20 +185,21 @@ plt.show(block=False)
 
 time_settings = pyvl.TimeSettings(12, 0.05)  # this now matters
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
-
 te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 ands, asur = sim_geo.line_adjecency_information(te_lines)
 
-
-wake_model = pyvl.WakeModelLineExplicitUnsteady(
-    ands,
-    te_lines,
-    asur,
-    settings.model_settings.vortex_limit,
-    -settings.time_settings.dt,
-    10,
+settings = pyvl.SolverSettings(
+    flow_conditions,
+    pyvl.ModelSettings(
+        vortex_limit=1e-6,
+        wake_settings=pyvl.WakeSettings(
+            wake_shedder=pyvl.WakeShedderUniform(te_lines),
+            wake_element_capacity=time_settings.nt * te_lines.size,
+        ),
+    ),
+    time_settings,
 )
+
 
 # %%
 #
@@ -214,15 +215,8 @@ wake_model = pyvl.WakeModelLineExplicitUnsteady(
 # the system. The thread usage of OpenMP can be limited by setting the value of the
 # environment variable ``OMP_THREAD_NUM``, while controlling :mod:`scipy` depends on
 # what exactly is used for it.
-#
-# The simplest and most straight-forward way to do this is using the
-# ```threadpoolctl`` module<https://pypi.org/project/threadpoolctl/>`_.
 
-from threadpoolctl import threadpool_limits  # noqa: E402
-
-# For this case, use 4 threads
-with threadpool_limits(limits=4):
-    results = pyvl.run_solver(sim_geo, settings, wake_model, None)
+results = pyvl.run_solver(sim_geo, settings, None)
 
 
 # %%
@@ -235,8 +229,7 @@ with threadpool_limits(limits=4):
 # once again used to limit the number of threads used for computing the induction
 # inside the :func:`postprocess.compute_surface_dynamic_pressure` function.
 
-with threadpool_limits(limits=4):
-    pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
+pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
 
 plotter = pv.Plotter()
 
@@ -244,7 +237,7 @@ sg = sim_geo.polydata_at_time(settings.time_settings.output_times[-1])
 sg.cell_data["Pressure"] = pressures[-1]
 sg.set_active_scalars("Pressure")
 
-wm = wake_model.as_polydata()
+wm = results.wake_states[-1].as_polydata()
 wm.set_active_scalars(None)
 
 plotter.add_mesh(sg, label="Geometry")

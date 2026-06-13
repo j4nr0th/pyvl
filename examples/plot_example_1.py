@@ -41,7 +41,7 @@ geo = pyvl.Geometry.from_polydata(
     pd=plate,
 )
 
-plt = pv.Plotter()
+plt = pv.Plotter(off_screen=True)
 plt.add_mesh(geo.as_polydata())
 plt.show(interactive=False)
 plt.close()
@@ -53,7 +53,7 @@ del plt
 # This is done to compute some other properties of the overall geometry behind the scenes,
 # but that's not really important as a user.
 
-sim_geo = pyvl.SimulationGeometry(geo)
+sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 # %%
 #
@@ -94,7 +94,9 @@ time_settings = pyvl.TimeSettings(1, 1)
 # flow and phyisics.
 
 # Specify the minimum distance before vortex has no more effect.
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+model_settings = pyvl.ModelSettings(
+    vortex_limit=1e-6, wake_settings=pyvl.WakeSettings(pyvl.WakeShedderUniform([]))
+)
 
 # %%
 #
@@ -111,7 +113,7 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and :class:`OutputSettings`.
 
 
-results = pyvl.run_solver(sim_geo, settings, None, None)
+results = pyvl.run_solver(sim_geo, settings, None)
 
 # %%
 #
@@ -132,17 +134,17 @@ mesh = pv.RectilinearGrid(
 velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
 
 for i in range(velocities.shape[0]):
-    plotter = pv.Plotter()
+    plotter = pv.Plotter(off_screen=True)
 
-    mesh.point_data["Velocity"] = velocities[i, :, :]
+    mesh.point_data["Velocity"] = np.nan_to_num(velocities[i, :, :])
     mesh.set_active_vectors("Velocity")
 
     sg = sim_geo.polydata_at_time(0.0)
-
-    plotter.add_mesh(mesh.glyph(factor=0.01))
     plotter.add_mesh(sg, label="Geometry", color="Red")
+    plotter.add_mesh(mesh.glyph(factor=0.01))
 
     plotter.show(interactive=False)
+    plotter.close()
     del plotter
 
 # %%
@@ -158,10 +160,11 @@ for field in forces:
     sg = sim_geo.polydata_edges_at_time(0.0)
     sg.cell_data["Forces"] = field
     print(f"Total force: {np.sum(field, axis=0)} Newtons")
-    plotter = pv.Plotter()
+    plotter = pv.Plotter(off_screen=True)
 
     plotter.add_mesh(sg.glyph(factor=1))
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)
+    plotter.close()
     del plotter

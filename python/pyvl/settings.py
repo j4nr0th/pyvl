@@ -147,7 +147,7 @@ class WakeShedderUniform:
 class WakeSettings:
     """Dataclass for wake model settings."""
 
-    wake_shedder: WakeShedderUniform | WakeShedderCallback
+    wake_shedder: WakeShedderUniform | WakeShedderCallback | None = None
     """Function to determine which elements should shed vorticity from the geometry."""
 
     wake_element_capacity: int = 1000
@@ -162,29 +162,35 @@ class WakeSettings:
             Serialized state of the :class:`WakeSettings` object.
         """
         hm = HirearchicalMap()
-        if isinstance(self.wake_shedder, WakeShedderUniform):
-            hm.insert_string("type", "uniform")
-            hm.insert_array("indices", self.wake_shedder.indices)
-        else:
-            hm.insert_string("type", "callback")
-            hm.insert_string("callable", serializer(self.wake_shedder.shedder))
+        hm.insert_int("wake_capacity", self.wake_element_capacity)
+        if self.wake_shedder is not None:
+            if isinstance(self.wake_shedder, WakeShedderUniform):
+                hm.insert_string("type", "uniform")
+                hm.insert_array("indices", self.wake_shedder.indices)
+            else:
+                hm.insert_string("type", "callback")
+                hm.insert_string("callable", serializer(self.wake_shedder.shedder))
         return hm
 
     @classmethod
     def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Deserialize the object from a HirearchicalMap."""
-        shedder_type = hmap.get_string("type")
-        match shedder_type:
-            case "uniform":
-                indices = hmap.get_array("indices")
-                wake_shedder = WakeShedderUniform(indices)
-            case "callback":
-                callable_name = hmap.get_string("callable")
-                shedder_callable = deserializer(callable_name)
-                wake_shedder = WakeShedderCallback(shedder_callable)
-            case _:
-                raise ValueError(f"Unknown shedder type: {shedder_type}")
-        return cls(wake_shedder=wake_shedder)
+        if "type" in hmap:
+            shedder_type = hmap.get_string("type")
+            match shedder_type:
+                case "uniform":
+                    indices = hmap.get_array("indices")
+                    wake_shedder = WakeShedderUniform(indices)
+                case "callback":
+                    callable_name = hmap.get_string("callable")
+                    shedder_callable = deserializer(callable_name)
+                    wake_shedder = WakeShedderCallback(shedder_callable)
+                case _:
+                    raise ValueError(f"Unknown shedder type: {shedder_type}")
+        else:
+            wake_shedder = None
+        wake_capacity = hmap.get_int("wake_capacity")
+        return cls(wake_shedder=wake_shedder, wake_element_capacity=wake_capacity)
 
 
 @dataclass
@@ -228,7 +234,7 @@ class ModelSettings:
     other, as the induction might become too large and make the results unstable.
     """
 
-    wake_settings: WakeSettings
+    wake_settings: WakeSettings = WakeSettings()
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.

@@ -34,14 +34,13 @@ geo = pyvl.Geometry.from_polydata(
     pd=plate,
 )
 
-sim_geo = pyvl.SimulationGeometry(geo)
+sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 alpha = np.radians(10)  # 10 degrees
 v_inf = 10  # 10 m/s
 flow_conditions = pyvl.FlowConditionsUniform(
     v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
 )
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 
 # %%
 #
@@ -49,8 +48,6 @@ model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 # are set to run the simulation for 20 time steps with 0.005 between each.
 
 time_settings = pyvl.TimeSettings(20, 0.005)
-
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
 # %%
 #
@@ -66,15 +63,12 @@ for i_line, ln in enumerate(sim_geo.mesh.line_data):
     if pos[ln[0], 0] == +0.5 and pos[ln[1], 0] == +0.5:
         shedding_lines.append(i_line)
 
-nods, surfs = sim_geo.line_adjecency_information(shedding_lines)
-
-wake_model = pyvl.WakeModelLineExplicitUnsteady(
-    nods,
-    np.array(shedding_lines),
-    surfs,
-    1e-6,
-    0.0,
-    15,
+shedder = pyvl.WakeShedderUniform(shedding_lines)
+model_settings = pyvl.ModelSettings(
+    vortex_limit=1e-6,
+    wake_settings=pyvl.WakeSettings(
+        wake_shedder=shedder, wake_element_capacity=time_settings.nt * len(shedding_lines)
+    ),
 )
 
 # %%
@@ -86,8 +80,9 @@ wake_model = pyvl.WakeModelLineExplicitUnsteady(
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and
 # :class:`WakeModelLineExplicitUnsteady`.
 
+settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
-results = pyvl.run_solver(sim_geo, settings, wake_model, None)
+results = pyvl.run_solver(sim_geo, settings, None)
 
 # %%
 #
@@ -111,19 +106,28 @@ for i, t in enumerate(results.settings.time_settings.output_times):
 
     mesh.point_data["Velocity"] = velocities[i, :, :]
     mesh.set_active_vectors("Velocity")
-    wake_mod = results.wake_models[i]
-    assert isinstance(wake_mod, pyvl.WakeModelLineExplicitUnsteady)
-    wm = wake_mod.as_polydata()
-    sg = sim_geo.polydata_at_time(0.0)
+    wake_state = results.wake_states[i]
+    if wake_state.quad_count > 0:
+        wm = pv.PolyData.from_regular_faces(
+            wake_state.quad_positions.reshape(-1, 3),
+            np.array(
+                [
+                    [0 + 4 * i, 1 + 4 * i, 2 + 4 * i, 3 + 4 * i]
+                    for i in range(wake_state.quad_count)
+                ]
+            ),
+        )
+        wm.cell_data["Circulation"] = wake_state.circulations
+        wm.set_active_scalars("Circulation")
+        plotter.add_mesh(wm, label="Wake")
+
+    sg = sim_geo.polydata_at_time(t)
     circulation = results.circulations[i, :]
     sg.cell_data["Circulation"] = circulation
     sg.set_active_scalars("Circulation")
-    wm.cell_data["Circulation"] = wake_mod.circulation.flatten()
-    wm.set_active_scalars("Circulation")
 
     plotter.add_mesh(mesh.glyph(factor=0.01))
     plotter.add_mesh(sg, label="Geometry")
-    plotter.add_mesh(wm, label="Wake")
 
     plotter.show(interactive=False)
 
@@ -141,9 +145,15 @@ for i, t in enumerate(results.settings.time_settings.output_times):
 forces = pyvl.postprocess.circulatory_forces(results)
 
 for field in forces:
-    sg = sim_geo.polydata_edges_at_time(0.0)
+    total_force = np.sum(field, axis=0)
+    cl = np.linalg.norm(total_force / (0.5 * v_inf**2))
+    print(
+        f"Total force: {total_force}. Cl={float(cl):.3f} while theory says "
+        f"{float(2 * np.pi * alpha):.3f}"
+    )
+
+    sg = sim_geo.polydata_edges_at_time(t)
     sg.cell_data["Forces"] = field
-    print(f"Total force: {np.sum(field, axis=0)} Newtons")
     plotter = pv.Plotter()
     plotter.add_mesh(sg.glyph(factor=1))
     plotter.add_mesh(sg, label="Geometry", color="Red")

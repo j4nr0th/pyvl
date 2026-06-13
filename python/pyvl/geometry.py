@@ -931,7 +931,7 @@ class SimulationGeometry(Mapping):
             rf = info.rf
             # pos = np.array(info.pos)
             rf.to_global_position(
-                x=pos[info.points],
+                x=info.pos,
                 time=t,
                 # This output array should be fine, since it should be contiguous
                 out=pos[info.points],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -29,16 +30,14 @@ class SolverResults:
     geometry: SimulationGeometry
     circulations: npt.NDArray[np.double]
     wake_states: list[WakeState]
+    shedded_lines: list[npt.NDArray[np.uint]]
     settings: SolverSettings
 
     def __init__(self, geo: SimulationGeometry, settings: SolverSettings):
         self.geometry = geo
-        self.settings = SolverSettings(
-            flow_conditions=settings.flow_conditions,
-            model_settings=settings.model_settings,
-            time_settings=settings.time_settings,
-        )
+        self.settings = deepcopy(settings)
         self.wake_states = list()
+        self.shedded_lines = list()
         self.circulations = np.empty(
             (settings.time_settings.output_times.size, geo.n_surfaces), np.double
         )
@@ -221,6 +220,7 @@ def _compute_induced_velocity(
     target: npt.NDArray[np.double],
     out: npt.NDArray[np.double] | None = None,
     tmp: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
 ) -> npt.NDArray[np.double]:
     """Compute induced velocity at specified locations.
 
@@ -258,6 +258,9 @@ def _compute_induced_velocity(
         Array used for intermediate results. If not provided,
         a new one is created.
 
+    n_threads : int, default: 1
+        Number of threads to use for computing the induction.
+
     Returns
     -------
     array
@@ -267,9 +270,12 @@ def _compute_induced_velocity(
     out_shape = target.shape
     # Checking dims is for losers!
     if out is None:
-        out = np.empty_like(target).reshape(-1, 3, copy=False)
+        out = np.empty_like(target)
+    out = out.reshape(-1, 3, copy=False)
+
     if tmp is None:
-        tmp = np.empty_like(target).reshape(-1, 3, copy=False)
+        tmp = np.empty_like(target)
+    tmp = tmp.reshape(-1, 3, copy=False)
 
     target = target.reshape(-1, 3, copy=False)
     # Compute induction of the mesh
@@ -279,12 +285,11 @@ def _compute_induced_velocity(
         control_points=target,
         line_circulation=line_circulation,
         out=out,
+        n_threads=n_threads,
     )
     # Compute wake induction
     wake.induced_velocity(
-        tol=tol,
-        positions=target,
-        out_velocity=tmp,
+        tol=tol, positions=target, out_velocity=tmp, n_threads=n_threads
     )
     # Add wake induction to the mesh induction
     np.add(out, tmp, out=out)
@@ -301,6 +306,7 @@ def update_simulation_state(
     target_time: float,
     out_state: SolverState | None = None,
     compute_memory: PyVLComputeMemory | None = None,
+    n_threads: int = 1,
 ) -> SolverState:
     """Update the simulation state by applying the wake model's update method.
 
@@ -318,6 +324,9 @@ def update_simulation_state(
 
     compute_memory : PyVLComputeMemory, optional
         Optional memory object that can be used to avoid memory allocations.
+
+    n_threads : int, default: 1
+        Number of threads to use.
 
     Returns
     -------
@@ -392,6 +401,7 @@ def update_simulation_state(
         control_pts=cp_pos,
         normals=norm,
         out_velocity=out_circ,
+        n_threads=n_threads,
     )
 
     # Compute flow velocity
@@ -418,6 +428,7 @@ def update_simulation_state(
         control_points=cp_pos,
         normals=norm,
         # TODO: add memory for line buffer and output
+        thread_count=n_threads,
     )
 
     # Decompose the system matrix to allow for solving multiple times
@@ -435,7 +446,9 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    line_circulations = geometry.dual.line_circulations(circulation=out_circ)
+    line_circulations = geometry.dual.line_circulations(
+        circulation=out_circ, n_threads=n_threads
+    )
     if wake.quad_count > 0:
         # Get wake induced velocity
         wake_ind_vel = _compute_induced_velocity(
@@ -447,8 +460,9 @@ def update_simulation_state(
             wake=wake,
             flow_cond=flow_cond,
             target=wake.positions,
-            out=work_wake_1,
-            tmp=work_wake_2,
+            out=work_wake_1[: wake.quad_count],
+            tmp=work_wake_2[: wake.quad_count],
+            n_threads=n_threads,
         )
 
     else:
@@ -471,6 +485,7 @@ def update_simulation_state(
                 flow_cond=flow_cond,
                 target=pos,
                 out=work_velocity_p1,
+                n_threads=n_threads,
             )
             relative_vel = np.subtract(induced_vel, vel, out=vel)
 
@@ -488,76 +503,85 @@ def update_simulation_state(
                     "Shedder callback must return a 1D array of line indices."
                 )
 
+        case None:
+            shedding_lines = np.array([])
+
         case _:
             raise TypeError("Invalid wake shedder type.")
 
     if np.any(shedding_lines >= state.geometry.n_lines) or np.any(shedding_lines < 0):
         raise ValueError("Shed line index is out of bounds for the geometry.")
 
-    # Points each line should take its velocity from
-    shedding_points = np.array(
-        [geometry.mesh.get_line_points(ln) for ln in shedding_lines], np.uint
-    )
-
-    shed_pos = pos[shedding_points.reshape(-1, copy=False), :].reshape(
-        -1, 2, 3, copy=False
-    )
-
-    if induced_vel is None:
-        # We do do not have computed point velocities, so we compute it for only required
-        induced_vel = _compute_induced_velocity(
-            time=target_time,
-            tol=tol,
-            mesh=geometry.mesh,
-            positions=pos,
-            line_circulation=line_circulations,
-            wake=wake,
-            flow_cond=flow_cond,
-            target=shed_pos,
+    if len(shedding_lines) and dt != 0:
+        # Points each line should take its velocity from
+        shedding_points = np.array(
+            [geometry.mesh.get_line_points(ln) for ln in shedding_lines], np.uint
         )
-    else:
-        # Velocity is computed, we just need to select it
-        induced_vel = induced_vel[shedding_points.reshape(-1, copy=False), :].reshape(
+
+        shed_pos = pos[shedding_points.reshape(-1, copy=False), :].reshape(
             -1, 2, 3, copy=False
         )
 
-    # With line velocities, we can now shed elements in that direction from each line
-    new_quads = np.empty((shedding_lines.size, 4, 3), np.double)
-    # First two points for each quad can already be set based on shedding points
-    new_quads[:, 0, :] = pos[shedding_points[:, 0], :]
-    new_quads[:, 1, :] = pos[shedding_points[:, 1], :]
-    # Remaining two are computed by the velocity at the shedding points
-    new_quads[:, 2, :] = new_quads[:, 1, :] + dt * induced_vel[:, 1, :]
-    new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[:, 0, :]
+        if induced_vel is None:
+            # We do do not have computed point velocities, so compute it for only required
+            induced_vel = _compute_induced_velocity(
+                time=target_time,
+                tol=tol,
+                mesh=geometry.mesh,
+                positions=pos,
+                line_circulation=line_circulations,
+                wake=wake,
+                flow_cond=flow_cond,
+                target=shed_pos,
+                n_threads=n_threads,
+            )
+        else:
+            # Velocity is computed, we just need to select it
+            induced_vel = induced_vel[shedding_points.reshape(-1, copy=False), :].reshape(
+                -1, 2, 3, copy=False
+            )
 
-    # Finally, update the wake if we can
-    if wake_ind_vel is not None:
-        # update the wake model
-        wake = wake.update_wake(dt=dt, velocities=wake_ind_vel, out_state=out_wake)
+        # With line velocities, we can now shed elements in that direction from each line
+        new_quads = np.empty((shedding_lines.size, 4, 3), np.double)
+        # First two points for each quad can already be set based on shedding points
+        new_quads[:, 0, :] = pos[shedding_points[:, 0], :]
+        new_quads[:, 1, :] = pos[shedding_points[:, 1], :]
+        # Remaining two are computed by the velocity at the shedding points
+        new_quads[:, 2, :] = new_quads[:, 1, :] + dt * induced_vel[:, 1, :]
+        new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[:, 0, :]
 
-    # Add wake quads
-    wake.add_quads(
-        new_positions=new_quads,
-        new_circulations=line_circulations[shedding_lines],
-        out_state=out_wake,
-    )
+        # Finally, update the wake if we can
+        if wake_ind_vel is not None:
+            # update the wake model
+            out_wake = wake = wake.update_wake(
+                dt=dt, velocities=wake_ind_vel, out_state=out_wake
+            )
 
-    if out_state is None:
-        return SolverState(
-            time=target_time,
-            circulation=out_circ,
-            geometry=state.geometry,
-            settings=state.settings,
-            wake=out_wake,
+        # Add wake quads
+        out_wake = wake.add_quads(
+            new_positions=new_quads,
+            new_circulations=line_circulations[shedding_lines],
+            out_state=out_wake,
         )
 
-    return out_state
+    elif wake_ind_vel is not None and dt != 0:
+        # update the wake model
+        out_wake = wake.update_wake(dt=dt, velocities=wake_ind_vel, out_state=out_wake)
+
+    return SolverState(
+        time=target_time,
+        circulation=out_circ,
+        geometry=state.geometry,
+        settings=state.settings,
+        wake=out_wake,
+    )
 
 
 def run_solver(
     geometry: SimulationGeometry,
     settings: SolverSettings,
     output_settings: OutputSettings | None,
+    n_threads: int = 1,
 ) -> SolverResults:
     """Run the flow solver to obtain specified circulations.
 
@@ -571,6 +595,9 @@ def run_solver(
 
     output_settings : OutputSettings, optional
         Settings related to file IO.
+
+    n_threads : int, default: 1
+        Number of threads to use.
     """
     results = SolverResults(geometry, settings)
     times: npt.NDArray[np.double]
@@ -585,13 +612,20 @@ def run_solver(
 
     # Main state
     state = SolverState.create_new(times[0], geometry, settings)
+    state.circulation[:] = 0  # Zero out the circulation for the first time step
     # Output state to avoid unnecessary allocations during the loop
     out_state = SolverState.create_new(times[0], geometry, settings)
-    cache = PyVLComputeMemory.from_solver_settings(geometry, settings)
+    compute_mem = PyVLComputeMemory.from_solver_settings(geometry, settings)
 
     for iteration, time in enumerate(times):
         iteration_begin_time = perf_counter()
-        update_simulation_state(state, time, out_state=out_state, compute_memory=cache)
+        out_state = update_simulation_state(
+            state,
+            time,
+            out_state=out_state,
+            compute_memory=compute_mem,
+            n_threads=n_threads,
+        )
         iteration_end_time = perf_counter()
         # Swap the states for the next iteration
         state, out_state = out_state, state
@@ -602,7 +636,14 @@ def run_solver(
             or (iteration % settings.time_settings.output_interval == 0)
         ):
             results.circulations[i_out, :] = state.circulation
-            results.wake_states.append(state.wake)
+            results.wake_states.append(
+                WakeState(
+                    quad_positions=state.wake.positions.copy(),
+                    quad_circulations=state.wake.circulations.copy(),
+                    quad_count=state.wake.quad_count,
+                    next_insertion_index=0,
+                )
+            )
             if output_settings is not None:
                 output_settings.serialization_fn(
                     state.save(output_settings.callable_serializer),

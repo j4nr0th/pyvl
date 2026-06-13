@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from pyvl.cvl import Mesh, ReferenceFrame
+from pyvl.cvl import Mesh, ReferenceFrame, quad_induction
 from pyvl.flow_conditions import FlowConditionsUniform
 from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import (
@@ -25,7 +25,7 @@ from pyvl.solver import (
 from pyvl.wake import WakeState
 
 
-# @pytest.fixture
+@pytest.fixture
 def basic_setup():
     """Set up a minimal geometry."""
     points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
@@ -260,3 +260,72 @@ def test_wake_induction_same_as_mesh():
     )
 
     assert pytest.approx(wake_ind) == mesh_ind
+
+
+def test_state_update():
+    """Ensure the state update computes the correct circulation."""
+    rng = np.random.default_rng(241)
+    # Positions of the quad corners
+    pos = np.array(
+        (
+            (-1, -1, 0),
+            (+1, -1, 0),
+            (+1, +1, 0),
+            (-1, +1, 0),
+        )
+    )
+    # Normal to the quad
+    normal = np.array((0, 0, 1))
+
+    # Make sure the normal is actually normal to all edges
+    for i in range(pos.shape[0]):
+        p1 = pos[i]
+        p2 = pos[(i + 1) % pos.shape[0]]
+        d = p2 - p1
+        assert np.isclose(np.dot(d, normal), 0)
+
+    # Make the simulation geometry based on the QUAD
+    sim_geo = SimulationGeometry.from_geometries(
+        Geometry(
+            label="the QUAD",
+            reference_frame=ReferenceFrame(),
+            mesh=Mesh(n_points=4, connectivity=((0, 1, 2, 3),)),
+            positions=pos,
+        )
+    )
+    # Pick some (pseudo) random flow conditions
+    flow_conditions = FlowConditionsUniform(
+        vx=rng.random(), vy=rng.random(), vz=rng.random()
+    )
+    # Settings have nothing interesting besides the flow conditions
+    settings = SolverSettings(
+        flow_conditions=flow_conditions, model_settings=ModelSettings(vortex_limit=1e-6)
+    )
+    # Create new empty state
+    state = SolverState.create_new(time=0, geometry=sim_geo, settings=settings)
+
+    # Compute the resulting state
+    target_time = 1 + rng.random()  # should not matter, as long as more than start time
+    # Compute the induction based on the no-penetration
+    state = update_simulation_state(state, target_time=target_time, out_state=state)
+
+    # Get induction directly from the QUAD
+    tgt = np.mean(pos, axis=0)
+    ind_vel = quad_induction(
+        tol=settings.model_settings.vortex_limit,
+        quad_positions=pos.reshape(1, 4, 3),
+        quad_circulations=state.circulation,
+        target_positions=tgt.reshape(1, 3),
+    )
+    # Get the flow velocity at the CP
+    flow_vel = flow_conditions.get_velocity(time=target_time, positions=tgt)
+
+    # Normal flow through CP should be (basically) zero for the no penetration condition
+    assert np.isclose(np.dot(ind_vel + flow_vel, normal), 0)
+
+
+if __name__ == "__main__":
+    test_line_circulation()
+    test_induction_two_triangles_equal_to_quad()
+    test_wake_induction_same_as_mesh()
+    test_state_update()

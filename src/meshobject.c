@@ -1292,24 +1292,19 @@ static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyTypeObject *d
     return (PyObject *)out_array;
 }
 
-static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *args, const Py_ssize_t nargs,
-                                       const PyObject *kwnames)
+static PyObject *pyvl_mesh_line_forces(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
+                                       const Py_ssize_t nargs, const PyObject *kwnames)
 {
-    const module_state_t *const state = get_module_state(subtype);
-    if (!state)
+    const module_state_t *state;
+    const PyVL_MeshObject *primal;
+    if (!ensure_mesh_and_state(defining_class, self, &primal, &state))
         return NULL;
 
-    const PyVL_MeshObject *primal, *dual;
     PyArrayObject *circulation, *positions, *velocity, *out = NULL;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "primal",
-                 .p_val = (void *)&primal,
-                 .type_check = state->mesh_type},
-                {.type = CPYARG_TYPE_PYTHON, .kwname = "dual", .p_val = (void *)&dual, .type_check = state->mesh_type},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "circulation",
+                 .kwname = "line_circulation",
                  .p_val = (void *)&circulation,
                  .type_check = &PyArray_Type},
                 {.type = CPYARG_TYPE_PYTHON,
@@ -1317,7 +1312,7 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
                  .p_val = (void *)&positions,
                  .type_check = &PyArray_Type},
                 {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "freestream",
+                 .kwname = "velocity",
                  .p_val = (void *)&velocity,
                  .type_check = &PyArray_Type},
                 {.type = CPYARG_TYPE_PYTHON,
@@ -1331,18 +1326,7 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
         return NULL;
 
     const unsigned n_lines = primal->mesh.n_lines;
-    if (primal->mesh.n_points != dual->mesh.n_surfaces || n_lines != dual->mesh.n_lines ||
-        primal->mesh.n_surfaces != dual->mesh.n_points)
-    {
-        PyErr_Format(PyExc_ValueError,
-                     "Given meshes can not be dual to each other, since the number of points,"
-                     "lines, and surfaces don't match as primal (%u, %u, %u) and dual (%u, %u, %u).",
-                     primal->mesh.n_points, n_lines, primal->mesh.n_surfaces, dual->mesh.n_points, dual->mesh.n_lines,
-                     dual->mesh.n_surfaces);
-        return NULL;
-    }
-
-    if (check_input_array(circulation, 1, (const npy_intp[1]){primal->mesh.n_surfaces}, NPY_DOUBLE,
+    if (check_input_array(circulation, 1, (const npy_intp[1]){primal->mesh.n_lines}, NPY_DOUBLE,
                           NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "Circulation array") < 0 ||
         check_input_array(positions, 2, (const npy_intp[2]){primal->mesh.n_points, 3}, NPY_DOUBLE,
                           NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "Positions array") < 0 ||
@@ -1374,31 +1358,19 @@ static PyObject *pyvl_mesh_line_forces(PyTypeObject *subtype, PyObject *const *a
     const real3_t *const restrict vel = PyArray_DATA(velocity);
     real3_t *const restrict f = PyArray_DATA(out);
     const line_t *primal_lines = primal->mesh.lines;
-    const line_t *dual_lines = dual->mesh.lines;
 
     unsigned i_line;
-#pragma omp parallel for default(none) shared(n_lines, primal_lines, dual_lines, pos, cir, vel, f)
+#pragma omp parallel for default(none) shared(n_lines, primal_lines, pos, cir, vel, f)
     for (i_line = 0; i_line < n_lines; ++i_line)
     {
         const line_t primal_line = primal_lines[i_line];
-        const line_t dual_line = dual_lines[i_line];
 
         const real3_t r_begin = pos[primal_line.p1.value];
         const real3_t r_end = pos[primal_line.p2.value];
 
         const real3_t dr = real3_sub(r_end, r_begin);
 
-        real_t line_circ = 0;
-        if (dual_line.p1.value != INVALID_ID)
-        {
-            const real_t v = cir[dual_line.p1.value];
-            line_circ = dual_line.p1.orientation ? -v : +v;
-        }
-        if (dual_line.p2.value != INVALID_ID)
-        {
-            const real_t v = cir[dual_line.p2.value];
-            line_circ += dual_line.p2.orientation ? -v : +v;
-        }
+        const real_t line_circ = cir[i_line];
 
         const real3_t avg_vel_circ =
             real3_mul1(real3_add(vel[primal_line.p1.value], vel[primal_line.p2.value]), 0.5 * line_circ);
@@ -1809,29 +1781,23 @@ static PyMethodDef pyvl_mesh_methods[] = {
     {
         .ml_name = "line_forces",
         .ml_meth = (void *)pyvl_mesh_line_forces,
-        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
-        .ml_doc = "line_forces(\n"
-                  "    primal: Mesh,\n"
-                  "    dual: Mesh,\n"
-                  "    circulation: in_array,\n"
-                  "    positions: in_array,\n"
-                  "    freestream: in_array,\n"
-                  "    out: out_array | None = None,\n"
-                  ") -> out_array\n"
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "line_forces(line_circulation: array, positions: array, velocity: array, out: array | None = None) "
+                  "-> array\n"
                   "Compute forces due to reduced circulation filaments.\n"
                   "\n"
                   "Parameters\n"
                   "----------\n"
-                  "primal : Mesh\n"
-                  "    Primal mesh.\n"
-                  "dual : Mesh\n"
-                  "    Dual mesh, computed from the ``primal`` by a call to :meth:`Mesh.compute_dual()`.\n"
-                  "circulation : (N,) in_array\n"
-                  "    Array of surface circulations divided by :math:`2 \\pi`.\n"
+                  "\n"
+                  "line_circulation : (N,) in_array\n"
+                  "    Array of line circulations divided by :math:`2 \\pi`.\n"
+                  "\n"
                   "positions : (M, 3) in_array\n"
                   "    Positions of the primal mesh nodes.\n"
-                  "freestream : (M, 3) in_array\n"
+                  "\n"
+                  "velocity : (M, 3) in_array\n"
                   "    Free-stream velocity at the mesh nodes.\n"
+                  "\n"
                   "out : (K, 3) out_array, optional\n"
                   "    Optional array where to write the results to. Assumed it does not alias memory from any other\n"
                   "    arrays.\n"
@@ -1850,7 +1816,7 @@ static PyMethodDef pyvl_mesh_methods[] = {
                   "numpy.typing.NDArray[numpy.double], "
                   "circulation: numpy.typing.NDArray[numpy.double], out: numpy.typing.NDArray[numpy.double] | None = "
                   "None, line_buffer: "
-                  "numpy.typing.NDArray[numpy.double] | None = None, thread_count: int = 1) -> "
+                  "numpy.typing.NDArray[numpy.double] | None = None, n_threads: int = 1) -> "
                   "numpy.typing.NDArray[numpy.double]\n"
                   "Compute velocity induced by mesh circulation.\n"
                   "\n"
@@ -1877,7 +1843,7 @@ static PyMethodDef pyvl_mesh_methods[] = {
                   "    An array with enough space for induction vector for each of the\n"
                   "    mesh lines.\n"
                   "\n"
-                  "thread_count : int, default: 1\n"
+                  "n_threads : int, default: 1\n"
                   "    Number of threads to use for computing the induction.\n"
                   "\n"
                   "Returns\n"

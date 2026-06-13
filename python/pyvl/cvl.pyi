@@ -197,7 +197,7 @@ class Mesh:
         control_points: npt.NDArray[np.double],
         line_circulation: npt.NDArray[np.double],
         out: npt.NDArray[np.double] | None = None,
-        thread_count: int = 1,
+        n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
         """Compute velocity induced by mesh circulation.
 
@@ -224,7 +224,7 @@ class Mesh:
             An array with enough space for induction vector for each of the
             mesh lines.
 
-        thread_count : int, default: 1
+        n_threads : int, default: 1
             Number of threads to use for computing the induction.
 
         Returns
@@ -284,30 +284,26 @@ class Mesh:
         """Compute an induction matrix for the mesh based on line circulations."""
         ...
 
-    @staticmethod
     def line_forces(
-        primal: Mesh,
-        dual: Mesh,
-        circulation: npt.NDArray[np.double],
+        self,
+        line_circulation: npt.NDArray[np.double],
         positions: npt.NDArray[np.double],
-        freestream: npt.NDArray[np.double],
+        velocity: npt.NDArray[np.double],
         out: npt.NDArray[np.double] | None = None,
     ) -> npt.NDArray[np.double]:
         r"""Compute forces due to reduced circulation filaments.
 
         Parameters
         ----------
-        primal : Mesh
-            Primal mesh.
-        dual : Mesh
-            Dual mesh, computed from the ``primal`` by a call to
-            :meth:`Mesh.compute_dual()`.
-        circulation : (N,) in_array
-            Array of surface circulations divided by :math:`2 \pi`.
+        line_circulation : (N,) in_array
+            Array of line circulations divided by :math:`2 \pi`.
+
         positions : (M, 3) in_array
             Positions of the primal mesh nodes.
-        freestream : (M, 3) in_array
+
+        velocity : (M, 3) in_array
             Free-stream velocity at the mesh nodes.
+
         out : (K, 3) out_array, optional
             Optional array where to write the results to. Assumed it does not alias memory
             from any other

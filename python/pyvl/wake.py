@@ -27,6 +27,7 @@ class WakeState:
         """Return the positions of the quads in the wake."""
         return self.quad_positions[: self.quad_count]
 
+    @property
     def circulations(self) -> npt.NDArray[np.double]:
         """Return the circulations of the quads in the wake."""
         return self.quad_circulations[: self.quad_count]
@@ -80,6 +81,7 @@ class WakeState:
         tol: float,
         positions: npt.NDArray[np.double],
         out_velocity: npt.NDArray[np.double] | None = None,
+        n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
         """Compute the velocity induced by the wake at the given positions."""
         if self.quad_count == 0:
@@ -93,6 +95,7 @@ class WakeState:
             quad_circulations=self.quad_circulations[: self.quad_count],
             target_positions=positions,
             out_velocity=out_velocity,
+            n_threads=n_threads,
         )
 
     def induced_normal_velocity(
@@ -101,6 +104,7 @@ class WakeState:
         control_pts: npt.NDArray[np.double],
         normals: npt.NDArray[np.double],
         out_velocity: npt.NDArray[np.double] | None = None,
+        n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
         """Compute the normal velocity induced by the wake at the given control points."""
         if self.quad_count == 0:
@@ -115,6 +119,7 @@ class WakeState:
             target_positions=control_pts,
             target_normals=normals,
             out_velocity=out_velocity,
+            n_threads=n_threads,
         )
 
     def add_quads(
@@ -225,8 +230,6 @@ class WakeState:
         out_positions[: self.quad_count] = (
             self.quad_positions[: self.quad_count] + velocities * dt
         )
-        if out_state is not None:
-            return out_state
 
         return WakeState(
             quad_positions=out_positions,

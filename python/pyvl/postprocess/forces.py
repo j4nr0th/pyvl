@@ -3,15 +3,17 @@
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.cvl import Mesh
 from pyvl.solver import SolverResults
 
 
+# TODO: correct for wake
 def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.double]]:
     """Compute forces resulting from the mesh circulation."""
     out: list[npt.NDArray[np.double]] = list()
     for i, t in enumerate(results.settings.time_settings.output_times):
-        reduced_c = results.circulations[i, :] / (2 * np.pi)
+        line_circ = results.geometry.dual.line_circulations(
+            results.circulations[i, :] / (2 * np.pi)
+        )
         positions, motion = results.geometry.geometry_at_time(t)
 
         freestream = results.settings.flow_conditions.get_velocity(t, positions)
@@ -22,12 +24,8 @@ def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.double]]:
         wm = results.wake_states[i]
         induced += wm.induced_velocity(tol, positions)
 
-        forces = Mesh.line_forces(
-            results.geometry.mesh,
-            results.geometry.dual,
-            reduced_c,
-            positions,
-            freestream + induced - motion,
+        forces = results.geometry.mesh.line_forces(
+            line_circ, positions, freestream + induced - motion
         )
 
         out.append(forces)

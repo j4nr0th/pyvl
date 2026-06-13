@@ -4,7 +4,14 @@ version = "0.0.1a"
 authors = [{ name = "Jan Roth", email = "r0th.j4n@gmail.com" }]
 description = "Panel code solver."
 requires-python = ">=3.10"
-dependencies = ["numpy>=2.0.0", "pyvista", "meshio>=5.3", "h5py>=3.12", "scipy"]
+dependencies = [
+    "numpy>=2.0.0",
+    "pyvista",
+    "meshio>=5.3",
+    "h5py>=3.12",
+    "scipy",
+    "imageio[ffmpeg]>=2.37.3",
+]
 
 
 [build-system]
@@ -37,6 +44,7 @@ dev = [
     "tomli",
     "jupyter_sphinx",
     "pyvista[jupyter]",
+    "ruff",
 ]
 docs = [
     "sphinx",
