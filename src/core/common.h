@@ -168,6 +168,33 @@ static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
         .m22 = real3_dot(a.row2, col_b2),
     };
 }
+
+/**
+ * Compute the transpose multiplication.
+ *
+ * C = A B^T
+ *
+ * @param a Left matrix
+ * @param b Right matrix
+ * @return Result of the multiplication.
+ */
+static inline real3x3_t real3x3_matmul_transpose(const real3x3_t a, const real3x3_t b)
+{
+    // Each column has this:
+    // (real3_mul1(a.row0, b.v0) + real3_mul1(a.row1, b.v1) + real3_mul1(a.row2, b.v2)
+    return (real3x3_t){
+        .m00 = real3_dot(a.row0, b.row0),
+        .m10 = real3_dot(a.row0, b.row1),
+        .m20 = real3_dot(a.row0, b.row2),
+        .m01 = real3_dot(a.row1, b.row0),
+        .m11 = real3_dot(a.row1, b.row1),
+        .m21 = real3_dot(a.row1, b.row2),
+        .m02 = real3_dot(a.row2, b.row0),
+        .m12 = real3_dot(a.row2, b.row1),
+        .m22 = real3_dot(a.row2, b.row2),
+    };
+}
+
 static inline real3x3_t real3x3_from_angles(const real3_t angles)
 {
     if (angles.x == 0 && angles.y == 0 && angles.z == 0)

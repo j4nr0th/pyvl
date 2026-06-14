@@ -1765,6 +1765,221 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
     return (PyObject *)this;
 }
 
+static bool ancestor_position_transform(const PyVL_ReferenceFrame *const ancestor,
+                                        const PyVL_ReferenceFrame *const this, real3x3_t *mat, real3_t *off,
+                                        PyObject *time_obj)
+{
+    const PyVL_ReferenceFrame *current = this;
+    while (current != ancestor)
+    {
+        if (current == NULL)
+        {
+            PyErr_Format(PyExc_RuntimeError,
+                         "Could not get the position transformation from reference frame %p to %p, as %p was not the "
+                         "ancestor of %p.",
+                         this, ancestor, ancestor, this);
+            return false;
+        }
+
+        // Get the transformation to the parent
+        real3_t rel_off;
+        real3_t rel_ori;
+        if (!evaluate_time_dependent_c(&current->orientation, time_obj, &rel_off) ||
+            !evaluate_time_dependent_c(&current->position, time_obj, &rel_ori))
+            return false;
+
+        const real3x3_t rel_mat = real3x3_from_angles(rel_ori);
+
+        // Apply the transformation to the ones we have so far
+        *off = real3_add(real3x3_vecmul(rel_mat, *off), rel_off);
+        *mat = real3x3_matmul(rel_mat, *mat);
+
+        current = current->parent;
+    }
+
+    return true;
+}
+
+static bool relative_transform(const PyVL_ReferenceFrame *ancestor, const PyVL_ReferenceFrame *this,
+                               const PyVL_ReferenceFrame *that, PyObject *time_obj, real3x3_t *p_mat, real3_t *p_off)
+{
+    // Initializers
+    const real3x3_t mat = {.m00 = 1, .m11 = 1, .m22 = 1};
+    const real3_t off = {0};
+
+    // Init transforms relative to ancestor
+    real3_t off_this = off, off_that = off;
+    real3x3_t mat_this = mat, mat_that = mat;
+
+    // Get the transforms (if not already at the ancestor)
+    if (!(this == ancestor || ancestor_position_transform(ancestor, this, &mat_this, &off_this, time_obj)) ||
+        !(that == ancestor || ancestor_position_transform(ancestor, that, &mat_that, &off_that, time_obj)))
+        return false;
+
+    // Make these relative to one another
+    // Relative orientation matrix
+    *p_mat = real3x3_matmul_transpose(mat_this, mat_that);
+    // Relative offset
+    *p_off = real3_sub(off_this, real3x3_vecmul(*p_mat, off_that));
+
+    return true;
+}
+
+static const PyVL_ReferenceFrame *nearest_non_constant_reference_frame(const PyVL_ReferenceFrame *current,
+                                                                       const PyVL_ReferenceFrame *const ancestor)
+{
+    const PyVL_ReferenceFrame *used = ancestor;
+    while (current != ancestor)
+    {
+        // Can we use the current one?
+        if (current->orientation.type != PYVL_RF_CONSTANT || current->position.type != PYVL_RF_CONSTANT)
+            used = current->parent;
+
+        // Go down the hierarchy towards this
+        current = current->parent;
+    }
+    return used;
+}
+
+static PyObject *pyvl_reference_frame_moved_relative_to(PyObject *self, PyTypeObject *defining_class,
+                                                        PyObject *const *args, const Py_ssize_t nargs,
+                                                        const PyObject *kwnames)
+{
+    const module_state_t *mod_state;
+    const PyVL_ReferenceFrame *this;
+    if (!ensure_rf_and_state(self, defining_class, &this, &mod_state))
+        return NULL;
+
+    const PyVL_ReferenceFrame *that;
+    double t_start, t_end;
+    double tol;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&that,
+                 .kwname = "other",
+                 .type_check = mod_state->rf_type},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t_start, .kwname = "t_start"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &t_end, .kwname = "t_end"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    if (tol < 0)
+    {
+        PyErr_SetString(PyExc_ValueError, "Tolerance cannot be less than 0.");
+        return NULL;
+    }
+
+    const PyVL_ReferenceFrame *ancestor = nearest_common_ancestor(this, that);
+    // Keep on moving down the hierarchy until we either reach the ancestor or a RF that is not moving constantly
+    while (this != ancestor)
+    {
+        if (this->orientation.type != PYVL_RF_CONSTANT || this->position.type != PYVL_RF_CONSTANT)
+            break;
+        this = this->parent;
+    }
+    while (that != ancestor)
+    {
+        if (that->orientation.type != PYVL_RF_CONSTANT || that->position.type != PYVL_RF_CONSTANT)
+            break;
+        that = that->parent;
+    }
+
+    if (this == that)
+        // Both reached the ancestor without any non-constant position and orientation, so they did not move
+        Py_RETURN_FALSE;
+
+    if (this == ancestor)
+    {
+        // We can move ancestor closer to that.
+        ancestor = this = nearest_non_constant_reference_frame(that, this);
+    }
+    else if (that == ancestor)
+    {
+        // We can move ancestor closer to this
+        ancestor = that = nearest_non_constant_reference_frame(this, that);
+    }
+
+    // We have to evaluate the position and orientation for both before and after
+    real3_t rel_off_start, rel_off_end;
+    real3x3_t rel_mat_start, rel_mat_end;
+    rel_off_start = rel_off_end = (real3_t){0};
+    rel_mat_start = rel_mat_end = (real3x3_t){.m00 = 1, .m11 = 1, .m22 = 1};
+
+    PyObject *start_time = NULL, *end_time = NULL;
+    if ((start_time = PyFloat_FromDouble(t_start)) == NULL || (end_time = PyFloat_FromDouble(t_end)) == NULL)
+    {
+        Py_XDECREF(start_time);
+        Py_XDECREF(end_time);
+        return NULL;
+    }
+
+    // Compute relative transform
+    const bool managed_transform =
+        (relative_transform(ancestor, this, that, start_time, &rel_mat_start, &rel_off_start) &&
+         relative_transform(ancestor, this, that, end_time, &rel_mat_end, &rel_off_end));
+
+    Py_DECREF(start_time);
+    Py_DECREF(end_time);
+    if (!managed_transform)
+    {
+        // Something went wrong, so we return.
+        return NULL;
+    }
+
+    // Now check how these two transforms compare
+    const real3_t diff_offset = real3_sub(rel_off_end, rel_off_start);
+    if (real3_mag(diff_offset) > tol)
+        // The offsets are too different
+        Py_RETURN_TRUE;
+
+    // Relative rotation angles between the transforms
+    const real3_t diff_orient = angles_from_real3x3(real3x3_matmul_transpose(rel_mat_end, rel_mat_start));
+    if (fabs(diff_orient.x) > tol || fabs(diff_orient.y) > tol || fabs(diff_orient.z) > tol)
+        Py_RETURN_TRUE;
+
+    Py_RETURN_FALSE;
+}
+
+static PyObject *pyvl_reference_frame_common_ancestor(PyObject *self, PyTypeObject *defining_class,
+                                                      PyObject *const *args, const Py_ssize_t nargs,
+                                                      const PyObject *kwnames)
+{
+    const module_state_t *mod_state;
+    const PyVL_ReferenceFrame *this;
+    if (!ensure_rf_and_state(self, defining_class, &this, &mod_state))
+        return NULL;
+
+    const PyVL_ReferenceFrame *that;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&that, .kwname = "other"},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    if (Py_IsNone((PyObject *)that))
+        Py_RETURN_NONE;
+
+    if (!PyObject_TypeCheck(that, mod_state->rf_type))
+    {
+        PyErr_Format(PyExc_TypeError, "other must be a %s, but was %s.", mod_state->rf_type->tp_name,
+                     Py_TYPE(that)->tp_name);
+        return NULL;
+    }
+
+    const PyVL_ReferenceFrame *ancestor = nearest_common_ancestor(this, that);
+    if (ancestor == NULL)
+        Py_RETURN_NONE;
+
+    Py_INCREF(ancestor);
+    return (PyObject *)ancestor;
+}
+
 static PyMethodDef pyvl_reference_frame_methods[] = {
     {
         .ml_name = "offset_at",
@@ -2485,6 +2700,68 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "    is returned.\n",
     },
     //
+    // Determining motion and ancestry
+    {
+        .ml_name = "moved_relative_to",
+        .ml_meth = (void *)pyvl_reference_frame_moved_relative_to,
+        .ml_flags = METH_METHOD | METH_KEYWORDS | METH_FASTCALL,
+        .ml_doc = "moved_relative_to(other: ReferenceFrame, t_start: float, t_end: float, tol: float) -> bool\n"
+                  "Check if the reference frame had motion relative to another.\n"
+                  "\n"
+                  "This function is intended to be used to determine if relative induction matrices\n"
+                  "need to be recomputed.\n"
+                  "\n"
+                  "The motion is determined by computing the relative transformation between the two\n"
+                  "reference frames at these two times. From there, two things are considered:\n"
+                  "\n"
+                  "- Does the difference in relative offset at the two times have the magnitude\n"
+                  "  below ``tol``?\n"
+                  "- Does the largest value of the relative orientation angles have the absolute\n"
+                  "  value below ``tol``?\n"
+                  "\n"
+                  "If any of these criteria is met, the reference frames are considered to have\n"
+                  "moved.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "other : ReferenceFrame\n"
+                  "    Reference frame to compare it to.\n"
+                  "\n"
+                  "t_start : float\n"
+                  "    First time to compare to.\n"
+                  "\n"
+                  "t_end : float\n"
+                  "    Second time to compare to.\n"
+                  "\n"
+                  "tol : float\n"
+                  "    How much difference is allowed for the two reference frames to not\n"
+                  "    be considered moving.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "bool\n"
+                  "    Indication if the two reference frames have moved with respect to one another.\n",
+    },
+    {
+        .ml_name = "common_ancestor",
+        .ml_meth = (void *)pyvl_reference_frame_common_ancestor,
+        .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "common_ancestor(other: ReferenceFrame | None) -> ReferenceFrame | None\n"
+                  "Find the first common ancestor with another reference frame.\n"
+                  "\n"
+                  "This function is intended to find the shortest transformation needed by the\n"
+                  "two reference frames.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "other : ReferenceFrame or None\n"
+                  "    The reference frame to find the ancestor with.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "ReferenceFrame of None\n"
+                  "    The nearest common ancestor of the two reference frames.\n",
+    },
     {0},
 };
 

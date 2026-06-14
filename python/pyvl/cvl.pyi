@@ -1154,14 +1154,24 @@ class ReferenceFrame:
         """True if either the reference frame or its ancestors are moving."""
         ...
 
-    # TODO: C implementation
     def moved_relative_to(
-        self, other: ReferenceFrame, t_start: float, t_end: float
+        self, other: ReferenceFrame, t_start: float, t_end: float, tol: float
     ) -> bool:
         """Check if the reference frame had motion relative to another.
 
         This function is intended to be used to determine if relative induction matrices
         need to be recomputed.
+
+        The motion is determined by computing the relative transformation between the two
+        reference frames at these two times. From there, two things are considered:
+
+        - Does the difference in relative offset at the two times have the magnitude
+          below ``tol``?
+        - Does the largest value of the relative orientation angles have the absolute
+          value below ``tol``?
+
+        If any of these criteria is met, the reference frames are considered to have
+        moved.
 
         Parameters
         ----------
@@ -1173,10 +1183,18 @@ class ReferenceFrame:
 
         t_end : float
             Second time to compare to.
+
+        tol : float
+            How much difference is allowed for the two reference frames to not
+            be considered moving.
+
+        Returns
+        -------
+        bool
+            Indication if the two reference frames have moved with respect to one another.
         """
         ...
 
-    # TODO: C implementation
     def common_ancestor(self, other: ReferenceFrame | None) -> ReferenceFrame | None:
         """Find the first common ancestor with another reference frame.
 

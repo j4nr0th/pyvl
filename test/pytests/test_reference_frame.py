@@ -301,3 +301,73 @@ def test_is_moving() -> None:
     # Constant non-zero rotation
     rf_const_rot = ReferenceFrame(rotation=(0.0, 0.0, 1.0))
     assert rf_const_rot.is_moving
+
+
+def test_common_ancestors():
+    """Check that we correctly determine common ancestors."""
+    rf_1 = ReferenceFrame()
+    rf_1_1 = ReferenceFrame(parent=rf_1)
+    rf_1_2 = ReferenceFrame(parent=rf_1)
+    rf_1_2_1 = ReferenceFrame(parent=rf_1_2)
+    rf_1_2_2 = ReferenceFrame(parent=rf_1_2)
+
+    rf_2 = ReferenceFrame()
+
+    assert rf_1_2_2.common_ancestor(rf_1_1) is rf_1
+    assert rf_2.common_ancestor(rf_1_1) is None
+    assert rf_1_2_2.common_ancestor(rf_1_2_1) is rf_1_2
+    assert rf_1_1.common_ancestor(rf_1_2_1) is rf_1
+    assert rf_1_2.common_ancestor(rf_1_2_1) is rf_1_2
+
+
+def test_moved_relative():
+    """Check we detect relative motion correctly."""
+    rng = np.random.default_rng(15)
+    # Has an offset and changes orientation
+    rf_1 = ReferenceFrame(
+        offset=lambda t: (2 + t, 3 * t + 1, t**2), theta=lambda t: (2 * np.pi * t, 0, 0)
+    )
+    # Two children with constant offset and orientation
+    rf_11 = ReferenceFrame(parent=rf_1, offset=(-1, -2, +3), theta=(9, 1, 1))
+    rf_12 = ReferenceFrame(parent=rf_1, offset=(4, 2, 0), theta=(6, 7, 7))
+    # They are not moving (should use the fast track, so tolerance does not matter here)
+    assert not rf_11.moved_relative_to(
+        other=rf_12, t_start=rng.random(), t_end=rng.random(), tol=1e-50
+    )
+    # Stationary children of the
+    rf_111 = ReferenceFrame(parent=rf_11)
+    rf_121 = ReferenceFrame(parent=rf_12)
+    # Tolerance still does not matter, since they all have constant offsets and angles
+    assert not rf_111.moved_relative_to(
+        other=rf_121, t_start=rng.random(), t_end=rng.random(), tol=1e-15
+    )
+    assert not rf_111.moved_relative_to(
+        other=rf_121, t_start=rng.random(), t_end=rng.random(), tol=0
+    )
+    rf_122 = ReferenceFrame(parent=rf_12, theta=lambda _: (1, 0, 0))
+    rf_123 = ReferenceFrame(parent=rf_12, offset=lambda _: (0, 2, 0))
+
+    # Now tolerance still will not matter, because these are exactly the same
+    assert not rf_111.moved_relative_to(
+        other=rf_122, t_start=rng.random(), t_end=rng.random(), tol=0
+    )
+    assert not rf_111.moved_relative_to(
+        other=rf_123, t_start=rng.random(), t_end=rng.random(), tol=0
+    )
+
+    rf_124 = ReferenceFrame(parent=rf_12, offset=lambda t: (t, 0, 0))
+
+    # Now tolerance still will not matter, because these are exactly the same
+    t0, t1 = rng.random(), rng.random()
+    # Will be considered stationary when tolerance is nice enough
+    assert not rf_111.moved_relative_to(
+        other=rf_124, t_start=t0, t_end=t1, tol=abs(t1 - t0)
+    )
+    # Making tolerance more strict will mark it as moving instead
+    assert rf_111.moved_relative_to(
+        other=rf_124, t_start=t0, t_end=t1, tol=abs(t1 - t0) * 0.999
+    )
+
+
+if __name__ == "__main__":
+    test_moved_relative()
