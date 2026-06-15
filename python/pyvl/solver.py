@@ -221,11 +221,10 @@ class SolverSystem:
             # Now clear up the row via Gaussian elimination
             for j in range(0, i):
                 other = new_order[j]
-                # This is what all the elements (other, ...) is scaled by to eliminate
-                # the entry (part, other), but with minus sign of course.
-                self.normal_induction_matrices[(part, other)] = la.lu_solve(  # type: ignore
+                # A_{i,j} = induction of part_j on part_i
+                self.normal_induction_matrices[(other, part)][:] = la.lu_solve(
                     self.diag_decomposes[other],
-                    self.normal_induction_matrices[(part, other)],
+                    self.normal_induction_matrices[(other, part)],
                     overwrite_b=True,
                 )
                 # Apply this to the other entries of the row (part, ...) after the
@@ -233,15 +232,11 @@ class SolverSystem:
                 for k in range(j + 1, n):
                     t = new_order[k]
                     np.subtract(
-                        self.normal_induction_matrices[(part, t)],
-                        self.normal_induction_matrices[(part, other)]
-                        @ self.normal_induction_matrices[(other, t)],
-                        out=self.normal_induction_matrices[(part, t)],
+                        self.normal_induction_matrices[(t, part)],
+                        self.normal_induction_matrices[(other, part)]
+                        @ self.normal_induction_matrices[(t, other)],
+                        out=self.normal_induction_matrices[(t, part)],
                     )
-                    # self.normal_induction_matrices[(part, t)] -= (
-            #                         self.normal_induction_matrices[(part, other)]
-            #                         @ self.normal_induction_matrices[(other, t)]
-            # )
 
             # Every entry was eliminated, so we can add the diagonal decomposition now
             self.diag_decomposes[part] = la.lu_factor(
@@ -252,6 +247,7 @@ class SolverSystem:
         self.part_order = new_order
 
     def __init__(self, tol: float, *geo: Geometry) -> None:
+        self.diag_decomposes = dict()
         sizes = np.array([g.msh.n_surfaces for g in geo])
         order = np.argsort(-sizes)
         # Sort by number of elements
@@ -306,35 +302,44 @@ class SolverSystem:
 
         # Perform the elimination step with the lower half of the matrix
         n = len(self.part_order)
+        # We need to solve A * u = x
+        # With the block LU decomposition, the lower matrix is:
+        # 1  0 ...
+        # L_21 1 ...
+        # L_31 L_32 1 ...
+        # where L_ij is what we stored in self.normal_induction_matrices[(i, j)]
+        # after elimination.
+        # Actually, in update_inverse:
+        # 1. A_pt = A_pt - A_po * A_ot
+        # Where A_po = A_po * inv(A_oo)
+
+        # Step 1: Forward substitution with lower triangular matrix
+        # L_{i,j} is stored in normal_induction_matrices[(part_j, part_i)]
         for i in range(1, n):
             row_name = self.part_order[i]
             target_vec = x[row_name]
-            # Elimination step, which removes sub-diagonal
             for j in range(0, i):
                 col_name = self.part_order[j]
-                src_vec = x[col_name]
-                # Elimination step
                 np.subtract(
                     target_vec,
-                    self.normal_induction_matrices[(row_name, col_name)] @ src_vec,
+                    self.normal_induction_matrices[(col_name, row_name)] @ x[col_name],
                     out=target_vec,
                 )
 
-        # Perform back-substitution part
+        # Step 2: Backward substitution with upper triangular matrix
+        # U_{i,j} for j > i is the original A_{i,j} (storage is (part_j, part_i))
+        # (unchanged by elimination since only A_{i,j} for j < i are overwritten)
         for i in reversed(range(0, n)):
             row_name = self.part_order[i]
             target_vec = x[row_name]
-            # Moving the super-diagonal terms to the RHS
             for j in range(i + 1, n):
                 col_name = self.part_order[j]
-                src_vec = x[col_name]
-                # Moving step
                 np.subtract(
                     target_vec,
-                    self.normal_induction_matrices[(row_name, col_name)] @ src_vec,
+                    self.normal_induction_matrices[(col_name, row_name)] @ x[col_name],
                     out=target_vec,
                 )
-            # Now apply the diagonal inverse
+            # Now apply the diagonal inverse A_ii^-1 * target_vec
             target_vec[:] = la.lu_solve(
                 self.diag_decomposes[row_name], target_vec, overwrite_b=True
             )
