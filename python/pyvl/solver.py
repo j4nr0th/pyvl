@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,18 +27,25 @@ from pyvl.wake import WakeState
 class SolverSystem:
     """Type used to hold solver state."""
 
-    # Mapping of geometry objects
-    geometry: dict[str, Geometry]
-    # Normal induction matrices
-    normal_induction_matrices: dict[tuple[str, str], npt.NDArray[np.double]]
-    # Order of geometries in the inverse based on their labels
-    part_order: list[str]
-    # Inverse matrix block
-    inverse_blocks: dict[tuple[str, str], npt.NDArray[np.double]]
-    self_induction_diags: dict[str, npt.NDArray[np.double]]
-    diag_decomposes: dict[str, Any]
+    # Mapping of geometry objects for easy access.
+    _geometry: dict[str, Geometry]
+    # Normal induction matrices, which are the LU decomposition terms used for
+    # Gaussian elimination.
+    _normal_induction_matrices: dict[tuple[str, str], npt.NDArray[np.double]]
+    # Order of geometries in the inverse based on their labels. Essentially serves
+    # as the permutation matrix.
+    _part_order: list[str]
+    # Self-induction blocks, which are on the diagonal. As long as part does not deform,
+    # these do not need to ever be recomputed
+    _self_induction_diags: dict[str, npt.NDArray[np.double]]
+    # Decompositions for the diagonal terms
+    _diag_decomposes: dict[str, Any]
+    # Time at which we have the state
+    time: float
+    # Distance below which the induction of a horse shoe vortex is set to zero.
+    vortex_tol: float
 
-    def compute_induction_matrix(
+    def _compute_induction_matrix(
         self, source: str, target: str, t: float, tol: float
     ) -> npt.NDArray[np.double]:
         """Compute the induction matrix of the source on the target.
@@ -62,8 +69,8 @@ class SolverSystem:
         array
             Induction matrix that was just computed.
         """
-        source_geo = self.geometry[source]
-        target_geo = self.geometry[target]
+        source_geo = self._geometry[source]
+        target_geo = self._geometry[target]
 
         # TODO: cache these in part_positions and part_cpts
         source_pos = source_geo.reference_frame.to_global_position(
@@ -80,39 +87,43 @@ class SolverSystem:
             positions=source_pos,
             control_points=target_cpts,
             normals=target_normals,
-            out=self.normal_induction_matrices[(source, target)],
+            out=self._normal_induction_matrices[(source, target)],
         )
 
         return ind_mat
 
-    def update_induction_matrices(self, t_start: float, t_end: float, tol: float) -> bool:
+    def update(self, t_new: float) -> None:
         """Check if induction matrices must be updated and compute them if needed.
 
         Parameters
         ----------
-        t_start : float
-            Previous time for which the matrices are already computed.
-
         t_end : float
             New time at which we need the matrices
 
         tol : float
             Tolerance used when computing the induction matrices.
         """
-        if len(self.geometry) == 1:
+        if self.time == t_new:
+            # Done, no need to do anything :)
+            return
+
+        if len(self._geometry) == 1:
             # A single part never moves with respect to itself.
-            return False
+            return
 
         # Groups together parts which do not move relative to each other
         static_groups: list[list[str]] = list()
-        updated_any = False
-        for i, part_1_name in enumerate(self.part_order):
-            part_1 = self.geometry[part_1_name]
-            for part_2_name in self.part_order[i + 1 :]:
-                part_2 = self.geometry[part_2_name]
+
+        for i, part_1_name in enumerate(self._part_order):
+            part_1 = self._geometry[part_1_name]
+            for part_2_name in self._part_order[i + 1 :]:
+                part_2 = self._geometry[part_2_name]
                 # Check movement
                 moved = part_1.reference_frame.moved_relative_to(
-                    part_2.reference_frame, t_start=t_start, t_end=t_end, tol=tol
+                    part_2.reference_frame,
+                    t_start=self.time,
+                    t_end=t_new,
+                    tol=self.vortex_tol,
                 )
                 if not moved:
                     # The reference frames did not move relative to one another.
@@ -143,52 +154,50 @@ class SolverSystem:
                             g1.extend(g2)
                     continue
 
-                updated_any = True
-
                 # They did move, recompute the induction matrices
-                self.compute_induction_matrix(
-                    source=part_1_name, target=part_2_name, t=t_end, tol=tol
+                self._compute_induction_matrix(
+                    source=part_1_name, target=part_2_name, t=t_new, tol=self.vortex_tol
                 )
-                self.compute_induction_matrix(
-                    source=part_2_name, target=part_1_name, t=t_end, tol=tol
+                self._compute_induction_matrix(
+                    source=part_2_name, target=part_1_name, t=t_new, tol=self.vortex_tol
                 )
 
-        new_order = self.part_order
+        new_order = self._part_order
         preserved = 0
         if len(static_groups) != 0:
             # We had some parts that did not move relative to one another
             # Sort each of the groups based on the number of elements
             static_groups = [
-                sorted(g, key=lambda g: self.geometry[g].msh.n_surfaces, reverse=True)
+                sorted(g, key=lambda g: self._geometry[g].msh.n_surfaces, reverse=True)
                 for g in static_groups
             ]
             # Sort the static groups based on the total element count
             static_groups = sorted(
                 static_groups,
-                key=lambda g: sum([self.geometry[n].msh.n_surfaces for n in g]),
+                key=lambda g: sum([self._geometry[n].msh.n_surfaces for n in g]),
                 reverse=True,
             )
             preserved = len(static_groups[0])
             # Create a new order, while preserving existing relative order within groups
             new_order: list[str] = list()
             for group in static_groups:
-                new_order.extend(sorted(group, key=lambda s: self.part_order.index(s)))
+                new_order.extend(sorted(group, key=lambda s: self._part_order.index(s)))
 
             # Add the parts that were moving with respect to all others
             new_order.extend(
                 sorted(
-                    [name for name in self.part_order if name not in new_order],
-                    key=lambda g: self.geometry[g].msh.n_surfaces,
+                    [name for name in self._part_order if name not in new_order],
+                    key=lambda g: self._geometry[g].msh.n_surfaces,
                     reverse=True,
                 )
             )
 
         # Update the current inverse
-        self.update_inverse(new_order, max_preserved=preserved)
+        self._update_inverse(new_order, max_preserved=preserved)
+        # Update the time
+        self.time = t_new
 
-        return updated_any
-
-    def update_inverse(self, new_order: list[str], max_preserved: int) -> None:
+    def _update_inverse(self, new_order: list[str], max_preserved: int) -> None:
         """Update the current system inverse based on the new order.
 
         Parameters
@@ -203,11 +212,11 @@ class SolverSystem:
         # Check how many we still have from the current state (if allowed)
         start = 0
         n = len(new_order)
-        assert set(new_order) == set(self.part_order)
+        assert set(new_order) == set(self._part_order)
         assert 0 <= max_preserved <= n
 
         # We can reuse the previously computed parts
-        for old, new in zip(self.part_order, new_order, strict=True):
+        for old, new in zip(self._part_order, new_order, strict=True):
             if old != new or start >= max_preserved:
                 break
             start += 1
@@ -216,7 +225,7 @@ class SolverSystem:
         for i in range(start, n):
             part = new_order[i]
             # Copy the self-induction matrix
-            self.normal_induction_matrices[(part, part)] = self.self_induction_diags[
+            self._normal_induction_matrices[(part, part)] = self._self_induction_diags[
                 part
             ].copy()
 
@@ -224,9 +233,9 @@ class SolverSystem:
             for j in range(0, i):
                 other = new_order[j]
                 # A_{i,j} = induction of part_j on part_i
-                self.normal_induction_matrices[(other, part)][:] = la.lu_solve(
-                    self.diag_decomposes[other],
-                    self.normal_induction_matrices[(other, part)],
+                self._normal_induction_matrices[(other, part)][:] = la.lu_solve(
+                    self._diag_decomposes[other],
+                    self._normal_induction_matrices[(other, part)],
                     overwrite_b=True,
                 )
                 # Apply this to the other entries of the row (part, ...) after the
@@ -234,30 +243,31 @@ class SolverSystem:
                 for k in range(j + 1, n):
                     t = new_order[k]
                     np.subtract(
-                        self.normal_induction_matrices[(t, part)],
-                        self.normal_induction_matrices[(other, part)]
-                        @ self.normal_induction_matrices[(t, other)],
-                        out=self.normal_induction_matrices[(t, part)],
+                        self._normal_induction_matrices[(t, part)],
+                        self._normal_induction_matrices[(other, part)]
+                        @ self._normal_induction_matrices[(t, other)],
+                        out=self._normal_induction_matrices[(t, part)],
                     )
 
             # Every entry was eliminated, so we can add the diagonal decomposition now
-            self.diag_decomposes[part] = la.lu_factor(
-                self.normal_induction_matrices[(part, part)]
+            self._diag_decomposes[part] = la.lu_factor(
+                self._normal_induction_matrices[(part, part)]
             )
 
         # Done with the Gaussian elimination, now we can update the order
-        self.part_order = new_order
+        self._part_order = new_order
 
-    def __init__(self, tol: float, *geo: Geometry) -> None:
-        self.diag_decomposes = dict()
+    def __init__(self, time: float, tol: float, geo: Iterable[Geometry]) -> None:
+        self._diag_decomposes = dict()
+        geo = tuple(geo)
         sizes = np.array([g.msh.n_surfaces for g in geo])
         order = np.argsort(-sizes)
         # Sort by number of elements
-        self.part_order = [geo[i].label for i in order]
-        self.geometry = {g.label: g for g in geo}
+        self._part_order = [geo[i].label for i in order]
+        self._geometry = {g.label: g for g in geo}
 
         # Compute the self-induction decompositions for all the elements
-        self.self_induction_diags = {
+        self._self_induction_diags = {
             g.label: g.msh.induction_matrix3(
                 tol=tol,
                 positions=g.positions,
@@ -268,15 +278,17 @@ class SolverSystem:
         }
 
         # Allocate the memory and compute the induction matrices
-        self.normal_induction_matrices = dict()
+        self._normal_induction_matrices = dict()
         for g1 in geo:
             for g2 in geo:
                 mat = np.empty((g2.msh.n_surfaces, g1.msh.n_surfaces), np.double)
-                self.normal_induction_matrices[(g1.label, g2.label)] = mat
-                self.compute_induction_matrix(g1.label, g2.label, t=0, tol=tol)
+                self._normal_induction_matrices[(g1.label, g2.label)] = mat
+                self._compute_induction_matrix(g1.label, g2.label, t=time, tol=tol)
 
         # Now we can compute the whole inverse
-        self.update_inverse(new_order=self.part_order, max_preserved=0)
+        self._update_inverse(new_order=self._part_order, max_preserved=0)
+        self.time = time
+        self.vortex_tol = tol
 
     def solve_inverse(self, x: dict[str, npt.NDArray[np.double]]) -> None:
         """Solve compute the system inverse with the current state.
@@ -291,19 +303,19 @@ class SolverSystem:
             geometry. The solution is written back to these same vectors.
         """
         # First, check the vectors have the right sizes
-        if set(x.keys()) != set(self.part_order):
+        if set(x.keys()) != set(self._part_order):
             raise ValueError("Parts in the system and the input vector are not the same.")
 
         for part_name in x:
-            if x[part_name].shape != (self.geometry[part_name].msh.n_surfaces,):
+            if x[part_name].shape != (self._geometry[part_name].msh.n_surfaces,):
                 raise ValueError(
                     f'The vector for geometry"{part_name}" had the shape '
                     f"{x[part_name].shape}, which should instead be a vector with "
-                    f"{self.geometry[part_name].msh.n_surfaces} elements."
+                    f"{self._geometry[part_name].msh.n_surfaces} elements."
                 )
 
         # Perform the elimination step with the lower half of the matrix
-        n = len(self.part_order)
+        n = len(self._part_order)
         # We need to solve A * u = x
         # With the block LU decomposition, the lower matrix is:
         # 1  0 ...
@@ -318,13 +330,13 @@ class SolverSystem:
         # Step 1: Forward substitution with lower triangular matrix
         # L_{i,j} is stored in normal_induction_matrices[(part_j, part_i)]
         for i in range(1, n):
-            row_name = self.part_order[i]
+            row_name = self._part_order[i]
             target_vec = x[row_name]
             for j in range(0, i):
-                col_name = self.part_order[j]
+                col_name = self._part_order[j]
                 np.subtract(
                     target_vec,
-                    self.normal_induction_matrices[(col_name, row_name)] @ x[col_name],
+                    self._normal_induction_matrices[(col_name, row_name)] @ x[col_name],
                     out=target_vec,
                 )
 
@@ -332,18 +344,18 @@ class SolverSystem:
         # U_{i,j} for j > i is the original A_{i,j} (storage is (part_j, part_i))
         # (unchanged by elimination since only A_{i,j} for j < i are overwritten)
         for i in reversed(range(0, n)):
-            row_name = self.part_order[i]
+            row_name = self._part_order[i]
             target_vec = x[row_name]
             for j in range(i + 1, n):
-                col_name = self.part_order[j]
+                col_name = self._part_order[j]
                 np.subtract(
                     target_vec,
-                    self.normal_induction_matrices[(col_name, row_name)] @ x[col_name],
+                    self._normal_induction_matrices[(col_name, row_name)] @ x[col_name],
                     out=target_vec,
                 )
             # Now apply the diagonal inverse A_ii^-1 * target_vec
             target_vec[:] = la.lu_solve(
-                self.diag_decomposes[row_name], target_vec, overwrite_b=True
+                self._diag_decomposes[row_name], target_vec, overwrite_b=True
             )
 
 

@@ -21,12 +21,12 @@ def _compute_normal_rhs(
     on a fresh output to avoid corrupting the LU state.
     """
     y = {label: np.zeros_like(real_circulations[label]) for label in real_circulations}
-    for target_name in solver.part_order:
-        target_geo = solver.geometry[target_name]
-        for source_name in solver.part_order:
-            source_geo = solver.geometry[source_name]
+    for target_name in solver._part_order:
+        target_geo = solver._geometry[target_name]
+        for source_name in solver._part_order:
+            source_geo = solver._geometry[source_name]
             if source_name == target_name:
-                nmat = solver.self_induction_diags[source_name]
+                nmat = solver._self_induction_diags[source_name]
             else:
                 source_pos = source_geo.reference_frame.to_global_position(
                     source_geo.positions, time=time
@@ -47,27 +47,6 @@ def _compute_normal_rhs(
     return y
 
 
-def test_solver_system_lu_caching():
-    """Verify that SolverSystem caches LU and updates when geometries move."""
-    # Create two geometries
-    points1 = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    connectivity1 = [np.array([0, 1, 2, 3], dtype=np.uint32)]
-    mesh1 = Mesh(len(points1), connectivity1)
-    rf1 = ReferenceFrame()
-    geo1 = Geometry("geo1", rf1, mesh1, points1)
-
-    points2 = np.array([[2, 0, 0], [3, 0, 0], [3, 1, 0], [2, 1, 0]], dtype=np.double)
-    connectivity2 = [np.array([0, 1, 2, 3], dtype=np.uint32)]
-    mesh2 = Mesh(len(points2), connectivity2)
-    rf2 = ReferenceFrame()
-    geo2 = Geometry("geo2", rf2, mesh2, points2)
-
-    # Initialize SolverSystem
-    SolverSystem(1e-6, geo1, geo2)
-
-    # TODO: check the system works with
-
-
 def test_solver_system_inverse_consistency():
     """Verify consistency of solve_inverse with forward multiplication."""
     rng = np.random.default_rng(3935)
@@ -84,7 +63,7 @@ def test_solver_system_inverse_consistency():
         rf = ReferenceFrame(offset=rng.uniform(-10, 10, 3))
         geos.append(Geometry(f"geo{i}", rf, mesh, points))
 
-    solver = SolverSystem(vtol, *geos)
+    solver = SolverSystem(time=67, tol=vtol, geo=geos)
 
     # Prepare random true solution
     x_true = {g.label: rng.uniform(-10, +10, g.msh.n_surfaces) for g in geos}
@@ -144,9 +123,9 @@ def test_solver_system_inverse_complex_moving():
         ),
     ]
 
-    solver = SolverSystem(vtol, *geos)
+    solver = SolverSystem(time=3, tol=vtol, geo=geos)
 
-    solver.update_induction_matrices(t_start=0.0, t_end=1.0, tol=vtol)
+    solver.update(t_new=1.0)
 
     x_true = {g.label: rng.uniform(-10, +10, g.msh.n_surfaces) for g in geos}
     y = _compute_normal_rhs(solver, vtol, x_true, time=1.0)
@@ -191,7 +170,7 @@ def test_solver_system_multi_move_cycles():
     mesh = Mesh(len(tri_points), tri_conn)
     geos.append(Geometry("tri0", make_moving_frame(rng), mesh, tri_points))
 
-    solver = SolverSystem(vtol, *geos)
+    solver = SolverSystem(time=-1, tol=vtol, geo=geos)
 
     for move_cycle in range(4):
         # Build new reference frames with fresh target positions
@@ -216,7 +195,7 @@ def test_solver_system_multi_move_cycles():
 
         t_start = float(move_cycle) + 1.0
         t_end = t_start + 1.0
-        solver.update_induction_matrices(t_start=t_start, t_end=t_end, tol=vtol)
+        solver.update(t_new=t_end)
 
         x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
         y = _compute_normal_rhs(solver, vtol, x_true, time=t_end)
@@ -257,13 +236,13 @@ def test_solver_system_mixed_motion_groups():
         Geometry("moving1", make_moving_frame(rng), Mesh(len(points), conn), points)
     )
 
-    solver = SolverSystem(vtol, *geos)
+    solver = SolverSystem(time=-1, tol=vtol, geo=geos)
 
     for move_cycle in range(3):
         # Replace the moving frame with a new time-varying one
         t_start = float(move_cycle) + 1.0
         t_end = t_start + 1.0
-        solver.update_induction_matrices(t_start=t_start, t_end=t_end, tol=vtol)
+        solver.update(t_new=t_end)
 
         x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
         y = _compute_normal_rhs(solver, vtol, x_true, time=t_end)

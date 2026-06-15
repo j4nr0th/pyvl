@@ -57,7 +57,6 @@ def test_solver_state_serialization():
 
     state = SolverState.create_new(t, sim_geo, s_settings)
     state.circulation[:] = np.random.random(sim_geo.n_surfaces)
-    state.cp_velocity[:] = np.random.random((sim_geo.n_surfaces, 3))
 
     serializer = PythonSerializer()
     hmap = state.save(serializer.serialize)
@@ -65,7 +64,6 @@ def test_solver_state_serialization():
     state_in = SolverState.load(hmap, serializer.deserialize)
 
     assert pytest.approx(state_in.circulation) == state.circulation
-    assert pytest.approx(state_in.cp_velocity) == state.cp_velocity
     assert state_in.geometry == sim_geo
     assert pytest.approx(state_in.time) == t
 

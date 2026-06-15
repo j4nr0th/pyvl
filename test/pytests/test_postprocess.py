@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from pyvl.cvl import Mesh, ReferenceFrame
 from pyvl.flow_conditions import FlowConditionsUniform
@@ -51,9 +52,23 @@ def mock_solver_results():
 
     # Mock WakeState
     wake_state = MagicMock(spec=WakeState)
-    wake_state.induced_velocity.side_effect = lambda tol, pts: (
-        tol * np.zeros((len(pts), 3), dtype=np.double)
-    )
+
+    def mock_induced_vel(
+        tol: float,
+        positions: npt.NDArray[np.double],
+        out_velocity: npt.NDArray[np.double] | None = None,
+        n_threads: int = 1,
+    ) -> npt.NDArray[np.double]:
+        """Mock method for induced velocity."""
+        del tol, n_threads
+        if out_velocity is None:
+            out_velocity = np.empty_like(positions)
+
+        out_velocity[:] = 0
+        return out_velocity
+
+    wake_state.induced_velocity.side_effect = mock_induced_vel
+
     results.wake_states = [wake_state]
 
     return results
