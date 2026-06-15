@@ -154,6 +154,7 @@ class SolverSystem:
                 )
 
         new_order = self.part_order
+        preserved = 0
         if len(static_groups) != 0:
             # We had some parts that did not move relative to one another
             # Sort each of the groups based on the number of elements
@@ -167,6 +168,7 @@ class SolverSystem:
                 key=lambda g: sum([self.geometry[n].msh.n_surfaces for n in g]),
                 reverse=True,
             )
+            preserved = len(static_groups[0])
             # Create a new order, while preserving existing relative order within groups
             new_order: list[str] = list()
             for group in static_groups:
@@ -182,11 +184,11 @@ class SolverSystem:
             )
 
         # Update the current inverse
-        self.update_inverse(new_order, force_all=(len(static_groups) == 0))
+        self.update_inverse(new_order, max_preserved=preserved)
 
         return updated_any
 
-    def update_inverse(self, new_order: list[str], force_all: bool) -> None:
+    def update_inverse(self, new_order: list[str], max_preserved: int) -> None:
         """Update the current system inverse based on the new order.
 
         Parameters
@@ -194,21 +196,21 @@ class SolverSystem:
         new_order : list of str
             The new order of geometries.
 
-        force_all : bool
-            When set, no previous results are reused. Otherwise, the blocks which
-            were already computed are kept the same.
+        max_preserved : int
+            Number of the rows which we do not need to recompute if their order stays
+            the same.
         """
         # Check how many we still have from the current state (if allowed)
         start = 0
         n = len(new_order)
         assert set(new_order) == set(self.part_order)
+        assert 0 <= max_preserved <= n
 
-        if not force_all:
-            # We can reuse the previously computed parts
-            for old, new in zip(self.part_order, new_order, strict=True):
-                if old != new:
-                    break
-                start += 1
+        # We can reuse the previously computed parts
+        for old, new in zip(self.part_order, new_order, strict=True):
+            if old != new or start >= max_preserved:
+                break
+            start += 1
 
         # Perform (unpivoted LU) block by block
         for i in range(start, n):
@@ -274,7 +276,7 @@ class SolverSystem:
                 self.compute_induction_matrix(g1.label, g2.label, t=0, tol=tol)
 
         # Now we can compute the whole inverse
-        self.update_inverse(new_order=self.part_order, force_all=True)
+        self.update_inverse(new_order=self.part_order, max_preserved=0)
 
     def solve_inverse(self, x: dict[str, npt.NDArray[np.double]]) -> None:
         """Solve compute the system inverse with the current state.

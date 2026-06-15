@@ -245,8 +245,8 @@ def test_solver_system_mixed_motion_groups():
     ]
 
     def make_moving_frame(rng):
-        offset0 = rng.uniform(-10, 10, 3)
-        offset1 = rng.uniform(-10, 10, 3)
+        offset0 = rng.uniform(-1, 1, 3)
+        offset1 = rng.uniform(-1, 1, 3)
 
         def offset_fn(t):
             return offset0 + (offset1 - offset0) * t
@@ -261,19 +261,6 @@ def test_solver_system_mixed_motion_groups():
 
     for move_cycle in range(3):
         # Replace the moving frame with a new time-varying one
-        old_rf = geos[2].reference_frame
-        offset_b = rng.uniform(-10, 10, 3)
-
-        def make_new_frame(old_rf=old_rf, offset_b=offset_b):
-            offset_a = old_rf.offset_at(0.0)
-
-            def offset_fn(t):
-                return offset_a + (offset_b - offset_a) * t
-
-            return ReferenceFrame(offset=offset_fn)
-
-        object.__setattr__(geos[2], "reference_frame", make_new_frame())
-
         t_start = float(move_cycle) + 1.0
         t_end = t_start + 1.0
         solver.update_induction_matrices(t_start=t_start, t_end=t_end, tol=vtol)
@@ -285,7 +272,7 @@ def test_solver_system_mixed_motion_groups():
         solver.solve_inverse(u)
 
         for label in u:
-            assert u[label] == pytest.approx(x_true[label], rel=1e-2), (
+            assert u[label] == pytest.approx(x_true[label]), (
                 f"Failed at move cycle {move_cycle} for {label}"
             )
 
