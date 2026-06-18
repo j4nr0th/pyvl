@@ -59,7 +59,7 @@ time_settings = pyvl.TimeSettings(20, 0.005)
 
 shedding_lines: list[int] = list()
 pos = sim_geo.positions_at_time(0.0)
-for i_line, ln in enumerate(sim_geo.mesh.line_data):
+for i_line, ln in enumerate(sim_geo.mesh_joined.line_data):
     if pos[ln[0], 0] == +0.5 and pos[ln[1], 0] == +0.5:
         shedding_lines.append(i_line)
 

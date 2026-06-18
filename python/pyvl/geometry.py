@@ -590,6 +590,7 @@ class Geometry:
             The contents of the class serialized into a :class:`HirearchicalMap`.
         """
         out = HirearchicalMap()
+        out.insert_string("label", self.label)
         out.insert_array("positions", self.positions)
         mesh_group = mesh_to_serial(self.msh)
         out.insert_hirearchical_map("mesh", mesh_group)
@@ -598,9 +599,7 @@ class Geometry:
         return out
 
     @classmethod
-    def load(
-        cls, label: str, group: HirearchicalMap, deserializer: CallableDeserializer
-    ) -> Self:
+    def load(cls, group: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Load the geometry from a HirearchicalMap.
 
         This method is used for de-serialization.
@@ -622,6 +621,7 @@ class Geometry:
         positions = group.get_array("positions")
         mesh_group = group.get_hirearchical_map("mesh")
         rf_group = group.get_hirearchical_map("reference_frame")
+        label = group.get_string("label")
 
         msh = mesh_from_serial(mesh_group)
         rf = rf_from_serial(rf_group, deserializer)
@@ -797,8 +797,9 @@ class SimulationGeometry(Mapping):
     """
 
     _info: dict[str, GeometryInfo]
-    mesh: Mesh
-    dual: Mesh
+    geometries: dict[str, Geometry]
+    mesh_joined: Mesh
+    dual_joined: Mesh
 
     @classmethod
     def from_geometries(cls, *geometries: Geometry) -> SimulationGeometry:
@@ -852,8 +853,9 @@ class SimulationGeometry(Mapping):
         merged_mesh = Mesh.merge_meshes(*meshes)
         return cls(
             _info=info,
-            mesh=merged_mesh,
-            dual=merged_mesh.compute_dual(),
+            mesh_joined=merged_mesh,
+            dual_joined=merged_mesh.compute_dual(),
+            geometries=geos,
         )
 
     def __getitem__(self, key: str) -> GeometryInfo:
@@ -887,17 +889,17 @@ class SimulationGeometry(Mapping):
     @property
     def n_surfaces(self) -> int:
         """Return the total number of surfaces in the simulation geometry."""
-        return self.mesh.n_surfaces
+        return self.mesh_joined.n_surfaces
 
     @property
     def n_lines(self) -> int:
         """Return the total number of lines in the simulation geometry."""
-        return self.mesh.n_lines
+        return self.mesh_joined.n_lines
 
     @property
     def n_points(self) -> int:
         """Return the total number of points in the simulation geometry."""
-        return self.mesh.n_points
+        return self.mesh_joined.n_points
 
     def positions_at_time(
         self, t: float, out_pos: npt.NDArray[np.double] | None = None
@@ -1014,7 +1016,7 @@ class SimulationGeometry(Mapping):
             :class:`pyvista.PolyData` object which represents the surface mesh.
         """
         pos = self.positions_at_time(t)
-        faces = mesh_to_polydata_faces(self.mesh)
+        faces = mesh_to_polydata_faces(self.mesh_joined)
         pd = pv.PolyData.from_irregular_faces(pos, faces)
         return pd
 
@@ -1035,7 +1037,7 @@ class SimulationGeometry(Mapping):
             :class:`pyvista.PolyData` object which represents the line mesh.
         """
         pos = self.positions_at_time(t)
-        lines = self.mesh.line_data
+        lines = self.mesh_joined.line_data
         cell = pv.CellArray.from_regular_cells(np.astype(lines, int))
         pd = pv.PolyData(pos, lines=cell)
         return pd
@@ -1059,10 +1061,10 @@ class SimulationGeometry(Mapping):
         array
             Array of sorted indices of edges which meet the criterion.
         """
-        normals = self.mesh.surface_normal(
+        normals = self.mesh_joined.surface_normal(
             np.concatenate([info.pos for info in self._info.values()], axis=0)
         )
-        return self.dual.dual_normal_criterion(crit, normals)
+        return self.dual_joined.dual_normal_criterion(crit, normals)
 
     def te_free_criterion(self) -> npt.NDArray[np.uint]:
         """Identify edges, which have only one surface attached.
@@ -1076,7 +1078,7 @@ class SimulationGeometry(Mapping):
         array
             Array of sorted indices of edges which meet the criterion.
         """
-        return self.dual.dual_free_edges()
+        return self.dual_joined.dual_free_edges()
 
     def line_adjecency_information(
         self, lines: Sequence[int] | npt.NDArray[np.integer]
@@ -1102,8 +1104,8 @@ class SimulationGeometry(Mapping):
         bordering_nodes = np.empty((len(lines), 2), np.uint)
         adjacent_surfaces = np.empty((len(lines), 2), np.uint)
         for i, line_id in enumerate(lines):
-            primal_line = self.mesh.get_line_points(line_id)
-            dual_line = self.dual.get_line_points(line_id)
+            primal_line = self.mesh_joined.get_line_points(line_id)
+            dual_line = self.dual_joined.get_line_points(line_id)
             bordering_nodes[i, :] = primal_line
             adjacent_surfaces[i, :] = dual_line
         return (bordering_nodes, adjacent_surfaces)
@@ -1122,9 +1124,15 @@ class SimulationGeometry(Mapping):
             geo_group = self._info[geo_name].save(serializer)
             out_info.insert_hirearchical_map(geo_name, geo_group)
 
-        mesh_group = mesh_to_serial(self.mesh)
+        out_geo = HirearchicalMap()
+        for geo_name in self.geometries:
+            geo_group = self.geometries[geo_name].save(serializer)
+            out_geo.insert_hirearchical_map(geo_name, geo_group)
+
+        mesh_group = mesh_to_serial(self.mesh_joined)
         out.insert_hirearchical_map("mesh", mesh_group)
         out.insert_hirearchical_map("info", out_info)
+        out.insert_hirearchical_map("geometries", out_geo)
         return out
 
     @classmethod
@@ -1149,10 +1157,20 @@ class SimulationGeometry(Mapping):
             )
             info[geo_name] = geo_info
 
+        geo_group = group.get_hirearchical_map("geometries")
+        geo: dict[str, Geometry] = {}
+        for geo_name in geo_group:
+            geo_geo = Geometry.load(
+                geo_group.get_hirearchical_map(geo_name), deserializer
+            )
+            geo[geo_name] = geo_geo
+
         mesh_group = group.get_hirearchical_map("mesh")
         mesh = mesh_from_serial(mesh_group)
 
-        return cls(_info=info, mesh=mesh, dual=mesh.compute_dual())
+        return cls(
+            _info=info, mesh_joined=mesh, dual_joined=mesh.compute_dual(), geometries=geo
+        )
 
     def __eq__(self, other) -> bool:
         """Check for equality."""
@@ -1164,8 +1182,9 @@ class SimulationGeometry(Mapping):
             and self.n_lines == other.n_lines
             and self.n_surfaces == other.n_surfaces
             and self._info == other._info
-            and self.mesh == other.mesh
-            and self.dual == other.dual
+            and self.mesh_joined == other.mesh_joined
+            and self.dual_joined == other.dual_joined
+            and self.geometries == other.geometries
         )
 
 

@@ -256,7 +256,8 @@ pressures2 = pyvl.postprocess.compute_dynamic_pressure_variable(
     results, [plane2.points] * len(settings.time_settings.output_times)
 )[-1]
 
-max_p = np.max((np.abs(pressures1), np.abs(pressures2)))
+max_p = max((np.abs(pressures1).max(), np.abs(pressures2).max()))
+
 
 plt.figure()
 
@@ -264,9 +265,9 @@ cplt1 = plt.tricontourf(
     plane1.points[:, 0],
     plane1.points[:, 2],
     pressures1,
-    vmin=0,
+    vmin=-max_p,
     vmax=+max_p,
-    cmap="magma",
+    cmap="bwr",
 )
 plt.colorbar(cplt1)
 
@@ -283,9 +284,9 @@ cplt2 = plt.tricontourf(
     plane2.points[:, 0],
     plane2.points[:, 2],
     pressures2,
-    vmin=0,
+    vmin=-max_p,
     vmax=+max_p,
-    cmap="magma",
+    cmap="bwr",
 )
 plt.colorbar(cplt2)
 
@@ -295,4 +296,5 @@ plt.gca().set(
     xlabel="$x$",
     ylabel="$z$",
 )
+
 plt.show(block=False)

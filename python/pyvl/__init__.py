@@ -7,6 +7,7 @@ from pyvl import examples as examples
 from pyvl import postprocess as postprocess
 
 # C types
+from pyvl.cvl import INVALID_ID as INVALID_ID
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Mesh as Mesh
 from pyvl.cvl import ReferenceFrame as ReferenceFrame

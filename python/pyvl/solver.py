@@ -557,7 +557,7 @@ def _compute_induced_velocity(
     positions: npt.NDArray[np.double],
     line_circulation: npt.NDArray[np.double],
     wake: WakeState,
-    flow_cond: FlowConditions,
+    flow_cond: FlowConditions | None,
     target: npt.NDArray[np.double],
     out: npt.NDArray[np.double] | None = None,
     tmp: npt.NDArray[np.double] | None = None,
@@ -585,8 +585,9 @@ def _compute_induced_velocity(
     wake : WakeState
         State of the wake.
 
-    flow_cond : FlowConditions
-        Flow conditions of the simulation.
+    flow_cond : FlowConditions or None
+        Flow conditions of the simulation. If set to ``None``,
+        no contribution is added.
 
     target : array
         Positions where the wake velocity should be computed.
@@ -634,10 +635,12 @@ def _compute_induced_velocity(
     )
     # Add wake induction to the mesh induction
     np.add(out, tmp, out=out)
-    # Compute flow conditions
-    flow_cond.get_velocity(time=time, positions=target, out_array=tmp)
-    # Add the flow conditions
-    np.add(out, tmp, out=out)
+    if flow_cond is not None:
+        # Compute flow conditions
+        flow_cond.get_velocity(time=time, positions=target, out_array=tmp)
+        # Add the flow conditions
+        np.add(out, tmp, out=out)
+
     # Return after we reshape back to the right shape
     return out.reshape(out_shape, copy=False)
 
@@ -647,6 +650,7 @@ def update_simulation_state(
     target_time: float,
     out_state: SolverState | None = None,
     compute_memory: PyVLComputeMemory | None = None,
+    system: SolverSystem | None = None,
     n_threads: int = 1,
 ) -> SolverState:
     """Update the simulation state by applying the wake model's update method.
@@ -665,6 +669,10 @@ def update_simulation_state(
 
     compute_memory : PyVLComputeMemory, optional
         Optional memory object that can be used to avoid memory allocations.
+
+    system : SolverSystem, optional
+        System solver used for calculating the solution. Once initialized, it
+        can really speed up calculations, especially for cases with static geometry.
 
     n_threads : int, default: 1
         Number of threads to use.
@@ -736,9 +744,9 @@ def update_simulation_state(
     )
 
     # Compute the positions, normals, and velocities of the control points
-    norm = geometry.mesh.surface_normal(pos, work_norm_e)
-    cp_pos = geometry.mesh.surface_average_vec3(pos, work_position_e)
-    cp_vel = geometry.mesh.surface_average_vec3(vel, work_velocity_e)
+    norm = geometry.mesh_joined.surface_normal(pos, work_norm_e)
+    cp_pos = geometry.mesh_joined.surface_average_vec3(pos, work_position_e)
+    cp_vel = geometry.mesh_joined.surface_average_vec3(vel, work_velocity_e)
 
     # Compute the wake model's effect
     wake.induced_normal_velocity(
@@ -766,23 +774,35 @@ def update_simulation_state(
     # Required induction is movement flux minus induction + flow
     np.subtract(work_flux_e1, out_circ, out=out_circ)
 
-    # Compute normal induction matrix
-    system_matrix = geometry.mesh.induction_matrix3(
-        tol=tol,
-        positions=pos,
-        control_points=cp_pos,
-        normals=norm,
-        out=mat_buffer,
-        line_buffer=line_buffer,
-        thread_count=n_threads,
-    )
+    if system is None:
+        # Compute normal induction matrix
+        system_matrix = geometry.mesh_joined.induction_matrix3(
+            tol=tol,
+            positions=pos,
+            control_points=cp_pos,
+            normals=norm,
+            out=mat_buffer,
+            line_buffer=line_buffer,
+            thread_count=n_threads,
+        )
 
-    # Decompose the system matrix to allow for solving multiple times
-    decomp = la.lu_factor(system_matrix, overwrite_a=True)
+        # Decompose the system matrix to allow for solving multiple times
+        decomp = la.lu_factor(system_matrix, overwrite_a=True)
 
-    # Solve the linear system
-    # By setting overwrite_b=True, rhs is where the output is written to
-    out_circ[:] = np.asarray(la.lu_solve(decomp, out_circ, overwrite_b=True), np.double)
+        # Solve the linear system
+        # By setting overwrite_b=True, rhs is where the output is written to
+        out_circ[:] = np.asarray(
+            la.lu_solve(decomp, out_circ, overwrite_b=True), np.double
+        )
+
+    else:
+        # Reuse as much as possible here
+        system.update(t_new=target_time)
+        part_circ = {
+            part_name: out_circ[geometry[part_name].surfaces] for part_name in geometry
+        }
+        system.solve_inverse(part_circ)
+
     # Adjust circulations of closed surfaces to have zero mean circulation
     for geo_name in geometry:
         info = geometry[geo_name]
@@ -792,7 +812,7 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    line_circulations = geometry.dual.line_circulations(
+    line_circulations = geometry.dual_joined.line_circulations(
         circulation=out_circ, n_threads=n_threads
     )
     if wake.quad_count > 0:
@@ -800,7 +820,7 @@ def update_simulation_state(
         wake_ind_vel = _compute_induced_velocity(
             time=target_time,
             tol=tol,
-            mesh=geometry.mesh,
+            mesh=geometry.mesh_joined,
             positions=pos,
             line_circulation=line_circulations,
             wake=wake,
@@ -824,7 +844,7 @@ def update_simulation_state(
             induced_vel = _compute_induced_velocity(
                 time=target_time,
                 tol=tol,
-                mesh=geometry.mesh,
+                mesh=geometry.mesh_joined,
                 positions=pos,
                 line_circulation=line_circulations,
                 wake=wake,
@@ -861,7 +881,7 @@ def update_simulation_state(
     if len(shedding_lines) and dt != 0:
         # Points each line should take its velocity from
         shedding_points = np.array(
-            [geometry.mesh.get_line_points(ln) for ln in shedding_lines], np.uint
+            [geometry.mesh_joined.get_line_points(ln) for ln in shedding_lines], np.uint
         )
 
         shed_pos = pos[shedding_points.reshape(-1, copy=False), :].reshape(
@@ -873,7 +893,7 @@ def update_simulation_state(
             induced_vel = _compute_induced_velocity(
                 time=target_time,
                 tol=tol,
-                mesh=geometry.mesh,
+                mesh=geometry.mesh_joined,
                 positions=pos,
                 line_circulation=line_circulations,
                 wake=wake,
@@ -962,6 +982,11 @@ def run_solver(
     # Output state to avoid unnecessary allocations during the loop
     out_state = SolverState.create_new(times[0], geometry, settings)
     compute_mem = PyVLComputeMemory.from_solver_settings(geometry, settings)
+    system = SolverSystem(
+        time=times[0],
+        tol=settings.model_settings.vortex_limit,
+        geo=[geometry.geometries[name] for name in geometry.geometries],
+    )
 
     for iteration, time in enumerate(times):
         iteration_begin_time = perf_counter()
@@ -971,6 +996,7 @@ def run_solver(
             out_state=out_state,
             compute_memory=compute_mem,
             n_threads=n_threads,
+            system=system,
         )
         iteration_end_time = perf_counter()
         # Swap the states for the next iteration

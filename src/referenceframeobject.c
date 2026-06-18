@@ -2779,7 +2779,7 @@ PyDoc_STRVAR(pyvl_reference_frame_type_docstring,
              ":math:`\\vec{v}(t)`, the orientation matrix as :math:`\\mathbf{T}(t)`, and its angular\n"
              "velocity as :math:`\\vec{\\omega}(t)`, the position and velocity relative to its parent,\n"
              "denoted by :math:`\\vec{r}_\\mathrm{parent}(t)` and :math:`\\vec{v}_\\mathrm{parent}(t)`,\n"
-             "for a point at :math:`\\vec{r}_P` with velocity :math:`\vec{v}_P` are given by\n"
+             "for a point at :math:`\\vec{r}_P` with velocity :math:`\\vec{v}_P` are given by\n"
              "\n"
              ".. math::\n"
              "\n"

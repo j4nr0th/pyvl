@@ -105,8 +105,6 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     // Clear the output
     memset(velocity, 0, sizeof(*velocity) * n_targets);
 
-#pragma omp parallel for default(none) shared(n_elements, circulations, positions, tol, n_targets, target, velocity)   \
-    num_threads(n_threads)
     for (size_t i = 0; i < n_elements; ++i)
     {
         const real_t circulation = circulations[i];
@@ -127,17 +125,16 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
             direction.y /= mag;
             direction.z /= mag;
 
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
+                                                  velocity) num_threads(n_threads) schedule(static)
             for (unsigned j = 0; j < n_targets; ++j)
             {
                 const real3_t ind =
                     real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
 
                 // Updates to these must be atomic
-#pragma omp atomic
                 velocity[j].x += ind.x;
-#pragma omp atomic
                 velocity[j].y += ind.y;
-#pragma omp atomic
                 velocity[j].z += ind.z;
             }
 
@@ -301,8 +298,6 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     // Clear the output
     memset(velocity, 0, sizeof(*velocity) * n_targets);
 
-#pragma omp parallel for default(none)                                                                                 \
-    shared(n_elements, circulations, positions, tol, n_targets, target, velocity, normals) num_threads(n_threads)
     for (size_t i = 0; i < n_elements; ++i)
     {
         const real_t circulation = circulations[i];
@@ -323,6 +318,8 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
             direction.y /= mag;
             direction.z /= mag;
 
+#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
+                                                  velocity, normals) num_threads(n_threads)
             for (unsigned j = 0; j < n_targets; ++j)
             {
                 const real3_t ind =
@@ -330,7 +327,6 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
                 const real_t normal_induction = real3_dot(ind, normals[j]);
 
                 // Update to this must be atomic
-#pragma omp atomic
                 velocity[j] += normal_induction;
             }
 

@@ -20,17 +20,6 @@ HirearchicalMap objects to various file formats.
     fio
 
 
-Element State
--------------
-
-The elements module provides the ImplicitElements class for representing
-solver state at a specific moment.
-
-.. toctree::
-    :maxdepth: 1
-
-    elements
-
 Reference Frame
 ---------------
 

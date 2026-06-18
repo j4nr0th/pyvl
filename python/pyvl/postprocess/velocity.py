@@ -5,11 +5,14 @@ from collections.abc import Iterable
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.solver import SolverResults
+from pyvl.solver import SolverResults, _compute_induced_velocity
 
 
 def compute_velocities(
-    results: SolverResults, positions: npt.NDArray
+    results: SolverResults,
+    positions: npt.NDArray,
+    n_threads: int = 1,
+    induced_only: bool = False,
 ) -> npt.NDArray[np.double]:
     """Compute velocity at the specified positions for each time step.
 
@@ -17,8 +20,16 @@ def compute_velocities(
     ----------
     results : SolverResults
         Results of the solver.
+
     positions : (N, 3) array
         Array of positions where the velocity should be computed for all time steps.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocity.
+
+    induced_only : bool, default: False
+        When set, freestream velocity is not included and only velocity induced by
+        the geometry and its wake is computed.
 
     Returns
     -------
@@ -32,19 +43,30 @@ def compute_velocities(
     output_array = np.empty((out_times.size, cpts.shape[0], 3), np.double)
     for i, t in enumerate(out_times):
         circulation = results.circulations[i, :]
-        msh = results.geometry.mesh
+        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
-        tol = results.settings.model_settings.vortex_limit
-        ind_mat = msh.induction_matrix(tol, pos, cpts)
-        np.vecdot(ind_mat, circulation[None, :, None], axis=1, out=output_array[i, :, :])  # type: ignore
-        output_array[i, :, :] += results.settings.flow_conditions.get_velocity(t, cpts)
         wm = results.wake_states[i]
-        output_array[i, :, :] += wm.induced_velocity(tol, cpts)
+        _compute_induced_velocity(
+            time=t,
+            tol=results.settings.model_settings.vortex_limit,
+            mesh=results.geometry.mesh_joined,
+            positions=pos,
+            line_circulation=line_circulations,
+            wake=wm,
+            flow_cond=results.settings.flow_conditions if not induced_only else None,
+            target=cpts,
+            n_threads=n_threads,
+            out=output_array[i, ...],
+        )
+
     return output_array
 
 
 def compute_velocities_variable(
-    results: SolverResults, positions: Iterable[npt.NDArray]
+    results: SolverResults,
+    positions: Iterable[npt.NDArray],
+    n_threads: int = 1,
+    induced_only: bool = False,
 ) -> list[npt.NDArray[np.double]]:
     """Compute velocity at the specified positions for each time step.
 
@@ -52,9 +74,17 @@ def compute_velocities_variable(
     ----------
     results : SolverResults
         Results of the solver.
+
     positions : Iterable of (N, 3) array
         Iterable which contains arrays of positions where the velocity should be computed
         for each time step.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocity.
+
+    induced_only : bool, default: False
+        When set, freestream velocity is not included and only velocity induced by
+        the geometry and its wake is computed.
 
     Returns
     -------
@@ -70,12 +100,19 @@ def compute_velocities_variable(
                 "Positions must be an array of 3 component position vectors."
             )
         circulation = results.circulations[i, :]
-        msh = results.geometry.mesh
+        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
-        tol = results.settings.model_settings.vortex_limit
-        ind_mat = msh.induction_matrix(tol, pos, cpts)
-        out_list.append(np.vecdot(ind_mat, circulation[None, :, None], axis=1))  # type: ignore
-        out_list[-1] += results.settings.flow_conditions.get_velocity(t, cpts)
         wm = results.wake_states[i]
-        out_list[-1] += wm.induced_velocity(tol, cpts)
+        total_velocity = _compute_induced_velocity(
+            time=t,
+            tol=results.settings.model_settings.vortex_limit,
+            mesh=results.geometry.mesh_joined,
+            positions=pos,
+            line_circulation=line_circulations,
+            wake=wm,
+            flow_cond=results.settings.flow_conditions if not induced_only else None,
+            target=cpts,
+            n_threads=n_threads,
+        )
+        out_list.append(total_velocity)
     return out_list

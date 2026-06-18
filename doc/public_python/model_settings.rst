@@ -6,7 +6,7 @@ Model Settings
 ==============
 
 The :class:`ModelSettings` object is intended to contain settings related to the mathematical
-model used for the flow. These hyper-parameters can be tweaked to change the behaviour of
+model used for the flow. These hyperparameters can be tweaked to change the behavior of
 the solver.
 
 .. autoclass:: ModelSettings

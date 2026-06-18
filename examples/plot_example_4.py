@@ -50,7 +50,7 @@ flow_conditions = pyvl.FlowConditionsUniform(v_inf, 0.0, 0.0)
 sim_geo.polydata_at_time(0.0).plot(interactive=False)
 
 dt = 10 / 360 / (RPM / 60)
-time_settings = pyvl.TimeSettings(120, dt)
+time_settings = pyvl.TimeSettings(60, dt)
 
 
 te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
@@ -87,9 +87,12 @@ pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results, n_threads
 plotter = pv.Plotter(notebook=False, off_screen=True)
 plotter.add_axes()
 
-out_dir = Path(__file__).parent / "output" / "example_4"
-out_dir.mkdir(exist_ok=True)
-plotter.open_movie(out_dir / "propeller.mp4", framerate=10)
+# out_dir = Path(__file__).parent / Path("output" / "example_4")
+out_dir = Path("output", "example_4")
+out_dir.mkdir(exist_ok=True, parents=True)
+plotter.open_gif(out_dir / "propeller.gif", fps=10)
+plotter.set_position((-4, 2, 2))
+plotter.set_focus((+3, 0, 0))
 
 for i, t in enumerate(time_settings.output_times):
     sg = sim_geo.polydata_at_time(t)
@@ -106,4 +109,52 @@ for i, t in enumerate(time_settings.output_times):
 
     plotter.write_frame()
 
+plotter.close()
+# %%
+#
+# Visualize the Velocity
+# ----------------------
+#
+# After running the post-processor again, the difference can be seen. Using `pyvista`
+# the results are combined to create a
+
+
+# Add a safety factor
+wake_len = v_inf * time_settings.nt * time_settings.dt
+wake_mid = wake_len / 2
+
+NX = 101
+NV = 41
+
+plane = pv.Plane(
+    center=(wake_mid, 0, 0),
+    i_size=2 * wake_len,
+    j_size=wake_len,
+    i_resolution=NX,
+    j_resolution=NV,
+)
+
+
+velocity_mag = [
+    np.linalg.norm(v, axis=-1)
+    for v in pyvl.postprocess.compute_velocities_variable(
+        results,
+        positions=[plane.points] * time_settings.nt,
+        n_threads=4,
+    )
+]
+
+max_mag = max(vm.max() for vm in velocity_mag)
+min_mag = min(vm.min() for vm in velocity_mag)
+
+plotter = pv.Plotter(notebook=False, off_screen=True)
+plotter.open_gif(out_dir / "propeller-velocity.gif", fps=10)
+plotter.set_position((wake_mid, 0, 6))
+plotter.set_focus((wake_mid, 0, 0))
+
+for i, t in enumerate(time_settings.output_times):
+    plane.point_data["velocity"] = velocity_mag[i]
+    plotter.add_mesh(plane, name="vel", scalars="velocity", clim=(min_mag, max_mag))
+    plotter.add_mesh(sim_geo.polydata_at_time(t), name="geo")
+    plotter.write_frame()
 plotter.close()

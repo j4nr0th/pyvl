@@ -86,7 +86,7 @@ def test_geometry_serialization1() -> None:
     serializer = PythonSerializer()
     out = geo.save(serializer.serialize)
 
-    geo1 = Geometry.load(geo.label, out, serializer.deserialize)
+    geo1 = Geometry.load(out, serializer.deserialize)
     assert geo1.label == geo.label
     assert np.all(geo1.positions == geo.positions)
     assert geo1.msh == geo.msh
@@ -111,7 +111,7 @@ def test_geometry_serialization_hdf() -> None:
     fio.serialize_hdf5(out, fpath)
     inv = fio.deserialize_hdf5(fpath)
 
-    geo1 = Geometry.load(geo.label, inv, serializer.deserialize)
+    geo1 = Geometry.load(inv, serializer.deserialize)
     assert geo1.label == geo.label
     assert np.all(geo1.positions == geo.positions)
     assert geo1.msh == geo.msh
@@ -136,7 +136,7 @@ def test_geometry_serialization_json() -> None:
     fio.serialize_json(out, fpath)
     inv = fio.deserialize_json(fpath)
 
-    geo1 = Geometry.load(geo.label, inv, serializer.deserialize)
+    geo1 = Geometry.load(inv, serializer.deserialize)
     assert geo1.label == geo.label
     assert np.all(geo1.positions == geo.positions)
     assert geo1.msh == geo.msh

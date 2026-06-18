@@ -53,4 +53,9 @@ Force Computation
 The forces on each mesh edge can be computed from the circulation distribution using
 the Kutta-Joukowski theorem. This yields the circulatory force on each vortex line.
 
+What is important to note is that according to potential flow, a closed horseshoe vortex
+will not produce any force. As such, the only places where a non-zero force will be observed
+according to this model of the flow is where the wake is being shed. This is because those
+vortices are not closed on the surface, but extend into the flow.
+
 .. autofunction:: circulatory_forces

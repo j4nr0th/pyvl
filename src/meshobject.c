@@ -1607,8 +1607,6 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
     memset(out, 0, sizeof(*out) * cp_cnt);
 
     // For each line
-#pragma omp parallel for default(none) num_threads(n_threads)                                                          \
-    shared(this, positions, control_points, circulations, out, vortex_tol, cp_cnt)
     for (unsigned i_line = 0; i_line < this->mesh.n_lines; ++i_line)
     {
         // Get the line circulation
@@ -1633,6 +1631,8 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
         d.z /= mag;
 
         // For each of the target points
+#pragma omp parallel for default(none) num_threads(n_threads)                                                          \
+    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt)
         for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
         {
             const real3_t cp = control_points[i_cp];
@@ -1641,11 +1641,8 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
             const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
 
             // Update the result atomically
-#pragma omp atomic
             out[i_cp].x += ind.x;
-#pragma omp atomic
             out[i_cp].y += ind.y;
-#pragma omp atomic
             out[i_cp].z += ind.z;
         }
     }
