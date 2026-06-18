@@ -11,7 +11,7 @@ def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.double]]:
     """Compute forces resulting from the mesh circulation."""
     out: list[npt.NDArray[np.double]] = list()
     for i, t in enumerate(results.settings.time_settings.output_times):
-        line_circ = results.geometry.dual_joined.line_circulations(
+        line_circ = results.geometry.mesh_joined.line_circulations(
             results.circulations[i, :] / (2 * np.pi)
         )
         positions, motion = results.geometry.geometry_at_time(t)

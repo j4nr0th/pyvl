@@ -167,13 +167,13 @@ class Mesh:
         out: npt.NDArray[np.double] | None = None,
         n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
-        """Compute circulations based of lines using the dual mesh.
+        """Compute circulations based of lines using the mesh.
 
         Parameters
         ----------
         circulation : array
             Array of surface circulation values. Must match the number of points in the
-            dual mesh.
+            mesh.
 
         out : array, optional
             Array used to store the output. If not given or ``None``, a new array will

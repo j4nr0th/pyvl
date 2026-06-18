@@ -1385,8 +1385,8 @@ static PyObject *pyvl_mesh_line_circulations(PyObject *self, PyTypeObject *defin
                                              const Py_ssize_clean_t nargs, const PyObject *kwnames)
 {
     const module_state_t *state;
-    const PyVL_MeshObject *dual;
-    if (!ensure_mesh_and_state(defining_class, self, &dual, &state))
+    const PyVL_MeshObject *this;
+    if (!ensure_mesh_and_state(defining_class, self, &this, &state))
         return NULL;
 
     PyArrayObject *circ_arr, *out_arr = NULL;
@@ -1426,12 +1426,12 @@ static PyObject *pyvl_mesh_line_circulations(PyObject *self, PyTypeObject *defin
     }
 
     // Check the circulation array is the right size
-    if (check_input_array(circ_arr, 1, (const npy_intp[1]){(npy_intp)dual->mesh.n_points}, NPY_DOUBLE,
+    if (check_input_array(circ_arr, 1, (const npy_intp[1]){(npy_intp)this->mesh.n_surfaces}, NPY_DOUBLE,
                           NPY_ARRAY_ALIGNED | NPY_ARRAY_C_CONTIGUOUS, "circulation") < 0)
         return NULL;
 
     // Ensure we have an output array
-    const npy_intp sz_out = dual->mesh.n_lines;
+    const npy_intp sz_out = this->mesh.n_lines;
     if (out_arr == NULL)
     {
         // Create the output array
@@ -1452,28 +1452,44 @@ static PyObject *pyvl_mesh_line_circulations(PyObject *self, PyTypeObject *defin
     const real_t *const restrict circulations = PyArray_DATA(circ_arr);
     real_t *const restrict out = PyArray_DATA(out_arr);
 
+    const mesh_t *const mesh = &this->mesh;
     // For each line
-#pragma omp parallel for default(none) num_threads(n_threads) shared(dual, circulations, out)
-    for (unsigned i_line = 0; i_line < dual->mesh.n_lines; ++i_line)
+#pragma omp parallel default(none) num_threads(n_threads) shared(mesh, circulations, out)
     {
-        // Find what surfaces it is based on the dual mesh
-        const line_t dual_line = dual->mesh.lines[i_line];
 
-        // Get the dual circulation
-        real_t circ = 0;
-        if (dual_line.p1.value != INVALID_ID)
+        // Zero the output array and get these to thread's caches
+#pragma omp for
+        for (unsigned i_line = 0; i_line < mesh->n_lines; ++i_line)
         {
-            const real_t v = circulations[dual_line.p1.value];
-            circ += dual_line.p1.orientation ? -v : +v;
-        }
-        if (dual_line.p2.value != INVALID_ID)
-        {
-            const real_t v = circulations[dual_line.p2.value];
-            circ += dual_line.p2.orientation ? -v : +v;
+            out[i_line] = 0;
         }
 
-        // Store the resulting circulation
-        out[i_line] = circ;
+        // Compute the actual circulations
+#pragma omp for
+        for (unsigned i = 0; i < mesh->n_surfaces; ++i)
+        {
+            const double circ = circulations[i];
+            // Find what surfaces it is based on the dual mesh
+
+            const geo_id_t *lines;
+            const unsigned n_lines = mesh_get_surface(mesh, i, &lines);
+
+            // Add or subtract the line circulation
+            for (unsigned j = 0; j < n_lines; ++j)
+            {
+                const unsigned idx = lines[j].value;
+                if (lines[j].orientation)
+                {
+#pragma omp atomic update
+                    out[idx] -= circ;
+                }
+                else
+                {
+#pragma omp atomic update
+                    out[idx] += circ;
+                }
+            }
+        }
     }
 
     return (PyObject *)out_arr;
@@ -1857,13 +1873,13 @@ static PyMethodDef pyvl_mesh_methods[] = {
         .ml_doc = "line_circulations(circulation: numpy.typing.NDArray[numpy.double], out: "
                   "numpy.typing.NDArray[numpy.double] | None = None, n_threads: int = 1) -> "
                   "numpy.typing.NDArray[numpy.double]\n"
-                  "Compute circulations based of lines using the dual mesh.\n"
+                  "Compute circulations based of lines using the mesh.\n"
                   "\n"
                   "Parameters\n"
                   "----------\n"
                   "circulation : array\n"
                   "    Array of surface circulation values. Must match the number of points in the\n"
-                  "    dual mesh.\n"
+                  "    mesh.\n"
                   "\n"
                   "out : array, optional\n"
                   "    Array used to store the output. If not given or ``None``, a new array will\n"

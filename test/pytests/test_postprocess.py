@@ -1,5 +1,6 @@
 """Test the postprocess module functions."""
 
+import dataclasses
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -18,6 +19,21 @@ from pyvl.settings import (
 )
 from pyvl.solver import SolverResults
 from pyvl.wake import WakeState
+
+
+def mock_induced_vel(
+    tol: float,
+    positions: npt.NDArray[np.double],
+    out_velocity: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
+) -> npt.NDArray[np.double]:
+    """Mock method for induced velocity."""
+    del tol, n_threads
+    if out_velocity is None:
+        out_velocity = np.empty_like(positions)
+
+    out_velocity[:] = 0
+    return out_velocity
 
 
 @pytest.fixture
@@ -52,20 +68,6 @@ def mock_solver_results():
 
     # Mock WakeState
     wake_state = MagicMock(spec=WakeState)
-
-    def mock_induced_vel(
-        tol: float,
-        positions: npt.NDArray[np.double],
-        out_velocity: npt.NDArray[np.double] | None = None,
-        n_threads: int = 1,
-    ) -> npt.NDArray[np.double]:
-        """Mock method for induced velocity."""
-        del tol, n_threads
-        if out_velocity is None:
-            out_velocity = np.empty_like(positions)
-
-        out_velocity[:] = 0
-        return out_velocity
 
     wake_state.induced_velocity.side_effect = mock_induced_vel
 
@@ -124,7 +126,6 @@ def test_compute_velocities_variable(mock_solver_results):
     settings = mock_solver_results.settings
     new_time_settings = TimeSettings(nt=2, dt=1.0)
     # Since SolverSettings is frozen, we create a new one
-    import dataclasses
 
     new_settings = dataclasses.replace(settings, time_settings=new_time_settings)
 
@@ -138,9 +139,7 @@ def test_compute_velocities_variable(mock_solver_results):
     )
 
     wake_state = MagicMock(spec=WakeState)
-    wake_state.induced_velocity.side_effect = lambda tol, pts: (
-        tol * np.zeros((len(pts), 3), dtype=np.double)
-    )
+    wake_state.induced_velocity.side_effect = mock_induced_vel
     results.wake_states = [wake_state, wake_state]
 
     res = velocity.compute_velocities_variable(results, pts)

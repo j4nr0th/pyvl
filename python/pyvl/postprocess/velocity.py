@@ -43,7 +43,7 @@ def compute_velocities(
     output_array = np.empty((out_times.size, cpts.shape[0], 3), np.double)
     for i, t in enumerate(out_times):
         circulation = results.circulations[i, :]
-        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
+        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
         wm = results.wake_states[i]
         _compute_induced_velocity(
@@ -100,7 +100,7 @@ def compute_velocities_variable(
                 "Positions must be an array of 3 component position vectors."
             )
         circulation = results.circulations[i, :]
-        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
+        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
         wm = results.wake_states[i]
         total_velocity = _compute_induced_velocity(

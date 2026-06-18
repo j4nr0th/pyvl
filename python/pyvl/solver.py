@@ -812,7 +812,7 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    line_circulations = geometry.dual_joined.line_circulations(
+    line_circulations = geometry.mesh_joined.line_circulations(
         circulation=out_circ, n_threads=n_threads
     )
     if wake.quad_count > 0:

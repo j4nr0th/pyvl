@@ -35,7 +35,7 @@ def compute_surface_dynamic_pressure(
         cpts = msh.surface_average_vec3(pos)
         tol = results.settings.model_settings.vortex_limit
         circulation = results.circulations[i, :]
-        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
+        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
 
         wm = results.wake_states[i]
@@ -89,7 +89,7 @@ def compute_dynamic_pressure_variable(
                 "Positions must be an array of 3 component position vectors."
             )
         circulation = results.circulations[i, :]
-        line_circulations = results.geometry.dual_joined.line_circulations(circulation)
+        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
         pos = results.geometry.positions_at_time(t)
 
         wm = results.wake_states[i]

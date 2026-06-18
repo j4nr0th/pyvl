@@ -141,8 +141,7 @@ def test_line_circulation():
     #  7   |   5   | 2
     #  8   |   4   | 5
     circulations = rng.random(msh.n_surfaces)
-    dual = msh.compute_dual()
-    line_circ = dual.line_circulations(circulations)
+    line_circ = msh.line_circulations(circulations)
     # This is manually computed based on how the lines are
     expected = np.array(
         (
@@ -248,7 +247,7 @@ def test_wake_induction_same_as_mesh():
     wake = WakeState.empty(4)
     wake = wake.add_quads(quad_pos, circ)
 
-    line_circ = msh.compute_dual().line_circulations(circ)
+    line_circ = msh.line_circulations(circ)
 
     # Compute induced velocity with both the mesh and the wake
     tol = 1e-6
