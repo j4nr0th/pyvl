@@ -1,15 +1,13 @@
 """Velocity field reconstruction."""
 
-from collections.abc import Iterable
-
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.solver import SolverResults
+from pyvl.solver import SolverState
 
 
 def compute_velocities(
-    results: SolverResults,
+    state: SolverState,
     positions: npt.NDArray,
     n_threads: int = 1,
     induced_only: bool = False,
@@ -18,7 +16,7 @@ def compute_velocities(
 
     Parameters
     ----------
-    results : SolverResults
+    state : SolverState
         Results of the solver.
 
     positions : (N, 3) array
@@ -33,60 +31,11 @@ def compute_velocities(
 
     Returns
     -------
-    (M, N, 3) array
-        Array of velocity vectors for each output step.
+    (N, 3) array
+        Array of velocity vectors for the specified positions.
     """
-    cpts = np.ascontiguousarray(positions, dtype=np.double)
-    if len(cpts.shape) != 2 or cpts.shape[1] != 3:
-        raise ValueError("Positions must be an array of 3 component position vectors.")
-    output_array = np.empty((len(results), cpts.shape[0], 3), np.double)
-    for i, state in enumerate(results):
-        state.compute_velocity(
-            positions=positions,
-            induced_only=induced_only,
-            out=output_array[i, ...],
-            n_threads=n_threads,
-        )
-
-    return output_array
-
-
-def compute_velocities_variable(
-    results: SolverResults,
-    positions: Iterable[npt.NDArray],
-    n_threads: int = 1,
-    induced_only: bool = False,
-) -> list[npt.NDArray[np.double]]:
-    """Compute velocity at the specified positions for each time step.
-
-    Parameters
-    ----------
-    results : SolverResults
-        Results of the solver.
-
-    positions : Iterable of (N, 3) array
-        Iterable which contains arrays of positions where the velocity should be computed
-        for each time step.
-
-    n_threads : int, default: 1
-        Number of threads to use for computing the velocity.
-
-    induced_only : bool, default: False
-        When set, freestream velocity is not included and only velocity induced by
-        the geometry and its wake is computed.
-
-    Returns
-    -------
-    list of (N, 3) array
-        List of velocity vectors for each output step.
-    """
-    out_list: list[npt.NDArray[np.double]] = list()
-    for i, (state, pts) in enumerate(zip(results, positions, strict=True)):
-        out_list.append(
-            state.compute_velocity(
-                positions=np.ascontiguousarray(pts, dtype=np.double),
-                induced_only=induced_only,
-                n_threads=n_threads,
-            )
-        )
-    return out_list
+    return state.compute_velocity(
+        positions=positions,
+        induced_only=induced_only,
+        n_threads=n_threads,
+    )

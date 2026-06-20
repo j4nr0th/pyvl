@@ -58,14 +58,6 @@ almost all common cases can be easily be represented by the subtypes implemented
 module. More information about the base class and subtypes already implemented is provided
 :ref:`here <pyvl.flow_conditions>`.
 
-Simulation Times
-~~~~~~~~~~~~~~~~
-
-To set the duration of the simulation, the :class:`TimeSettings` object is used. It specifies
-the number of time increments as well as their number. It can also be optionally used to specify
-how often output of the simulation is saved. If it is not specified, each step will be saved,
-otherwise, it will only be saved one every ``n`` step.
-
 Adjusting the Model
 ~~~~~~~~~~~~~~~~~~~
 
@@ -88,9 +80,8 @@ the geometry and velocities.
 Controlling the Output
 ----------------------
 
-While controlling the frequency of output is up to :class:`TimeSettings`, the manner in which it is done
-is controlled by :class:`OutputSettings`. Simulation results can theoretically be written to any file type
-which supports hierarchical data storage along with number arrays.
+Controlling the output is done by :class:`OutputSettings`. Simulation results can theoretically
+be written to any file type which supports hierarchical data storage along with number arrays.
 
 Currently, IO can be done with the `JSON <https://www.json.org/>`_ and `HDF5 <https://www.hdfgroup.org/solutions/hdf5/>`_
 file formats. More specific information about these files can be found :ref:`here <pyvl.output_settings>`
@@ -119,7 +110,6 @@ which allow for these values to be computed.
     reference_frame
     geometry
     flow_conditions
-    time_settings
     model_settings
     solver_settings
     output_settings

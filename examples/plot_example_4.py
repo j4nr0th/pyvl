@@ -49,9 +49,7 @@ sim_geo.polydata_at_time(0.0).plot(interactive=False)
 # The case will be run with and without the wake model, to show the difference between
 # the two cases.
 
-time_settings = pyvl.TimeSettings(1, 1)  # does not really matter for now
-
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+settings = pyvl.SolverSettings(flow_conditions, model_settings)
 
 # %%
 #
@@ -61,7 +59,7 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 # With the settings (an no wake model), the solver can now be run
 
 
-results = pyvl.run_solver(sim_geo, settings, None)
+results = pyvl.run_solver(sim_geo, settings, times=[0])
 
 # %%
 #
@@ -74,7 +72,9 @@ results = pyvl.run_solver(sim_geo, settings, None)
 # interested in pressure force or pressure coefficient.
 #
 
-pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
+pressures = [
+    pyvl.postprocess.compute_surface_dynamic_pressure(state) for state in results
+]
 
 plotter = pv.Plotter()
 
@@ -118,12 +118,8 @@ plane2 = pv.Plane(
 )
 assert isinstance(plane2, pv.PolyData)
 
-pressures1 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, (plane1.points,)
-)[0]
-pressures2 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, (plane2.points,)
-)[0]
+pressures1 = pyvl.postprocess.compute_dynamic_pressure(results[0], plane1.points)
+pressures2 = pyvl.postprocess.compute_dynamic_pressure(results[0], plane2.points)
 
 max_p = np.max((np.abs(pressures1), np.abs(pressures2)))
 
@@ -182,8 +178,8 @@ plt.show(block=False)
 # As a word of caution, if you are too lenient with it, the wake will be shed from
 # everywhere.
 
-
-time_settings = pyvl.TimeSettings(12, 0.05)  # this now matters
+NT = 12
+times = np.cumsum(np.full(NT, 0.05))  # this now matters
 
 te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 ands, asur = sim_geo.line_adjecency_information(te_lines)
@@ -192,12 +188,11 @@ settings = pyvl.SolverSettings(
     flow_conditions,
     pyvl.ModelSettings(
         vortex_limit=1e-6,
-        wake_settings=pyvl.WakeSettings(
-            wake_shedder=pyvl.WakeShedderUniform(te_lines),
-            wake_element_capacity=time_settings.nt * te_lines.size,
-        ),
     ),
-    time_settings,
+    wake_settings=pyvl.WakeSettings(
+        wake_shedder=pyvl.WakeShedderUniform(te_lines),
+        wake_element_capacity=NT * te_lines.size,
+    ),
 )
 
 
@@ -216,7 +211,7 @@ settings = pyvl.SolverSettings(
 # environment variable ``OMP_THREAD_NUM``, while controlling :mod:`scipy` depends on
 # what exactly is used for it.
 
-results = pyvl.run_solver(sim_geo, settings, None)
+results = pyvl.run_solver(sim_geo, settings, times=times)
 
 
 # %%
@@ -229,15 +224,17 @@ results = pyvl.run_solver(sim_geo, settings, None)
 # once again used to limit the number of threads used for computing the induction
 # inside the :func:`postprocess.compute_surface_dynamic_pressure` function.
 
-pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
+pressures = [
+    pyvl.postprocess.compute_surface_dynamic_pressure(state) for state in results
+]
 
 plotter = pv.Plotter()
 
-sg = sim_geo.polydata_at_time(settings.time_settings.output_times[-1])
+sg = sim_geo.polydata_at_time(times[-1])
 sg.cell_data["Pressure"] = pressures[-1]
 sg.set_active_scalars("Pressure")
 
-wm = results.wake_states[-1].as_polydata()
+wm = results[-1].wake.as_polydata()
 wm.set_active_scalars(None)
 
 plotter.add_mesh(sg, label="Geometry")
@@ -248,13 +245,10 @@ plotter.show(interactive=False)
 # %%
 #
 # We can now again plot the pressure at the two different sections of the wing.
+#
 
-pressures1 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, [plane1.points] * len(settings.time_settings.output_times)
-)[-1]
-pressures2 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, [plane2.points] * len(settings.time_settings.output_times)
-)[-1]
+pressures1 = pyvl.postprocess.compute_dynamic_pressure(results[-1], plane1.points)
+pressures2 = pyvl.postprocess.compute_dynamic_pressure(results[-1], plane2.points)
 
 max_p = max((np.abs(pressures1).max(), np.abs(pressures2).max()))
 

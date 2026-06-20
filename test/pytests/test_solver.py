@@ -10,13 +10,11 @@ from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import (
     ModelSettings,
     SolverSettings,
-    TimeSettings,
     WakeSettings,
     WakeShedderUniform,
 )
 from pyvl.solver import (
     OutputSettings,
-    SolverResults,
     SolverState,
     _compute_induced_velocity,
     run_solver,
@@ -40,9 +38,8 @@ def basic_setup():
 
     flow_cond = FlowConditionsUniform(1.0, 0.0, 0.0)
     wake_settings = WakeSettings(WakeShedderUniform(np.array([0], dtype=np.uint)))
-    model_settings = ModelSettings(vortex_limit=1e-6, wake_settings=wake_settings)
-    time_settings = TimeSettings(nt=2, dt=0.1)
-    settings = SolverSettings(flow_cond, model_settings, time_settings)
+    model_settings = ModelSettings(vortex_limit=1e-6)
+    settings = SolverSettings(flow_cond, model_settings, wake_settings)
 
     return sim_geo, settings
 
@@ -51,10 +48,9 @@ def test_run_solver(basic_setup):
     """Check that the solver runs and produces results with the expected structure."""
     sim_geo, settings = basic_setup
 
-    results = run_solver(sim_geo, settings, None)
-    assert isinstance(results, SolverResults)
-    assert results.circulations.shape == (2, sim_geo.n_lines)
-    assert len(results.wake_states) == 2
+    results = run_solver(sim_geo, settings, times=[0])
+    assert isinstance(results, tuple) and len(results) == 1
+    assert isinstance(results[0], SolverState)
 
 
 def test_run_solver_with_output(basic_setup, tmp_path):
@@ -64,7 +60,7 @@ def test_run_solver_with_output(basic_setup, tmp_path):
     def naming_callback(i, _):
         return str(tmp_path / f"out_{i}.json")
 
-    output_settings = OutputSettings("JSON", naming_callback)
+    output_settings = OutputSettings.simple_python("JSON", naming_callback)
     with (
         patch("scipy.linalg.lu_factor") as mock_lu_f,
         patch("scipy.linalg.lu_solve") as mock_lu_s,
@@ -74,9 +70,11 @@ def test_run_solver_with_output(basic_setup, tmp_path):
             np.ones(sim_geo.n_surfaces, dtype=int),
         )
         mock_lu_s.return_value = np.zeros(sim_geo.n_surfaces)
-        results = run_solver(sim_geo, settings, output_settings)
+        results = run_solver(
+            sim_geo, settings, times=[0], output_settings=output_settings
+        )
 
-    assert isinstance(results, SolverResults)
+    assert isinstance(results[0], SolverState)
     assert (tmp_path / "out_0.json").exists()
 
 
@@ -99,10 +97,7 @@ def test_update_simulation_state_basic(basic_setup):
 
     assert new_state.time == 0.1
     assert new_state.circulation.shape == (sim_geo.n_lines,)
-    assert (
-        new_state.wake.capacity
-        == settings.model_settings.wake_settings.wake_element_capacity
-    )
+    assert new_state.wake.capacity == settings.wake_settings.wake_element_capacity
 
 
 def test_line_circulation():

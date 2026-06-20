@@ -51,19 +51,19 @@ sim_geo.polydata_at_time(0.0).plot(interactive=False)
 
 dt = 10 / 360 / (RPM / 60)
 NT = 120
-time_settings = pyvl.TimeSettings(NT, dt)
+times = np.cumsum(np.full(NT, dt))
 
 
 te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 
 model_settings = pyvl.ModelSettings(
     vortex_limit=1e-6,
-    wake_settings=pyvl.WakeSettings(
-        wake_shedder=pyvl.WakeShedderUniform(te_lines),
-        wake_element_capacity=len(te_lines) * time_settings.nt,
-    ),
 )
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+wake_settings = pyvl.WakeSettings(
+    wake_shedder=pyvl.WakeShedderUniform(te_lines),
+    wake_element_capacity=len(te_lines) * NT,
+)
+settings = pyvl.SolverSettings(flow_conditions, model_settings, wake_settings)
 
 
 # %%
@@ -73,8 +73,11 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 #
 # Running the solver is done exactly as before:
 
-results = pyvl.run_solver(sim_geo, settings, None, n_threads=4)
-pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results, n_threads=4)
+results = pyvl.run_solver(sim_geo, settings, times=times, n_threads=4)
+pressures = [
+    pyvl.postprocess.compute_surface_dynamic_pressure(state, n_threads=4)
+    for state in results
+]
 
 
 # %%
@@ -119,8 +122,7 @@ plotter.close()
 # the results are combined to create a
 
 
-# Add a safety factor
-wake_len = v_inf * time_settings.nt * time_settings.dt
+wake_len = v_inf * times[-1] * 1.2
 wake_mid = wake_len / 2
 
 NX = 101
@@ -136,12 +138,15 @@ plane = pv.Plane(
 
 
 velocity_mag = [
-    np.linalg.norm(v, axis=-1)
-    for v in pyvl.postprocess.compute_velocities_variable(
-        results,
-        positions=[plane.points] * time_settings.nt,
-        n_threads=4,
+    np.linalg.norm(
+        pyvl.postprocess.compute_velocities(
+            state,
+            positions=plane.points,
+            n_threads=4,
+        ),
+        axis=-1,
     )
+    for state in results
 ]
 
 max_mag = max(vm.max() for vm in velocity_mag)
@@ -152,9 +157,9 @@ plotter.open_gif(out_dir / "propeller-velocity.gif", fps=10)
 plotter.set_position((wake_mid, 0, 6))
 plotter.set_focus((wake_mid, 0, 0))
 
-for i, t in enumerate(time_settings.output_times):
-    plane.point_data["velocity"] = velocity_mag[i]
+for vel, state in zip(velocity_mag, results):
+    plane.point_data["velocity"] = vel
     plotter.add_mesh(plane, name="vel", scalars="velocity", clim=(min_mag, max_mag))
-    plotter.add_mesh(sim_geo.polydata_at_time(t), name="geo")
+    plotter.add_mesh(state.geometry.polydata_at_time(state.time), name="geo")
     plotter.write_frame()
 plotter.close()

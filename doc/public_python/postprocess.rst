@@ -24,7 +24,7 @@ and, if present, the wake model contribution.
 
 For cases where different positions are needed at each time step, use the variable variant:
 
-.. autofunction:: compute_velocities_variable
+.. autofunction:: compute_velocities
 
 
 Pressure Distribution
@@ -44,7 +44,7 @@ plus induced).
 
 For pressure computation at arbitrary positions:
 
-.. autofunction:: compute_dynamic_pressure_variable
+.. autofunction:: compute_dynamic_pressure
 
 
 Force Computation

@@ -60,13 +60,6 @@ v_inf = 1
 rho_inf = 1
 flow_conditions = pyvl.FlowConditionsUniform(0, 0, v_inf, rho=rho_inf)
 
-# %%
-#
-# Next is the :class:`TimeSettings`. These are not particularly useful for this case,
-# since it will just be a steady state simulation, but can be used for unsteady cases,
-# or to run different steady state configurations in sequence.
-
-time_settings = pyvl.TimeSettings(1, 1)
 
 # %%
 #
@@ -81,7 +74,7 @@ model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 #
 # These can now be combined togethere into the :class:`SolverSettings` object.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+settings = pyvl.SolverSettings(flow_conditions, model_settings)
 
 # %%
 #
@@ -92,7 +85,7 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and :class:`OutputSettings`.
 
 
-results = pyvl.run_solver(sim_geo, settings, None)
+results = pyvl.run_solver(sim_geo, settings, times=[0], initial_time=0, n_threads=1)
 
 # %%
 #
@@ -118,12 +111,14 @@ mesh = pv.Plane(
     j_size=5,
 )
 
-velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
+velocities = [
+    pyvl.postprocess.compute_velocities(state, mesh.points) for state in results
+]
 
 for i, state in enumerate(results):
     plotter = pv.Plotter(off_screen=True)
 
-    mesh.point_data["Velocity"] = np.nan_to_num(velocities[i, :, :])
+    mesh.point_data["Velocity"] = np.nan_to_num(velocities[i])
     mesh.set_active_vectors("Velocity")
     sl = mesh.streamlines(
         vectors="Velocity",
@@ -149,9 +144,9 @@ for i, state in enumerate(results):
 # incompressible flow here means an increase in pressure up to
 # :math:`\frac{1}{2} \rho {v_\infty}^2`. Further away the pressure drop decreases.
 
-pressure_fields = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, positions=[mesh.points] * len(results)
-)
+pressure_fields = [
+    pyvl.postprocess.compute_dynamic_pressure(state, mesh.points) for state in results
+]
 
 for field, state in zip(pressure_fields, results):
     max_pressure = 1 / 2 * rho_inf * v_inf**2

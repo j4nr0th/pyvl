@@ -30,7 +30,6 @@ from pyvl.geometry import mesh_from_mesh_io as mesh_from_mesh_io
 # Settings
 from pyvl.settings import ModelSettings as ModelSettings
 from pyvl.settings import SolverSettings as SolverSettings
-from pyvl.settings import TimeSettings as TimeSettings
 from pyvl.settings import WakeSettings as WakeSettings
 from pyvl.settings import WakeShedderCallback as WakeShedderCallback
 from pyvl.settings import WakeShedderUniform as WakeShedderUniform
@@ -38,6 +37,7 @@ from pyvl.settings import WakeShedderUniform as WakeShedderUniform
 # Solver
 from pyvl.solver import OutputSettings as OutputSettings
 from pyvl.solver import run_solver as run_solver
+from pyvl.solver import run_solver_steady_state as run_solver_steady_state
 
 # Wake
 from pyvl.wake import WakeState as WakeState

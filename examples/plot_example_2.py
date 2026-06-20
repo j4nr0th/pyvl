@@ -79,13 +79,6 @@ flow_conditions = pyvl.FlowConditionsUniform(
     v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
 )
 
-# %%
-#
-# Next is the :class:`TimeSettings`. These are not particularly useful for this case,
-# since it will just be a steady state simulation, but can be used for unsteady cases,
-# or to run different steady state configurations in sequence.
-
-time_settings = pyvl.TimeSettings(1, 1)
 
 # %%
 #
@@ -94,15 +87,13 @@ time_settings = pyvl.TimeSettings(1, 1)
 # flow and phyisics.
 
 # Specify the minimum distance before vortex has no more effect.
-model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6, wake_settings=pyvl.WakeSettings(pyvl.WakeShedderUniform([]))
-)
+model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 
 # %%
 #
 # These can now be combined togethere into the :class:`SolverSettings` object.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+settings = pyvl.SolverSettings(flow_conditions, model_settings)
 
 # %%
 #
@@ -113,7 +104,7 @@ settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and :class:`OutputSettings`.
 
 
-results = pyvl.run_solver(sim_geo, settings, None)
+results = pyvl.run_solver(sim_geo, settings, times=[0], initial_time=0)
 
 # %%
 #
@@ -131,12 +122,14 @@ mesh = pv.RectilinearGrid(
     np.linspace(-1, 1, 11),
 )
 
-velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
+velocities = [
+    pyvl.postprocess.compute_velocities(state, mesh.points) for state in results
+]
 
-for i in range(velocities.shape[0]):
+for vel in velocities:
     plotter = pv.Plotter(off_screen=True)
 
-    mesh.point_data["Velocity"] = np.nan_to_num(velocities[i, :, :])
+    mesh.point_data["Velocity"] = np.nan_to_num(vel)
     mesh.set_active_vectors("Velocity")
 
     sg = sim_geo.polydata_at_time(0.0)
@@ -153,8 +146,9 @@ for i in range(velocities.shape[0]):
 # mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
 # Note that without any wake model, there is a total of no circulatory force produced,
 # since all rings are closed. This is among the reasons why wake models are necessary.
+#
 
-forces = pyvl.postprocess.circulatory_forces(results)
+forces = [pyvl.postprocess.circulatory_forces(state) for state in results]
 
 for field in forces:
     sg = sim_geo.polydata_edges_at_time(0.0)

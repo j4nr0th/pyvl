@@ -47,11 +47,8 @@ def test_solver_state_serialization():
         flow_conditions=flow_conditions.FlowConditionsUniform(10.0, 0, 0),
         model_settings=settings.ModelSettings(
             vortex_limit=1e-6,
-            wake_settings=settings.WakeSettings(
-                settings.WakeShedderUniform([3, 2, 1]), 31
-            ),
         ),
-        time_settings=settings.TimeSettings(nt=10, dt=0.1),
+        wake_settings=settings.WakeSettings(settings.WakeShedderUniform([3, 2, 1]), 31),
     )
     t = 3.21
 

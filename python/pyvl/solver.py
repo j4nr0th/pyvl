@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Iterator, Literal, Self, SupportsIndex, overload
+from typing import Any, Callable, Literal, Protocol, Self, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -359,80 +358,6 @@ class SolverSystem:
             )
 
 
-class SolverResults:
-    """Class containing results of a solver."""
-
-    geometry: SimulationGeometry
-    circulations: npt.NDArray[np.double]
-    wake_states: list[WakeState]
-    shedded_lines: list[npt.NDArray[np.intp]]
-    settings: SolverSettings
-
-    def __init__(self, geo: SimulationGeometry, settings: SolverSettings):
-        self.geometry = geo
-        self.settings = deepcopy(settings)
-        self.wake_states = list()
-        self.shedded_lines = list()
-        self.circulations = np.empty(
-            (settings.time_settings.output_times.size, geo.n_lines), np.double
-        )
-
-    @property
-    def output_times(self) -> npt.NDArray[np.double]:
-        """Times at which the simulation is run."""
-        return self.settings.time_settings.output_times
-
-    @property
-    def steps(self) -> int:
-        """Number of simulation steps."""
-        return self.output_times.size
-
-    def __len__(self) -> int:
-        """Return the number of simulation states held."""
-        return self.steps
-
-    @overload
-    def __getitem__(self, subscript: SupportsIndex, /) -> SolverState: ...
-
-    @overload
-    def __getitem__(self, subscript: slice, /) -> tuple[SolverState, ...]: ...
-
-    def __getitem__(
-        self, subscript: SupportsIndex | slice, /
-    ) -> SolverState | tuple[SolverState, ...]:
-        """Get the solver state at given time point."""
-        if type(subscript) is slice:
-            start, end, step = subscript.indices(self.steps)
-            out: list[SolverState] = list()
-            while start < end:
-                out.append(self[start])
-                start += step
-            return tuple(out)
-
-        idx = int(subscript)
-        if idx < 0:
-            idx = self.steps - idx
-
-        if idx >= self.steps:
-            raise IndexError(
-                f"Index {subscript} is out of bounds for results with {self.steps} steps."
-            )
-
-        return SolverState(
-            time=self.output_times[idx],
-            circulation=self.circulations[idx, ...],
-            geometry=self.geometry,
-            settings=self.settings,
-            wake=self.wake_states[idx],
-            shed_lines=self.shedded_lines[idx],
-        )
-
-    def __iter__(self) -> Iterator[SolverState]:
-        """Return an iterator for each of the solver states."""
-        for i in range(self.steps):
-            yield self[i]
-
-
 @dataclass(frozen=True)
 class PyVLComputeMemory:
     """Memory for the solver to use for intermediate calculations to avoid allocations.
@@ -476,12 +401,10 @@ class PyVLComputeMemory:
             scalar_e_4=np.empty((geometry.n_surfaces,), np.double),
             scalar_e_0=np.empty((geometry.n_surfaces,), np.double),
             vec_w_0=np.empty(
-                (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
-                np.double,
+                (settings.wake_settings.wake_element_capacity, 4, 3), np.double
             ),
             vec_w_1=np.empty(
-                (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
-                np.double,
+                (settings.wake_settings.wake_element_capacity, 4, 3), np.double
             ),
             line_buffer=np.empty((geometry.n_lines, geometry.n_surfaces, 3)),
             mat_buffer=np.empty((geometry.n_surfaces, geometry.n_surfaces)),
@@ -558,9 +481,7 @@ class SolverState:
             time=time,
             geometry=geometry,
             settings=settings,
-            wake=WakeState.empty(
-                settings.model_settings.wake_settings.wake_element_capacity
-            ),
+            wake=WakeState.empty(settings.wake_settings.wake_element_capacity),
             circulation=np.zeros(
                 sum([geometry.geometries[geo].msh.n_lines for geo in geometry.geometries])
             ),
@@ -592,7 +513,32 @@ class SolverState:
 OutputFileType = Literal["HDF5", "JSON"]
 
 
-@dataclass(init=False, eq=False, frozen=True)
+class SavePredicate(Protocol):
+    """Predicate used to determine if the solver state should be saved at step."""
+
+    def __call__(self, step: int, time: float, state: SolverState) -> bool:
+        """Determine if the solver state should be saved at step.
+
+        Parameters
+        ----------
+        step : int
+            Current step of the solver.
+
+        time : float
+            Current time of the solver.
+
+        state : SolverState
+            Current state of the solver.
+
+        Returns
+        -------
+        bool
+            True if the solver state should be saved, False otherwise.
+        """
+        ...
+
+
+@dataclass(eq=False, frozen=True)
 class OutputSettings:
     """Settings to control the output from a solver.
 
@@ -609,12 +555,38 @@ class OutputSettings:
     serialization_fn: SerializationFunction
     callable_serializer: CallableSerializer
     callable_deserializer: CallableDeserializer
+    output_predicate: SavePredicate | None = None
 
-    def __init__(
-        self,
+    @classmethod
+    def simple_python(
+        cls,
         ftype: OutputFileType,
         naming_callback: Callable[[int, float], str | Path],
-    ) -> None:
+        output_predicate: SavePredicate | None = None,
+    ) -> Self:
+        """Create a simple output settings object that uses Python serialization.
+
+        Such serializer will not be able to load callables which it did not serialize
+        itself, so it cannot be used for custom callbacks.
+
+        Parameters
+        ----------
+        ftype : "JSON" or "HDF5"
+            File format to write the output as.
+
+        naming_callback : (int, float) -> str | Path
+            Callback to use to determine the name of the next file
+            to write based on the iteration number and the simulation time.
+
+        output_predicate : (int, float) -> bool, optional
+            Predicate to determine if the solver state should be saved at step.
+            If not provided, all steps will be saved.
+
+        Returns
+        -------
+        OutputSettings
+            OutputSettings, which use Python serialization and the specified file type.
+        """
         serialization_fn: SerializationFunction
         match ftype:
             case "HDF5":
@@ -623,13 +595,41 @@ class OutputSettings:
                 serialization_fn = serialize_json
             case _:
                 raise ValueError(f"The file type {ftype=} is not valid.")
-        object.__setattr__(self, "serialization_fn", serialization_fn)
-        object.__setattr__(self, "naming_callback", naming_callback)
         callable_serialization = PythonSerializer()
-        object.__setattr__(self, "callable_serializer", callable_serialization.serialize)
-        object.__setattr__(
-            self, "callable_deserializer", callable_serialization.deserialize
+        return cls(
+            serialization_fn=serialization_fn,
+            naming_callback=naming_callback,
+            output_predicate=output_predicate,
+            callable_serializer=callable_serialization.serialize,
+            callable_deserializer=callable_serialization.deserialize,
         )
+
+
+def _save_output_if_needed(
+    settings: OutputSettings, state: SolverState, step: int
+) -> None:
+    """Save the solver state if the output predicate is satisfied.
+
+    Parameters
+    ----------
+    settings : OutputSettings
+        Settings to control the output from a solver.
+
+    state : SolverState
+        Current state of the solver.
+
+    step : int
+        Current step of the solver.
+    """
+    if settings.output_predicate is not None and not settings.output_predicate(
+        step, state.time, state
+    ):
+        return
+
+    # Save the output
+    filename = settings.naming_callback(step, state.time)
+    hmap = state.save(settings.callable_serializer)
+    settings.serialization_fn(hmap, filename)
 
 
 def _compute_induced_velocity(
@@ -797,11 +797,11 @@ def update_simulation_state(
         work_flux_e2 = np.empty(geometry.n_surfaces, np.double)
         work_flux_e1 = np.empty(geometry.n_surfaces, np.double)
         work_wake_1 = np.empty(
-            (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
+            (settings.wake_settings.wake_element_capacity, 4, 3),
             np.double,
         )
         work_wake_2 = np.empty(
-            (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
+            (settings.wake_settings.wake_element_capacity, 4, 3),
             np.double,
         )
         line_buffer = np.empty((geometry.n_lines, geometry.n_surfaces, 3))
@@ -913,7 +913,7 @@ def update_simulation_state(
         wake_ind_vel = None
 
     induced_vel: npt.NDArray[np.double] | None = None
-    match state.settings.model_settings.wake_settings.wake_shedder:
+    match state.settings.wake_settings.wake_shedder:
         case WakeShedderUniform() as uniform_shedder:
             shedding_lines = uniform_shedder.indices
 
@@ -1023,12 +1023,73 @@ def update_simulation_state(
     )
 
 
+class TimeStepFunction(Protocol):
+    """Function used to determine the time step size at each step."""
+
+    def __call__(self, step: int, time: float, state: SolverState) -> float | None:
+        """Determine the time step size at each step.
+
+        Parameters
+        ----------
+        step : int
+            Current step of the solver.
+
+        time : float
+            Current time of the solver.
+
+        state : SolverState
+            Current state of the solver.
+
+        Returns
+        -------
+        float or None
+            Time step size to use for the next step. If None is returned,
+            the simulation is finished and the solver will stop.
+        """
+        ...
+
+
+@overload
 def run_solver(
     geometry: SimulationGeometry,
     settings: SolverSettings,
-    output_settings: OutputSettings | None,
+    times: Iterable[float] | TimeStepFunction,
+    initial_time: float,
+    save_predicate: SavePredicate,
+    output_settings: OutputSettings | None = None,
     n_threads: int = 1,
-) -> SolverResults:
+) -> tuple[SolverState, ...]: ...
+@overload
+def run_solver(
+    geometry: SimulationGeometry,
+    settings: SolverSettings,
+    times: Iterable[float] | TimeStepFunction,
+    initial_time: float,
+    save_predicate: Literal[True],
+    output_settings: OutputSettings | None = None,
+    n_threads: int = 1,
+) -> tuple[SolverState, ...]: ...
+@overload
+def run_solver(
+    geometry: SimulationGeometry,
+    settings: SolverSettings,
+    times: Iterable[float] | TimeStepFunction,
+    initial_time: float,
+    save_predicate: Literal[False],
+    output_settings: OutputSettings | None = None,
+    n_threads: int = 1,
+) -> SolverState: ...
+
+
+def run_solver(
+    geometry: SimulationGeometry,
+    settings: SolverSettings,
+    times: Iterable[float] | TimeStepFunction,
+    initial_time: float = 0,
+    save_predicate: SavePredicate | bool = True,
+    output_settings: OutputSettings | None = None,
+    n_threads: int = 1,
+) -> tuple[SolverState, ...] | SolverState:
     """Run the flow solver to obtain specified circulations.
 
     Parameters
@@ -1039,30 +1100,68 @@ def run_solver(
     settings : SolverSettings
         Settings of the solver.
 
+    times : Iterable of float or TimeStepFunction
+        If an iterable of floats is provided, these are the time steps at which the
+        solver will be evaluated.
+
+        If a TimeStepFunction is provided, it will be called
+        at each step with the current step, time, and state to determine the next time
+        step. If the function returns None, the simulation is finished and the solver
+        will stop.
+
+    save_predicate : SavePredicate or bool, default: True
+        Predicate to determine if the solver state should be saved at step.
+        If set to ``True``, all steps will be saved. If set to ``False``, just the last
+        step will be saved. If a callable is provided, it will be called with the
+        current step, time, and state to determine if the state should be saved.
+
     output_settings : OutputSettings, optional
         Settings related to file IO.
 
     n_threads : int, default: 1
         Number of threads to use.
-    """
-    results = SolverResults(geometry, settings)
-    simulation_times = settings.time_settings.simulation_times
 
-    i_out = 0
+    Returns
+    -------
+    tuple of SolverState
+        The solver states at each output time step.
+    """
+    if not isinstance(save_predicate, bool) and not callable(save_predicate):
+        raise TypeError(
+            f"save_predicate must be a bool or a callable, got {type(save_predicate)}."
+        )
+
+    if not callable(times):
+        simulation_times = tuple(times)
+
+        def _advance_time_step(
+            step: int, time: float, state: SolverState
+        ) -> float | None:
+            """Advance time step based on the provided iterable of times."""
+            del time, state
+            if step >= len(simulation_times):
+                return None
+            return simulation_times[step]
+
+        times = _advance_time_step
+
+    results: list[SolverState] = list()
 
     # Main state
-    state = SolverState.create_new(simulation_times[0], geometry, settings)
+    state = SolverState.create_new(initial_time, geometry, settings)
     state.circulation[:] = 0  # Zero out the circulation for the first time step
     # Output state to avoid unnecessary allocations during the loop
-    out_state = SolverState.create_new(simulation_times[0], geometry, settings)
+    out_state = SolverState.create_new(initial_time, geometry, settings)
     compute_mem = PyVLComputeMemory.from_solver_settings(geometry, settings)
     system = SolverSystem(
-        time=simulation_times[0],
+        time=initial_time,
         tol=settings.model_settings.vortex_limit,
         geo=[geometry.geometries[name] for name in geometry.geometries],
     )
 
-    for iteration, time in enumerate(simulation_times):
+    iteration = 0
+    time = initial_time
+    while time is not None:
         iteration_begin_time = perf_counter()
         out_state = update_simulation_state(
             state,
@@ -1076,30 +1175,121 @@ def run_solver(
         # Swap the states for the next iteration
         state, out_state = out_state, state
 
-        if (
-            settings.time_settings is None
-            or (settings.time_settings.output_interval is None)
-            or (iteration % settings.time_settings.output_interval == 0)
+        # Save the state if needed
+        if save_predicate is True or (
+            callable(save_predicate) and save_predicate(iteration, time, state)
         ):
-            results.circulations[i_out, :] = state.circulation
-            results.wake_states.append(
-                WakeState(
-                    quad_positions=state.wake.positions.copy(),
-                    quad_circulations=state.wake.circulations.copy(),
-                    quad_count=state.wake.quad_count,
-                    next_insertion_index=0,
-                )
-            )
-            results.shedded_lines.append(state.shed_lines)
-            if output_settings is not None:
-                output_settings.serialization_fn(
-                    state.save(output_settings.callable_serializer),
-                    output_settings.naming_callback(iteration, time),
-                )
-            i_out += 1
+            results.append(state)
+            # Need new output state
+            out_state = SolverState.create_new(time, geometry, settings)
+
+        # Save output to file if needed
+        if output_settings is not None:
+            _save_output_if_needed(output_settings, state, iteration)
+
         print(
-            f"Finished iteration {iteration} out of {len(simulation_times)} in "
+            f"Finished iteration {iteration + 1:d} at {time:=g} in "
             f"{iteration_end_time - iteration_begin_time:g} seconds."
         )
+        iteration += 1
+        time = times(iteration, time, state)
 
-    return results
+    if save_predicate is False:
+        return state
+
+    return tuple(results)
+
+
+def run_solver_steady_state(
+    geometry: SimulationGeometry,
+    settings: SolverSettings,
+    dt: float,
+    initial_time: float = 0,
+    atol: float = 1e-8,
+    rtol: float = 1e-5,
+    max_steps: int | None = None,
+    output_settings: OutputSettings | None = None,
+    n_threads: int = 1,
+) -> SolverState:
+    """Run the flow solver to obtain specified circulations at steady state.
+
+    The solver is first always ran until the wake is fully developed. After that
+    the convergence is checked.
+
+    The steady state is determined by checking the max norm of the circulation change
+    for each time step. If either the absolute or the relative tolerance is satisfied,
+    the simulation is considered converged and the solver will stop.
+
+    Parameters
+    ----------
+    geometry : SimulationGeometry
+        Geometry to solver for.
+
+    settings : SolverSettings
+        Settings of the solver.
+
+    dt : float
+        Time step size to use for advancing the simulation.
+
+    initial_time : float, default: 0
+        Initial time of the simulation.
+
+    atol : float, default: 1e-8
+        Absolute tolerance for convergence.
+
+    rtol : float, default: 1e-5
+        Relative tolerance for convergence.
+
+    max_steps : int or None, default: None
+        Maximum number of steps to run before stopping the simulation. If None, there is
+        no limit on the number of steps.
+
+    output_settings : OutputSettings, optional
+        Settings related to file IO.
+
+    n_threads : int, default: 1
+        Number of threads to use.
+
+    Returns
+    -------
+    SolverState
+        The final solver state at convergence or after reaching the maximum number of
+        steps.
+    """
+    old_circulations = np.empty(geometry.mesh_joined.n_lines, np.double)
+
+    def _steady_state_time_step(
+        step: int, time: float, state: SolverState
+    ) -> float | None:
+        """Advance time step for steady state solver."""
+        if max_steps is not None and step >= max_steps:
+            # End if max steps reached
+            return None
+
+        if state.wake.quad_count < state.wake.capacity:
+            # Keep going until wake is full
+            return time + dt
+
+        # Check for convergence based on the max circulation change
+        max_change = np.max(np.abs(state.circulation - old_circulations))
+        if (
+            max_change <= atol
+            or max_change
+            <= rtol * np.max(np.abs(state.circulation + old_circulations)) / 2
+        ):
+            # Converged, end the simulation
+            return None
+
+        # Update old circulations
+        old_circulations[:] = state.circulation
+        return time + dt
+
+    return run_solver(
+        geometry=geometry,
+        settings=settings,
+        times=_steady_state_time_step,
+        initial_time=initial_time,
+        save_predicate=False,
+        output_settings=output_settings,
+        n_threads=n_threads,
+    )

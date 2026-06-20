@@ -24,6 +24,7 @@ pv.global_theme.show_edges = True
 # For this example, the initial simulation setup is identical to the one used in
 # :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, so it won't be
 # commented on much.
+#
 
 plate = pv.Plane()
 assert isinstance(plate, pv.PolyData)
@@ -47,7 +48,8 @@ flow_conditions = pyvl.FlowConditionsUniform(
 # For this example, an unsteady wake model will be used, so time settings
 # are set to run the simulation for 20 time steps with 0.005 between each.
 
-time_settings = pyvl.TimeSettings(20, 0.005)
+NT = 20
+times = np.cumsum(np.full(NT, 0.005))
 
 # %%
 #
@@ -64,11 +66,10 @@ for i_line, ln in enumerate(sim_geo.mesh_joined.line_data):
         shedding_lines.append(i_line)
 
 shedder = pyvl.WakeShedderUniform(shedding_lines)
-model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6,
-    wake_settings=pyvl.WakeSettings(
-        wake_shedder=shedder, wake_element_capacity=time_settings.nt * len(shedding_lines)
-    ),
+model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+
+wake_settings = pyvl.WakeSettings(
+    wake_shedder=shedder, wake_element_capacity=NT * len(shedding_lines)
 )
 
 # %%
@@ -80,9 +81,11 @@ model_settings = pyvl.ModelSettings(
 # :class:`SimulationGeometry`, :class:`SolverSettings`, and
 # :class:`WakeModelLineExplicitUnsteady`.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+settings = pyvl.SolverSettings(
+    flow_conditions, model_settings, wake_settings=wake_settings
+)
 
-results = pyvl.run_solver(sim_geo, settings, None)
+results = pyvl.run_solver(sim_geo, settings, times=times)
 
 # %%
 #
@@ -99,12 +102,14 @@ mesh = pv.RectilinearGrid(
     np.linspace(-1, 1, 11),
 )
 
-velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
+velocities = [
+    pyvl.postprocess.compute_velocities(state, mesh.points) for state in results
+]
 
-for i, state in enumerate(results):
+for vel, state in zip(velocities, results, strict=True):
     plotter = pv.Plotter(off_screen=True)
 
-    mesh.point_data["Velocity"] = velocities[i, :, :]
+    mesh.point_data["Velocity"] = vel
     mesh.set_active_vectors("Velocity")
     wake_state = state.wake
     if wake_state.quad_count > 0:
@@ -145,9 +150,9 @@ for i, state in enumerate(results):
 # shed into the wake.
 #
 
-forces = pyvl.postprocess.circulatory_forces(results)
+forces = [pyvl.postprocess.circulatory_forces(state) for state in results]
 
-for field, state in zip(forces, results):
+for field, state in zip(forces, results, strict=True):
     total_force = np.sum(field, axis=0)
     cl = np.linalg.norm(total_force / (0.5 * v_inf**2))
     print(
@@ -162,6 +167,8 @@ for field, state in zip(forces, results):
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)
+    plotter.close()
+    del plotter
 
 # %%
 #

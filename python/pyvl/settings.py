@@ -14,80 +14,6 @@ from pyvl.flow_conditions import FlowConditions
 from pyvl.geometry import SimulationGeometry
 
 
-@dataclass(frozen=True)
-class TimeSettings:
-    """Dataclass containing time setting options.
-
-    Parameters
-    ----------
-    nt : int
-        Number of steps to run the simulations for.
-
-    dt : float
-        The increment for each time step.
-
-    output_interval : int, optional
-        If specified, simulation output will be save only after this many
-        iterations have passed since the last output.
-    """
-
-    nt: int
-    dt: float
-    output_interval: int | None = None
-
-    @property
-    def simulation_times(self) -> npt.NDArray[np.double]:
-        """Times where simulation will run."""
-        return np.arange(self.nt, dtype=np.double) * np.double(self.dt)
-
-    @property
-    def output_times(self) -> npt.NDArray[np.double]:
-        """Times where simulation will create output."""
-        if self.output_interval is None or self.output_interval == 0:
-            return self.simulation_times
-        return np.double(self.dt) * np.arange(
-            self.nt, step=self.output_interval, dtype=np.double
-        )
-
-    def save(self) -> HirearchicalMap:
-        """Serialize the object into a HirearchicalMap.
-
-        Returns
-        -------
-        HirearchicalMap
-            Serialized state of the :class:`TimeSettings` object.
-        """
-        hm = HirearchicalMap()
-        hm.insert_int("nt", self.nt)
-        hm.insert_scalar("dt", self.dt)
-        if self.output_interval is not None:
-            hm.insert_int("output_interval", self.output_interval)
-        return hm
-
-    @classmethod
-    def load(cls, hmap: HirearchicalMap) -> Self:
-        """Deserialize the object from a HirearchicalMap.
-
-        Parameters
-        ----------
-        hmap : HirearchicalMap
-            Serialized state of the :class:`TimeSettings` object created by a call
-            to :meth:`TimeSettings.save`.
-
-        Returns
-        -------
-        Self
-            Deserialized :class:`TimeSettings` object.
-        """
-        nt = hmap.get_int("nt")
-        dt = hmap.get_scalar("dt")
-        if "output_interval" in hmap:
-            output_interval = hmap.get_int("output_interval")
-        else:
-            output_interval = None
-        return cls(nt=nt, dt=dt, output_interval=output_interval)
-
-
 class ShedderCallback(Protocol):
     """Protocol for wake shedding functions."""
 
@@ -234,9 +160,7 @@ class ModelSettings:
     other, as the induction might become too large and make the results unstable.
     """
 
-    wake_settings: WakeSettings = WakeSettings()
-
-    def save(self, serializer: CallableSerializer) -> HirearchicalMap:
+    def save(self) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
 
         Returns
@@ -246,11 +170,10 @@ class ModelSettings:
         """
         hm = HirearchicalMap()
         hm.insert_scalar("vortex_limit", self.vortex_limit)
-        hm.insert_hirearchical_map("wake_settings", self.wake_settings.save(serializer))
         return hm
 
     @classmethod
-    def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
+    def load(cls, hmap: HirearchicalMap) -> Self:
         """Deserialize the object from a HirearchicalMap.
 
         Parameters
@@ -264,12 +187,7 @@ class ModelSettings:
         Self
             Deserialized :class:`ModelSettings` object.
         """
-        return cls(
-            vortex_limit=hmap.get_scalar("vortex_limit"),
-            wake_settings=WakeSettings.load(
-                hmap.get_hirearchical_map("wake_settings"), deserializer
-            ),
-        )
+        return cls(vortex_limit=hmap.get_scalar("vortex_limit"))
 
 
 @dataclass(frozen=True)
@@ -284,14 +202,14 @@ class SolverSettings:
     model_settings : ModelSettings
         Settings for the models used by the solver.
 
-    time_setting : TimeSettings, default : TimeSettings(1, 1, None)
-        Time iterations at which to run the solver. By default, a single iteration
-        at time :math:`t = 0` will be run and the result recorded.
+    wake_settings : WakeSettings, optional
+        Settings for the wake model used by the solver.
+        If not specified, no wake will be shed.
     """
 
     flow_conditions: FlowConditions
     model_settings: ModelSettings
-    time_settings: TimeSettings = TimeSettings(1, 1, None)
+    wake_settings: WakeSettings = WakeSettings()
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
@@ -313,9 +231,9 @@ class SolverSettings:
         fc.insert_hirearchical_map("data", self.flow_conditions.save())
         hm.insert_hirearchical_map("flow_conditions", fc)
         # Model settings
-        hm.insert_hirearchical_map("model_settings", self.model_settings.save(serializer))
-        # Time settings
-        hm.insert_hirearchical_map("time_settings", self.time_settings.save())
+        hm.insert_hirearchical_map("model_settings", self.model_settings.save())
+        # Wake settings
+        hm.insert_hirearchical_map("wake_settings", self.wake_settings.save(serializer))
         return hm
 
     @classmethod
@@ -347,13 +265,13 @@ class SolverSettings:
         flow_conditions = flow_conditions_from_serial(fc, custom_types, allow_override)
 
         # Model settings
-        model_settings = ModelSettings.load(
-            hmap.get_hirearchical_map("model_settings"), deserializer
+        model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))
+        # Wake settings
+        wake_settings = WakeSettings.load(
+            hmap.get_hirearchical_map("wake_settings"), deserializer
         )
-        # Time settings
-        time_settings = TimeSettings.load(hmap.get_hirearchical_map("time_settings"))
         return cls(
             flow_conditions=flow_conditions,
             model_settings=model_settings,
-            time_settings=time_settings,
+            wake_settings=wake_settings,
         )
