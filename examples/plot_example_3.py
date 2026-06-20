@@ -1,35 +1,37 @@
-r"""Example 3: Finding a Pressure Distribution
-==========================================
+r"""Example 3: Adding a Wake Model
+==============================
 
 .. currentmodule:: pyvl
 
-Often, one of the main results of interest, besides the forces and the velocity
-field itself, is the pressure distribution over the geometry. This too can be
-obtained by post-processing.
+This example shows how a wake model can be used. A wake model can help
+capture some of the viscous effects which are not able to be captured
+by potential flow model on its own.
 """  # noqa: D205, D400
 
-import meshio as mio
 import numpy as np
 import pyvista as pv
 import pyvl
-from pyvl import examples
 
 pv.set_plot_theme("document")
 pv.set_jupyter_backend("html")
-pv.global_theme.show_edges = False
+pv.global_theme.show_edges = True
 
 # %%
 #
 # Simulation Setup
 # ----------------
 #
-# This time, the geometry used won't be a flat plate, but instead a straight
-# uniform wing with the NACA2412 airfoil profile.
+# For this example, the initial simulation setup is identical to the one used in
+# :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, so it won't be
+# commented on much.
 
-geo = pyvl.Geometry.from_meshio(
-    label="wing",
+plate = pv.Plane()
+assert isinstance(plate, pv.PolyData)
+
+geo = pyvl.Geometry.from_polydata(
+    label="plate",
     reference_frame=pyvl.ReferenceFrame(),
-    mesh=mio.read(examples.example_file_name("wing1.obj")),
+    pd=plate,
 )
 
 sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
@@ -39,262 +41,138 @@ v_inf = 10  # 10 m/s
 flow_conditions = pyvl.FlowConditionsUniform(
     v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
 )
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
-
-# Plot it just to show what it looks like
-sim_geo.polydata_at_time(0.0).plot(interactive=False)
 
 # %%
 #
-# The case will be run with and without the wake model, to show the difference between
-# the two cases.
+# For this example, an unsteady wake model will be used, so time settings
+# are set to run the simulation for 20 time steps with 0.005 between each.
 
-time_settings = pyvl.TimeSettings(1, 1)  # does not really matter for now
+time_settings = pyvl.TimeSettings(20, 0.005)
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
+# %%
+#
+# Creating a Wake Model
+# ---------------------
+#
+# In this case, the :class:`WakeModelLineExplicitUnsteady` will be used.
+# This wake model requires the information about the wake shedding elements.
+
+shedding_lines: list[int] = list()
+pos = sim_geo.positions_at_time(0.0)
+for i_line, ln in enumerate(sim_geo.mesh_joined.line_data):
+    if pos[ln[0], 0] == +0.5 and pos[ln[1], 0] == +0.5:
+        shedding_lines.append(i_line)
+
+shedder = pyvl.WakeShedderUniform(shedding_lines)
+model_settings = pyvl.ModelSettings(
+    vortex_limit=1e-6,
+    wake_settings=pyvl.WakeSettings(
+        wake_shedder=shedder, wake_element_capacity=time_settings.nt * len(shedding_lines)
+    ),
+)
 
 # %%
 #
 # Running the Solver
 # ------------------
 #
-# With the settings (an no wake model), the solver can now be run
+# The solver can now be run by calling :func:`run_solver` and passing the
+# :class:`SimulationGeometry`, :class:`SolverSettings`, and
+# :class:`WakeModelLineExplicitUnsteady`.
 
-
-results = pyvl.run_solver(sim_geo, settings, None)
-
-# %%
-#
-# Post-Processing for Pressure
-# ----------------------------
-#
-# While post-processing, only dynamic pressure will be computed. If you
-# wish to deal with absolute pressure, the all you need to do is to add
-# the free-stream pressure. However, this is unnecessary if you are
-# interested in pressure force or pressure coefficient.
-#
-
-pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
-
-plotter = pv.Plotter()
-
-sg = sim_geo.polydata_at_time(0.0)
-sg.cell_data["Pressure"] = pressures[0]
-sg.set_active_scalars("Pressure")
-
-plotter.add_mesh(sg, label="Geometry")
-
-plotter.add_axes()
-plotter.show(interactive=False)
-
-# %%
-#
-# Dynamic pressure can also be displayed in different positions. For example, let us
-# plot the pressure around the airfoil at the middle of the wing and at the tip using
-# :mod:`matplotlib`.
-
-from matplotlib import pyplot as plt  # noqa: E402
-
-nx = 51
-nz = 51
-y0 = 0.0
-y1 = 4.75
-plane1 = pv.Plane(
-    center=(0.5, y0, 0),
-    direction=(0, 1, 0),
-    i_size=3,
-    j_size=3,
-    i_resolution=nx - 1,
-    j_resolution=nz - 1,
-)
-assert isinstance(plane1, pv.PolyData)
-plane2 = pv.Plane(
-    center=(0.5, y1, 0),
-    direction=(0, 1, 0),
-    i_size=3,
-    j_size=3,
-    i_resolution=nx - 1,
-    j_resolution=nz - 1,
-)
-assert isinstance(plane2, pv.PolyData)
-
-pressures1 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, (plane1.points,)
-)[0]
-pressures2 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, (plane2.points,)
-)[0]
-
-max_p = np.max((np.abs(pressures1), np.abs(pressures2)))
-
-plt.figure()
-
-cplt1 = plt.tricontourf(
-    plane1.points[:, 0],
-    plane1.points[:, 2],
-    pressures1,
-    vmin=0,
-    vmax=+max_p,
-    cmap="magma",
-)
-plt.colorbar(cplt1)
-
-plt.gca().set(
-    title=f"Pressure Distribution at $y = {y0:g}$",
-    aspect="equal",
-    xlabel="$x$",
-    ylabel="$z$",
-)
-plt.show(block=False)
-plt.figure()
-
-cplt2 = plt.tricontourf(
-    plane2.points[:, 0],
-    plane2.points[:, 2],
-    pressures2,
-    vmin=0,
-    vmax=+max_p,
-    cmap="magma",
-)
-plt.colorbar(cplt2)
-
-plt.gca().set(
-    title=f"Pressure Distribution at $y = {y1:g}$",
-    aspect="equal",
-    xlabel="$x$",
-    ylabel="$z$",
-)
-plt.show(block=False)
-
-
-# %%
-#
-# Adding a Wake
-# -------------
-#
-# To now add the effect of the wake into the simulation, all that is needed is to add a
-# wake model and re-run the solver. For geometry such as this, namely with a sharp, closed
-# trailing edge, the :class:`SimulationGeometry` has the
-# :meth:`SimulationGeometry.te_normal_criterion` method, which identifies all edges with
-# two adjacent surfaces with unit normals with a dot product less than the specified
-# criterion.
-#
-# As a word of caution, if you are too lenient with it, the wake will be shed from
-# everywhere.
-
-
-time_settings = pyvl.TimeSettings(12, 0.05)  # this now matters
-
-te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
-ands, asur = sim_geo.line_adjecency_information(te_lines)
-
-settings = pyvl.SolverSettings(
-    flow_conditions,
-    pyvl.ModelSettings(
-        vortex_limit=1e-6,
-        wake_settings=pyvl.WakeSettings(
-            wake_shedder=pyvl.WakeShedderUniform(te_lines),
-            wake_element_capacity=time_settings.nt * te_lines.size,
-        ),
-    ),
-    time_settings,
-)
-
-
-# %%
-#
-# Limiting Solver CPU Usage
-# -------------------------
-#
-# Solver has to be run again, for multiple iterations. Since this will be a bit more
-# computationally demanding than other examples so far, it is as good time as any
-# to show how to control the solver's resources.
-#
-# The solver will use OpenMP to parallelize calculations of the induction matrix and
-# use both :func:`scipy.linalg.lu_factor` and :func:`scipy.linalg.lu_solve` to invert
-# the system. The thread usage of OpenMP can be limited by setting the value of the
-# environment variable ``OMP_THREAD_NUM``, while controlling :mod:`scipy` depends on
-# what exactly is used for it.
+settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
 results = pyvl.run_solver(sim_geo, settings, None)
 
+# %%
+#
+# Post-Processing
+# ---------------
+#
+# Post-processing works the exact same way, but now the presence of the wake can be
+# observed.
+#
+
+mesh = pv.RectilinearGrid(
+    np.linspace(-1, 1, 11),
+    np.linspace(-1, 1, 11),
+    np.linspace(-1, 1, 11),
+)
+
+velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
+
+for i, state in enumerate(results):
+    plotter = pv.Plotter(off_screen=True)
+
+    mesh.point_data["Velocity"] = velocities[i, :, :]
+    mesh.set_active_vectors("Velocity")
+    wake_state = state.wake
+    if wake_state.quad_count > 0:
+        wm = pv.PolyData.from_regular_faces(
+            wake_state.quad_positions.reshape(-1, 3),
+            np.array(
+                [
+                    [0 + 4 * i, 1 + 4 * i, 2 + 4 * i, 3 + 4 * i]
+                    for i in range(wake_state.quad_count)
+                ]
+            ),
+        )
+        wm.cell_data["Circulation"] = wake_state.circulations
+        wm.set_active_scalars("Circulation")
+        plotter.add_mesh(wm, label="Wake")
+
+    sg = sim_geo.polydata_at_time(state.time)
+    edges = sg.extract_all_edges()
+    edges.cell_data["Circulation"] = state.circulation
+    edges.set_active_scalars("Circulation")
+
+    plotter.add_mesh(mesh.glyph(factor=0.01))
+    plotter.add_mesh(sg, label="Geometry")
+    plotter.add_mesh(edges, name="lattice")
+
+    plotter.show(interactive=False)
+    plotter.close()
+    del plotter
 
 # %%
 #
-# Show the Results Again
+# Forces
+# ------
+#
+# Unlike as in :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, where
+# there were not total forces due to all circulation being bound on the surface of the
+# mesh, there is now a non-zero resultant force on the geometry due to circulation being
+# shed into the wake.
+#
+
+forces = pyvl.postprocess.circulatory_forces(results)
+
+for field, state in zip(forces, results):
+    total_force = np.sum(field, axis=0)
+    cl = np.linalg.norm(total_force / (0.5 * v_inf**2))
+    print(
+        f"Total force: {total_force}. Cl={float(cl):.3f} while theory says "
+        f"{float(2 * np.pi * alpha):.3f}"
+    )
+
+    sg = sim_geo.polydata_edges_at_time(state.time)
+    sg.cell_data["Forces"] = field
+    plotter = pv.Plotter(off_screen=True)
+    plotter.add_mesh(sg.glyph(factor=1))
+    plotter.add_mesh(sg, label="Geometry", color="Red")
+
+    plotter.show(interactive=False)
+
+# %%
+#
+# Notes About the Forces
 # ----------------------
 #
-# After running the post-processor again, the difference can be seen. Note that only
-# the results of the last iteration are shown. Note again that ``threadpoolctl`` is
-# once again used to limit the number of threads used for computing the induction
-# inside the :func:`postprocess.compute_surface_dynamic_pressure` function.
-
-pressures = pyvl.postprocess.compute_surface_dynamic_pressure(results)
-
-plotter = pv.Plotter()
-
-sg = sim_geo.polydata_at_time(settings.time_settings.output_times[-1])
-sg.cell_data["Pressure"] = pressures[-1]
-sg.set_active_scalars("Pressure")
-
-wm = results.wake_states[-1].as_polydata()
-wm.set_active_scalars(None)
-
-plotter.add_mesh(sg, label="Geometry")
-plotter.add_mesh(wm, label="Wake")
-
-plotter.add_axes()
-plotter.show(interactive=False)
-# %%
+# Due to the nature of the solver, the flat plate representation of a lifting surface
+# is not very accurate. This is because that is not what the solver is intended to do.
+# In contrast to this, `AVL <http://web.mit.edu/drela/Public/web/avl/>`_ does exactly
+# that by simulating wings as horseshoe elements, which have the lifting line at the
+# quarter chord line and the control point at the three quarter point.
 #
-# We can now again plot the pressure at the two different sections of the wing.
-
-pressures1 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, [plane1.points] * len(settings.time_settings.output_times)
-)[-1]
-pressures2 = pyvl.postprocess.compute_dynamic_pressure_variable(
-    results, [plane2.points] * len(settings.time_settings.output_times)
-)[-1]
-
-max_p = max((np.abs(pressures1).max(), np.abs(pressures2).max()))
-
-
-plt.figure()
-
-cplt1 = plt.tricontourf(
-    plane1.points[:, 0],
-    plane1.points[:, 2],
-    pressures1,
-    vmin=-max_p,
-    vmax=+max_p,
-    cmap="bwr",
-)
-plt.colorbar(cplt1)
-
-plt.gca().set(
-    title=f"Pressure Distribution at $y = {y0:g}$",
-    aspect="equal",
-    xlabel="$x$",
-    ylabel="$z$",
-)
-plt.show(block=False)
-plt.figure()
-
-cplt2 = plt.tricontourf(
-    plane2.points[:, 0],
-    plane2.points[:, 2],
-    pressures2,
-    vmin=-max_p,
-    vmax=+max_p,
-    cmap="bwr",
-)
-plt.colorbar(cplt2)
-
-plt.gca().set(
-    title=f"Pressure Distribution at $y = {y1:g}$",
-    aspect="equal",
-    xlabel="$x$",
-    ylabel="$z$",
-)
-
-plt.show(block=False)
+# Instead, the :mod:`pyvl` solver works by having the control point at the center and
+# with closed vortex rings. As such, it work best with full airfoil profiles.

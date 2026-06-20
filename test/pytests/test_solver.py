@@ -53,7 +53,7 @@ def test_run_solver(basic_setup):
 
     results = run_solver(sim_geo, settings, None)
     assert isinstance(results, SolverResults)
-    assert results.circulations.shape == (2, sim_geo.n_surfaces)
+    assert results.circulations.shape == (2, sim_geo.n_lines)
     assert len(results.wake_states) == 2
 
 
@@ -98,7 +98,7 @@ def test_update_simulation_state_basic(basic_setup):
         new_state = update_simulation_state(state, 0.1)
 
     assert new_state.time == 0.1
-    assert new_state.circulation.shape == (sim_geo.n_surfaces,)
+    assert new_state.circulation.shape == (sim_geo.n_lines,)
     assert (
         new_state.wake.capacity
         == settings.model_settings.wake_settings.wake_element_capacity
@@ -313,7 +313,7 @@ def test_state_update():
     ind_vel = quad_induction(
         tol=settings.model_settings.vortex_limit,
         quad_positions=pos.reshape(1, 4, 3),
-        quad_circulations=state.circulation,
+        quad_circulations=state.circulation.mean(axis=0).reshape(-1),
         target_positions=tgt.reshape(1, 3),
     )
     # Get the flow velocity at the CP

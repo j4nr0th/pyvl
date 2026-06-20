@@ -1,11 +1,16 @@
-r"""Example 2: Adding a Wake Model
-==============================
+r"""Example 2: Flat Plate
+=====================
 
 .. currentmodule:: pyvl
 
-This example shows how a wake model can be used. A wake model can help
-capture some of the viscous effects which are not able to be captured
-by potential flow model on its own.
+The first case which is typically analyzed in aerodynamics is the simple flat plate.
+This can also serve as validation for any solver, as for incompressible, non-viscous,
+steady flow, the lift coefficient of a infinitely thin flat plate should be based solely
+on the inflow angle of attack :math:`\alpha` :
+
+.. math::
+
+    C_l = 2 \pi \sin{\alpha}
 """  # noqa: D205, D400
 
 import numpy as np
@@ -18,12 +23,14 @@ pv.global_theme.show_edges = True
 
 # %%
 #
-# Simulation Setup
-# ----------------
+# Geometry Setup
+# --------------
 #
-# For this example, the initial simulation setup is identical to the one used in
-# :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, so it won't be
-# commented on much.
+# The first step is to set up the :class:`Geometry` of the simulation. PyVL is not
+# intended to be a mesh generator. As such, the geometry can be loaded either using
+# :mod:`pyvista` or `MeshIO <https://pypi.org/project/meshio/>`_ modules.
+#
+# For this case, :mod:`pyvista` will be used to make a simple flat plate.
 
 plate = pv.Plane()
 assert isinstance(plate, pv.PolyData)
@@ -34,9 +41,39 @@ geo = pyvl.Geometry.from_polydata(
     pd=plate,
 )
 
+plt = pv.Plotter(off_screen=True)
+plt.add_mesh(geo.as_polydata())
+plt.show(interactive=False)
+plt.close()
+del plt
+
+# %%
+#
+# Next, the created :class:`Geometry` is packed together into :class:`SimulationGeometry`.
+# This is done to compute some other properties of the overall geometry behind the scenes,
+# but that's not really important as a user.
+
 sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
-alpha = np.radians(10)  # 10 degrees
+# %%
+#
+# Prepare the Settings
+# --------------------
+#
+# After the :class:`SimulationGeometry` is prepared, the simulation settings must be
+# configured. This is done via the :class::`SolverSettings` object. This contains other
+# sub-objects, which themselves contain settings related to different aspects of the
+# solver.
+#
+
+# %%
+#
+# First, there's the :class:`FlowConditions`. This is an :class:`abc.ABC` intended to be
+# subclassed in case anything more specific is required. If a constant free-stream
+# velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
+# be used for constant free-stream.
+
+alpha = np.radians(15)  # 5 degrees
 v_inf = 10  # 10 m/s
 flow_conditions = pyvl.FlowConditionsUniform(
     v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
@@ -44,32 +81,28 @@ flow_conditions = pyvl.FlowConditionsUniform(
 
 # %%
 #
-# For this example, an unsteady wake model will be used, so time settings
-# are set to run the simulation for 20 time steps with 0.005 between each.
+# Next is the :class:`TimeSettings`. These are not particularly useful for this case,
+# since it will just be a steady state simulation, but can be used for unsteady cases,
+# or to run different steady state configurations in sequence.
 
-time_settings = pyvl.TimeSettings(20, 0.005)
+time_settings = pyvl.TimeSettings(1, 1)
 
 # %%
 #
-# Creating a Wake Model
-# ---------------------
-#
-# In this case, the :class:`WakeModelLineExplicitUnsteady` will be used.
-# This wake model requires the information about the wake shedding elements.
+# Last which will be discussed here is the :class:`ModelSettings`. This class contains
+# settings related to the settings made by the solver when it comes to the models of the
+# flow and phyisics.
 
-shedding_lines: list[int] = list()
-pos = sim_geo.positions_at_time(0.0)
-for i_line, ln in enumerate(sim_geo.mesh_joined.line_data):
-    if pos[ln[0], 0] == +0.5 and pos[ln[1], 0] == +0.5:
-        shedding_lines.append(i_line)
-
-shedder = pyvl.WakeShedderUniform(shedding_lines)
+# Specify the minimum distance before vortex has no more effect.
 model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6,
-    wake_settings=pyvl.WakeSettings(
-        wake_shedder=shedder, wake_element_capacity=time_settings.nt * len(shedding_lines)
-    ),
+    vortex_limit=1e-6, wake_settings=pyvl.WakeSettings(pyvl.WakeShedderUniform([]))
 )
+
+# %%
+#
+# These can now be combined togethere into the :class:`SolverSettings` object.
+
+settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
 # %%
 #
@@ -77,10 +110,8 @@ model_settings = pyvl.ModelSettings(
 # ------------------
 #
 # The solver can now be run by calling :func:`run_solver` and passing the
-# :class:`SimulationGeometry`, :class:`SolverSettings`, and
-# :class:`WakeModelLineExplicitUnsteady`.
+# :class:`SimulationGeometry`, :class:`SolverSettings`, and :class:`OutputSettings`.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings, time_settings)
 
 results = pyvl.run_solver(sim_geo, settings, None)
 
@@ -89,9 +120,10 @@ results = pyvl.run_solver(sim_geo, settings, None)
 # Post-Processing
 # ---------------
 #
-# Post-processing works the exact same way, but now the presence of the wake can be
-# observed.
-#
+# Now that the results have been computed, post-processing can be done to obtain some
+# more useful results. In this example, this is done by creating a :mod:`pyvista` mesh,
+# then computing velocity at each point in the mesh, and plotting it by extracting glyphs
+# from it.
 
 mesh = pv.RectilinearGrid(
     np.linspace(-1, 1, 11),
@@ -101,75 +133,38 @@ mesh = pv.RectilinearGrid(
 
 velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
 
-for i, t in enumerate(results.settings.time_settings.output_times):
-    plotter = pv.Plotter()
+for i in range(velocities.shape[0]):
+    plotter = pv.Plotter(off_screen=True)
 
-    mesh.point_data["Velocity"] = velocities[i, :, :]
+    mesh.point_data["Velocity"] = np.nan_to_num(velocities[i, :, :])
     mesh.set_active_vectors("Velocity")
-    wake_state = results.wake_states[i]
-    if wake_state.quad_count > 0:
-        wm = pv.PolyData.from_regular_faces(
-            wake_state.quad_positions.reshape(-1, 3),
-            np.array(
-                [
-                    [0 + 4 * i, 1 + 4 * i, 2 + 4 * i, 3 + 4 * i]
-                    for i in range(wake_state.quad_count)
-                ]
-            ),
-        )
-        wm.cell_data["Circulation"] = wake_state.circulations
-        wm.set_active_scalars("Circulation")
-        plotter.add_mesh(wm, label="Wake")
 
-    sg = sim_geo.polydata_at_time(t)
-    circulation = results.circulations[i, :]
-    sg.cell_data["Circulation"] = circulation
-    sg.set_active_scalars("Circulation")
-
+    sg = sim_geo.polydata_at_time(0.0)
+    plotter.add_mesh(sg, label="Geometry", color="Red")
     plotter.add_mesh(mesh.glyph(factor=0.01))
-    plotter.add_mesh(sg, label="Geometry")
 
     plotter.show(interactive=False)
+    plotter.close()
+    del plotter
 
 # %%
 #
-# Forces
-# ------
-#
-# Unlike as in :ref:`the first example <sphx_glr_auto_examples_plot_example_1.py>`, where
-# there were not total forces due to all circulation being bound on the surface of the
-# mesh, there is now a non-zero resultant force on the geometry due to circulation being
-# shed into the wake.
-#
+# Another quantity of interest is the force distribution over the
+# mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
+# Note that without any wake model, there is a total of no circulatory force produced,
+# since all rings are closed. This is among the reasons why wake models are necessary.
 
 forces = pyvl.postprocess.circulatory_forces(results)
 
 for field in forces:
-    total_force = np.sum(field, axis=0)
-    cl = np.linalg.norm(total_force / (0.5 * v_inf**2))
-    print(
-        f"Total force: {total_force}. Cl={float(cl):.3f} while theory says "
-        f"{float(2 * np.pi * alpha):.3f}"
-    )
-
-    sg = sim_geo.polydata_edges_at_time(t)
+    sg = sim_geo.polydata_edges_at_time(0.0)
     sg.cell_data["Forces"] = field
-    plotter = pv.Plotter()
+    print(f"Total force: {np.sum(field, axis=0)} Newtons")
+    plotter = pv.Plotter(off_screen=True)
+
     plotter.add_mesh(sg.glyph(factor=1))
     plotter.add_mesh(sg, label="Geometry", color="Red")
 
     plotter.show(interactive=False)
-
-# %%
-#
-# Notes About the Forces
-# ----------------------
-#
-# Due to the nature of the solver, the flat plate representation of a lifting surface
-# is not very accurate. This is because that is not what the solver is intended to do.
-# In contrast to this, `AVL <http://web.mit.edu/drela/Public/web/avl/>`_ does exactly
-# that by simulating wings as horseshoe elements, which have the lifting line at the
-# quarter chord line and the control point at the three quarter point.
-#
-# Instead, the :mod:`pyvl` solver works by having the control point at the center and
-# with closed vortex rings. As such, it work best with full airfoil profiles.
+    plotter.close()
+    del plotter

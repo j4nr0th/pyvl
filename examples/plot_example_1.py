@@ -1,16 +1,10 @@
-r"""Example 1: Flat Plate
-=====================
+r"""Example 1: Single Vortex
+========================
 
 .. currentmodule:: pyvl
 
-The first case which is typically analyzed in aerodynamics is the simple flat plate.
-This can also serve as validation for any solver, as for incompressible, non-viscous,
-steady flow, the lift coefficient of a infinitely thin flat plate should be based solely
-on the inflow angle of attack :math:`\alpha` :
-
-.. math::
-
-    C_l = 2 \pi \sin{\alpha}
+This example shows the concept at the core of any panel code: the simple vortex panel.
+This is a closed loop vortex with constant circulation.
 """  # noqa: D205, D400
 
 import numpy as np
@@ -19,26 +13,21 @@ import pyvl
 
 pv.set_plot_theme("document")
 pv.set_jupyter_backend("html")
-pv.global_theme.show_edges = True
 
 # %%
 #
 # Geometry Setup
 # --------------
 #
-# The first step is to set up the :class:`Geometry` of the simulation. PyVL is not
-# intended to be a mesh generator. As such, the geometry can be loaded either using
-# :mod:`pyvista` or `MeshIO <https://pypi.org/project/meshio/>`_ modules.
-#
-# For this case, :mod:`pyvista` will be used to make a simple flat plate.
-
-plate = pv.Plane()
-assert isinstance(plate, pv.PolyData)
+# Geometry of a flat plate is trivial to set up.
 
 geo = pyvl.Geometry.from_polydata(
-    label="plate",
+    label="panel",
     reference_frame=pyvl.ReferenceFrame(),
-    pd=plate,
+    pd=pv.PolyData.from_regular_faces(
+        points=np.array(((-1, -1, 0), (+1, -1, 0), (+1, +1, 0), (-1, +1, 0)), np.double),
+        faces=np.array(((0, 1, 2, 3),), np.intp),
+    ),
 )
 
 plt = pv.Plotter(off_screen=True)
@@ -46,12 +35,6 @@ plt.add_mesh(geo.as_polydata())
 plt.show(interactive=False)
 plt.close()
 del plt
-
-# %%
-#
-# Next, the created :class:`Geometry` is packed together into :class:`SimulationGeometry`.
-# This is done to compute some other properties of the overall geometry behind the scenes,
-# but that's not really important as a user.
 
 sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
@@ -73,11 +56,9 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 # velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
 # be used for constant free-stream.
 
-alpha = np.radians(15)  # 5 degrees
-v_inf = 10  # 10 m/s
-flow_conditions = pyvl.FlowConditionsUniform(
-    v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
-)
+v_inf = 1
+rho_inf = 1
+flow_conditions = pyvl.FlowConditionsUniform(0, 0, v_inf, rho=rho_inf)
 
 # %%
 #
@@ -94,9 +75,7 @@ time_settings = pyvl.TimeSettings(1, 1)
 # flow and phyisics.
 
 # Specify the minimum distance before vortex has no more effect.
-model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6, wake_settings=pyvl.WakeSettings(pyvl.WakeShedderUniform([]))
-)
+model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 
 # %%
 #
@@ -122,49 +101,70 @@ results = pyvl.run_solver(sim_geo, settings, None)
 #
 # Now that the results have been computed, post-processing can be done to obtain some
 # more useful results. In this example, this is done by creating a :mod:`pyvista` mesh,
-# then computing velocity at each point in the mesh, and plotting it by extracting glyphs
-# from it.
+# then computing velocity at each point in the mesh, the computing streamlines.
+#
+# What is quit clearly shown from this streamline plot, is that the flow is being
+# deflected away from the panel's center. There still is a single streamline which
+# manages to pass through, as velocity is exactly zero only at the control point,
+# which the numerical integrator does not pick up on.
+#
 
-mesh = pv.RectilinearGrid(
-    np.linspace(-1, 1, 11),
-    np.linspace(-1, 1, 11),
-    np.linspace(-1, 1, 11),
+mesh = pv.Plane(
+    center=(0, 0, 0),
+    direction=(0, 1, 0),
+    i_resolution=101,
+    j_resolution=101,
+    i_size=5,
+    j_size=5,
 )
 
 velocities = pyvl.postprocess.compute_velocities(results, mesh.points)
 
-for i in range(velocities.shape[0]):
+for i, state in enumerate(results):
     plotter = pv.Plotter(off_screen=True)
 
     mesh.point_data["Velocity"] = np.nan_to_num(velocities[i, :, :])
     mesh.set_active_vectors("Velocity")
+    sl = mesh.streamlines(
+        vectors="Velocity",
+        pointa=(mesh.points[:, 0].min(), 0, mesh.points[:, 2].min()),
+        pointb=(mesh.points[:, 0].max(), 0, mesh.points[:, 2].min()),
+    )
 
-    sg = sim_geo.polydata_at_time(0.0)
-    plotter.add_mesh(sg, label="Geometry", color="Red")
-    plotter.add_mesh(mesh.glyph(factor=0.01))
+    sg = state.geometry.polydata_at_time(state.time).extract_all_edges()
+    sg.cell_data["Circulation"] = state.circulation
+    plotter.add_mesh(sg, label="Geometry", color="black")
+    plotter.add_mesh(sl)
 
+    plotter.view_xz()
     plotter.show(interactive=False)
     plotter.close()
     del plotter
 
 # %%
 #
-# Another quantity of interest is the force distribution over the
-# mesh. This can be extracted by using :func:`pyvl.postprocess.circulatory_forces`.
-# Note that without any wake model, there is a total of no circulatory force produced,
-# since all rings are closed. This is among the reasons why wake models are necessary.
+# Another interesting quantity is the pressure. The pressure distribution is computed
+# on the same plane. I can be seen that there is a pressure increase at the panel's
+# center. This is simply the result of the flow coming to a stop, which for the
+# incompressible flow here means an increase in pressure up to
+# :math:`\frac{1}{2} \rho {v_\infty}^2`. Further away the pressure drop decreases.
 
-forces = pyvl.postprocess.circulatory_forces(results)
+pressure_fields = pyvl.postprocess.compute_dynamic_pressure_variable(
+    results, positions=[mesh.points] * len(results)
+)
 
-for field in forces:
-    sg = sim_geo.polydata_edges_at_time(0.0)
-    sg.cell_data["Forces"] = field
-    print(f"Total force: {np.sum(field, axis=0)} Newtons")
+for field, state in zip(pressure_fields, results):
+    max_pressure = 1 / 2 * rho_inf * v_inf**2
+    sg = sim_geo.polydata_edges_at_time(state.time)
+    mesh.point_data["Pressure"] = field / max_pressure
+    contours = mesh.contour(isosurfaces=31)
+
     plotter = pv.Plotter(off_screen=True)
 
-    plotter.add_mesh(sg.glyph(factor=1))
-    plotter.add_mesh(sg, label="Geometry", color="Red")
+    plotter.add_mesh(mesh, label="Geometry", scalars="Pressure")
+    plotter.add_mesh(contours, color="red", scalars=None)
 
+    plotter.view_xz()
     plotter.show(interactive=False)
     plotter.close()
     del plotter

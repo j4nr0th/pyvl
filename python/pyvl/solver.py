@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Literal, Self
+from typing import Any, Callable, Iterator, Literal, Self, SupportsIndex, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -365,7 +365,7 @@ class SolverResults:
     geometry: SimulationGeometry
     circulations: npt.NDArray[np.double]
     wake_states: list[WakeState]
-    shedded_lines: list[npt.NDArray[np.uint]]
+    shedded_lines: list[npt.NDArray[np.intp]]
     settings: SolverSettings
 
     def __init__(self, geo: SimulationGeometry, settings: SolverSettings):
@@ -374,8 +374,63 @@ class SolverResults:
         self.wake_states = list()
         self.shedded_lines = list()
         self.circulations = np.empty(
-            (settings.time_settings.output_times.size, geo.n_surfaces), np.double
+            (settings.time_settings.output_times.size, geo.n_lines), np.double
         )
+
+    @property
+    def output_times(self) -> npt.NDArray[np.double]:
+        """Times at which the simulation is run."""
+        return self.settings.time_settings.output_times
+
+    @property
+    def steps(self) -> int:
+        """Number of simulation steps."""
+        return self.output_times.size
+
+    def __len__(self) -> int:
+        """Return the number of simulation states held."""
+        return self.steps
+
+    @overload
+    def __getitem__(self, subscript: SupportsIndex, /) -> SolverState: ...
+
+    @overload
+    def __getitem__(self, subscript: slice, /) -> tuple[SolverState, ...]: ...
+
+    def __getitem__(
+        self, subscript: SupportsIndex | slice, /
+    ) -> SolverState | tuple[SolverState, ...]:
+        """Get the solver state at given time point."""
+        if type(subscript) is slice:
+            start, end, step = subscript.indices(self.steps)
+            out: list[SolverState] = list()
+            while start < end:
+                out.append(self[start])
+                start += step
+            return tuple(out)
+
+        idx = int(subscript)
+        if idx < 0:
+            idx = self.steps - idx
+
+        if idx >= self.steps:
+            raise IndexError(
+                f"Index {subscript} is out of bounds for results with {self.steps} steps."
+            )
+
+        return SolverState(
+            time=self.output_times[idx],
+            circulation=self.circulations[idx, ...],
+            geometry=self.geometry,
+            settings=self.settings,
+            wake=self.wake_states[idx],
+            shed_lines=self.shedded_lines[idx],
+        )
+
+    def __iter__(self) -> Iterator[SolverState]:
+        """Return an iterator for each of the solver states."""
+        for i in range(self.steps):
+            yield self[i]
 
 
 @dataclass(frozen=True)
@@ -396,7 +451,7 @@ class PyVLComputeMemory:
     vec_e_1: npt.NDArray[np.double]
     vec_e_2: npt.NDArray[np.double]
     vec_e_3: npt.NDArray[np.double]
-    vec_e_4: npt.NDArray[np.double]
+    scalar_e_4: npt.NDArray[np.double]
     scalar_e_0: npt.NDArray[np.double]
     vec_w_0: npt.NDArray[np.double]
     vec_w_1: npt.NDArray[np.double]
@@ -418,7 +473,7 @@ class PyVLComputeMemory:
             vec_e_1=np.empty((geometry.n_surfaces, 3), np.double),
             vec_e_2=np.empty((geometry.n_surfaces, 3), np.double),
             vec_e_3=np.empty((geometry.n_surfaces, 3), np.double),
-            vec_e_4=np.empty((geometry.n_surfaces, 3), np.double),
+            scalar_e_4=np.empty((geometry.n_surfaces,), np.double),
             scalar_e_0=np.empty((geometry.n_surfaces,), np.double),
             vec_w_0=np.empty(
                 (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
@@ -442,6 +497,7 @@ class SolverState:
     geometry: SimulationGeometry
     settings: SolverSettings
     wake: WakeState
+    shed_lines: npt.NDArray[np.intp]
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize current state to a HirearchicalMap."""
@@ -451,6 +507,7 @@ class SolverState:
         out.insert_hirearchical_map("solver_settings", self.settings.save(serializer))
         out.insert_hirearchical_map("simulation_geometry", self.geometry.save(serializer))
         out.insert_hirearchical_map("wake", self.wake.save())
+        out.insert_array("shed_lines", self.shed_lines)
         return out
 
     @classmethod
@@ -486,6 +543,7 @@ class SolverState:
             ),
             wake=WakeState.load(hmap.get_hirearchical_map("wake")),
             circulation=hmap.get_array("circulation"),
+            shed_lines=hmap.get_array("shed_lines"),
         )
 
     @classmethod
@@ -503,7 +561,31 @@ class SolverState:
             wake=WakeState.empty(
                 settings.model_settings.wake_settings.wake_element_capacity
             ),
-            circulation=np.empty(geometry.n_surfaces, np.double),
+            circulation=np.zeros(
+                sum([geometry.geometries[geo].msh.n_lines for geo in geometry.geometries])
+            ),
+            shed_lines=np.array((), np.intp),
+        )
+
+    def compute_velocity(
+        self,
+        positions: npt.ArrayLike,
+        induced_only: bool = False,
+        out: npt.NDArray[np.double] | None = None,
+        n_threads: int = 1,
+    ):
+        """Compute velocity for this solver state."""
+        return _compute_induced_velocity(
+            time=self.time,
+            tol=self.settings.model_settings.vortex_limit,
+            line_circulation=self.circulation,
+            mesh=self.geometry.mesh_joined,
+            positions=self.geometry.positions_at_time(self.time),
+            wake=self.wake,
+            flow_cond=None if induced_only else self.settings.flow_conditions,
+            target=np.asarray(positions, np.double),
+            out=out,
+            n_threads=n_threads,
         )
 
 
@@ -712,6 +794,7 @@ def update_simulation_state(
         work_position_e = np.empty((geometry.n_surfaces, 3), np.double)
         work_velocity_e = np.empty((geometry.n_surfaces, 3), np.double)
         work_velocity_e1 = np.empty((geometry.n_surfaces, 3), np.double)
+        work_flux_e2 = np.empty(geometry.n_surfaces, np.double)
         work_flux_e1 = np.empty(geometry.n_surfaces, np.double)
         work_wake_1 = np.empty(
             (settings.model_settings.wake_settings.wake_element_capacity, 4, 3),
@@ -733,6 +816,7 @@ def update_simulation_state(
         work_velocity_e = compute_memory.vec_e_2
         work_velocity_e1 = compute_memory.vec_e_3
         work_flux_e1 = compute_memory.scalar_e_0
+        work_flux_e2 = compute_memory.scalar_e_4
         work_wake_1 = compute_memory.vec_w_0
         work_wake_2 = compute_memory.vec_w_1
         line_buffer = compute_memory.line_buffer
@@ -749,11 +833,11 @@ def update_simulation_state(
     cp_vel = geometry.mesh_joined.surface_average_vec3(vel, work_velocity_e)
 
     # Compute the wake model's effect
-    wake.induced_normal_velocity(
+    cp_flux = wake.induced_normal_velocity(
         tol=tol,
         control_pts=cp_pos,
         normals=norm,
-        out_velocity=out_circ,
+        out_velocity=work_flux_e2,
         n_threads=n_threads,
     )
 
@@ -766,13 +850,13 @@ def update_simulation_state(
     np.vecdot(norm, element_velocity, out=work_flux_e1)
 
     # Add the induced wake velocity to the flux from flow conditions
-    np.add(out_circ, work_flux_e1, out=out_circ)
+    np.add(cp_flux, work_flux_e1, out=cp_flux)
 
     # Compute the normal contribution from control point velocities
     np.vecdot(norm, cp_vel, out=work_flux_e1)
 
     # Required induction is movement flux minus induction + flow
-    np.subtract(work_flux_e1, out_circ, out=out_circ)
+    np.subtract(work_flux_e1, cp_flux, out=cp_flux)
 
     if system is None:
         # Compute normal induction matrix
@@ -791,30 +875,24 @@ def update_simulation_state(
 
         # Solve the linear system
         # By setting overwrite_b=True, rhs is where the output is written to
-        out_circ[:] = np.asarray(
-            la.lu_solve(decomp, out_circ, overwrite_b=True), np.double
+        surf_circ = np.asarray(la.lu_solve(decomp, cp_flux, overwrite_b=True), np.double)
+        geometry.mesh_joined.line_circulations(
+            circulation=surf_circ, out=out_circ, n_threads=n_threads
         )
 
     else:
         # Reuse as much as possible here
         system.update(t_new=target_time)
         part_circ = {
-            part_name: out_circ[geometry[part_name].surfaces] for part_name in geometry
+            part_name: cp_flux[geometry[part_name].surfaces] for part_name in geometry
         }
         system.solve_inverse(part_circ)
-
-    # Adjust circulations of closed surfaces to have zero mean circulation
-    for geo_name in geometry:
-        info = geometry[geo_name]
-        if not info.closed:
-            continue
-        out_circ[info.surfaces] -= np.mean(out_circ[info.surfaces])
+        geometry.mesh_joined.line_circulations(
+            circulation=cp_flux, out=out_circ, n_threads=n_threads
+        )
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    line_circulations = geometry.mesh_joined.line_circulations(
-        circulation=out_circ, n_threads=n_threads
-    )
     if wake.quad_count > 0:
         # Get wake induced velocity
         wake_ind_vel = _compute_induced_velocity(
@@ -822,7 +900,7 @@ def update_simulation_state(
             tol=tol,
             mesh=geometry.mesh_joined,
             positions=pos,
-            line_circulation=line_circulations,
+            line_circulation=out_circ,
             wake=wake,
             flow_cond=flow_cond,
             target=wake.positions,
@@ -846,7 +924,7 @@ def update_simulation_state(
                 tol=tol,
                 mesh=geometry.mesh_joined,
                 positions=pos,
-                line_circulation=line_circulations,
+                line_circulation=out_circ,
                 wake=wake,
                 flow_cond=flow_cond,
                 target=pos,
@@ -887,6 +965,7 @@ def update_simulation_state(
         shed_pos = pos[shedding_points.reshape(-1, copy=False), :].reshape(
             -1, 2, 3, copy=False
         )
+        new_quads = np.empty((shedding_lines.size, 4, 3), np.double)
 
         if induced_vel is None:
             # We do do not have computed point velocities, so compute it for only required
@@ -895,7 +974,7 @@ def update_simulation_state(
                 tol=tol,
                 mesh=geometry.mesh_joined,
                 positions=pos,
-                line_circulation=line_circulations,
+                line_circulation=out_circ,
                 wake=wake,
                 flow_cond=flow_cond,
                 target=shed_pos,
@@ -908,7 +987,6 @@ def update_simulation_state(
             )
 
         # With line velocities, we can now shed elements in that direction from each line
-        new_quads = np.empty((shedding_lines.size, 4, 3), np.double)
         # First two points for each quad can already be set based on shedding points
         new_quads[:, 0, :] = pos[shedding_points[:, 0], :]
         new_quads[:, 1, :] = pos[shedding_points[:, 1], :]
@@ -926,7 +1004,8 @@ def update_simulation_state(
         # Add wake quads
         out_wake = wake.add_quads(
             new_positions=new_quads,
-            new_circulations=line_circulations[shedding_lines],
+            # Circulation must have an opposite sign!
+            new_circulations=-out_circ[shedding_lines],
             out_state=out_wake,
         )
 
@@ -940,6 +1019,7 @@ def update_simulation_state(
         geometry=state.geometry,
         settings=state.settings,
         wake=out_wake,
+        shed_lines=np.asarray(shedding_lines, np.intp),
     )
 
 
@@ -966,29 +1046,23 @@ def run_solver(
         Number of threads to use.
     """
     results = SolverResults(geometry, settings)
-    times: npt.NDArray[np.double]
-    if settings.time_settings is None:
-        times = np.array((0,), np.double)
-    else:
-        times = np.astype(
-            np.arange(settings.time_settings.nt) * settings.time_settings.dt, np.double
-        )
+    simulation_times = settings.time_settings.simulation_times
 
     i_out = 0
 
     # Main state
-    state = SolverState.create_new(times[0], geometry, settings)
+    state = SolverState.create_new(simulation_times[0], geometry, settings)
     state.circulation[:] = 0  # Zero out the circulation for the first time step
     # Output state to avoid unnecessary allocations during the loop
-    out_state = SolverState.create_new(times[0], geometry, settings)
+    out_state = SolverState.create_new(simulation_times[0], geometry, settings)
     compute_mem = PyVLComputeMemory.from_solver_settings(geometry, settings)
     system = SolverSystem(
-        time=times[0],
+        time=simulation_times[0],
         tol=settings.model_settings.vortex_limit,
         geo=[geometry.geometries[name] for name in geometry.geometries],
     )
 
-    for iteration, time in enumerate(times):
+    for iteration, time in enumerate(simulation_times):
         iteration_begin_time = perf_counter()
         out_state = update_simulation_state(
             state,
@@ -1016,6 +1090,7 @@ def run_solver(
                     next_insertion_index=0,
                 )
             )
+            results.shedded_lines.append(state.shed_lines)
             if output_settings is not None:
                 output_settings.serialization_fn(
                     state.save(output_settings.callable_serializer),
@@ -1023,7 +1098,7 @@ def run_solver(
                 )
             i_out += 1
         print(
-            f"Finished iteration {iteration} out of {len(times)} in "
+            f"Finished iteration {iteration} out of {len(simulation_times)} in "
             f"{iteration_end_time - iteration_begin_time:g} seconds."
         )
 

@@ -5,7 +5,7 @@ from collections.abc import Iterable
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.solver import SolverResults, _compute_induced_velocity
+from pyvl.solver import SolverResults
 
 
 def compute_velocities(
@@ -36,27 +36,16 @@ def compute_velocities(
     (M, N, 3) array
         Array of velocity vectors for each output step.
     """
-    out_times = results.settings.time_settings.output_times
     cpts = np.ascontiguousarray(positions, dtype=np.double)
     if len(cpts.shape) != 2 or cpts.shape[1] != 3:
         raise ValueError("Positions must be an array of 3 component position vectors.")
-    output_array = np.empty((out_times.size, cpts.shape[0], 3), np.double)
-    for i, t in enumerate(out_times):
-        circulation = results.circulations[i, :]
-        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
-        pos = results.geometry.positions_at_time(t)
-        wm = results.wake_states[i]
-        _compute_induced_velocity(
-            time=t,
-            tol=results.settings.model_settings.vortex_limit,
-            mesh=results.geometry.mesh_joined,
-            positions=pos,
-            line_circulation=line_circulations,
-            wake=wm,
-            flow_cond=results.settings.flow_conditions if not induced_only else None,
-            target=cpts,
-            n_threads=n_threads,
+    output_array = np.empty((len(results), cpts.shape[0], 3), np.double)
+    for i, state in enumerate(results):
+        state.compute_velocity(
+            positions=positions,
+            induced_only=induced_only,
             out=output_array[i, ...],
+            n_threads=n_threads,
         )
 
     return output_array
@@ -91,28 +80,13 @@ def compute_velocities_variable(
     list of (N, 3) array
         List of velocity vectors for each output step.
     """
-    out_times = results.settings.time_settings.output_times
     out_list: list[npt.NDArray[np.double]] = list()
-    for i, (t, pts) in enumerate(zip(out_times, positions, strict=True)):
-        cpts = np.ascontiguousarray(pts, dtype=np.double)
-        if len(cpts.shape) != 2 or cpts.shape[1] != 3:
-            raise ValueError(
-                "Positions must be an array of 3 component position vectors."
+    for i, (state, pts) in enumerate(zip(results, positions, strict=True)):
+        out_list.append(
+            state.compute_velocity(
+                positions=np.ascontiguousarray(pts, dtype=np.double),
+                induced_only=induced_only,
+                n_threads=n_threads,
             )
-        circulation = results.circulations[i, :]
-        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
-        pos = results.geometry.positions_at_time(t)
-        wm = results.wake_states[i]
-        total_velocity = _compute_induced_velocity(
-            time=t,
-            tol=results.settings.model_settings.vortex_limit,
-            mesh=results.geometry.mesh_joined,
-            positions=pos,
-            line_circulation=line_circulations,
-            wake=wm,
-            flow_cond=results.settings.flow_conditions if not induced_only else None,
-            target=cpts,
-            n_threads=n_threads,
         )
-        out_list.append(total_velocity)
     return out_list

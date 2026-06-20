@@ -5,7 +5,7 @@ from collections.abc import Iterable
 import numpy as np
 import numpy.typing as npt
 
-from pyvl.solver import SolverResults, _compute_induced_velocity
+from pyvl.solver import SolverResults
 
 
 def compute_surface_dynamic_pressure(
@@ -26,33 +26,18 @@ def compute_surface_dynamic_pressure(
     list of M (N,) arrays
         List with array of pressure values for each output step.
     """
-    out_times = results.settings.time_settings.output_times
     out_list: list[npt.NDArray[np.double]] = []
-    for i, t in enumerate(out_times):
-        circulation = results.circulations[i, :]
-        msh = results.geometry.mesh_joined
-        pos, vel = results.geometry.geometry_at_time(t)
-        cpts = msh.surface_average_vec3(pos)
-        tol = results.settings.model_settings.vortex_limit
-        circulation = results.circulations[i, :]
-        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
-        pos = results.geometry.positions_at_time(t)
-
-        wm = results.wake_states[i]
-        total_velocity = _compute_induced_velocity(
-            time=t,
-            tol=tol,
-            mesh=msh,
-            positions=pos,
-            line_circulation=line_circulations,
-            wake=wm,
-            flow_cond=None,
-            target=cpts,
-            n_threads=n_threads,
+    for i, state in enumerate(results):
+        pos = state.geometry.positions_at_time(state.time)
+        cpts = state.geometry.mesh_joined.surface_average_vec3(pos)
+        total_velocity = state.compute_velocity(
+            positions=cpts, induced_only=True, n_threads=n_threads
         )
 
         pressure = np.sum(total_velocity**2, axis=-1)
-        pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure / 2
+        pressure = (
+            -results.settings.flow_conditions.get_density(state.time, cpts) * pressure / 2
+        )
         out_list.append(pressure)
 
     return out_list
@@ -80,32 +65,24 @@ def compute_dynamic_pressure_variable(
     list of (N,) array
         List of pressure values for each output step.
     """
-    out_times = results.settings.time_settings.output_times
     out_list: list[npt.NDArray[np.double]] = list()
-    for i, (t, pts) in enumerate(zip(out_times, positions, strict=True)):
+    for i, (state, pts) in enumerate(zip(results, positions, strict=True)):
         cpts = np.ascontiguousarray(pts, dtype=np.double)
         if len(cpts.shape) != 2 or cpts.shape[1] != 3:
             raise ValueError(
                 "Positions must be an array of 3 component position vectors."
             )
-        circulation = results.circulations[i, :]
-        line_circulations = results.geometry.mesh_joined.line_circulations(circulation)
-        pos = results.geometry.positions_at_time(t)
-
-        wm = results.wake_states[i]
-        total_velocity = _compute_induced_velocity(
-            time=t,
-            tol=results.settings.model_settings.vortex_limit,
-            mesh=results.geometry.mesh_joined,
-            positions=pos,
-            line_circulation=line_circulations,
-            wake=wm,
-            flow_cond=None,
-            target=cpts,
-            n_threads=n_threads,
+        total_velocity = state.compute_velocity(
+            positions=cpts, induced_only=False, n_threads=n_threads
         )
 
-        pressure = np.sum(total_velocity**2, axis=-1)
-        pressure = -results.settings.flow_conditions.get_density(t, cpts) * pressure / 2
+        pressure = np.sum(
+            state.settings.flow_conditions.get_velocity(time=state.time, positions=cpts)
+            ** 2,
+            axis=-1,
+        ) - np.sum(total_velocity**2, axis=-1)
+        pressure = (
+            results.settings.flow_conditions.get_density(state.time, cpts) * pressure / 2
+        )
         out_list.append(pressure)
     return out_list

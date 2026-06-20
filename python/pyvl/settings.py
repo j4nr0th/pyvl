@@ -47,7 +47,7 @@ class TimeSettings:
             return self.simulation_times
         return np.double(self.dt) * np.arange(
             self.nt, step=self.output_interval, dtype=np.double
-        )  # type: ignore
+        )
 
     def save(self) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.

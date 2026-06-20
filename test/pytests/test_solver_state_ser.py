@@ -56,7 +56,7 @@ def test_solver_state_serialization():
     t = 3.21
 
     state = SolverState.create_new(t, sim_geo, s_settings)
-    state.circulation[:] = np.random.random(sim_geo.n_surfaces)
+    state.circulation[:] = np.random.random(sim_geo.n_lines)
 
     serializer = PythonSerializer()
     hmap = state.save(serializer.serialize)

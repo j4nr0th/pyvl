@@ -7,26 +7,21 @@ from pyvl.solver import SolverResults
 
 
 # TODO: correct for wake
-def circulatory_forces(results: SolverResults) -> list[npt.NDArray[np.double]]:
+def circulatory_forces(
+    results: SolverResults, n_threads: int = 1
+) -> list[npt.NDArray[np.double]]:
     """Compute forces resulting from the mesh circulation."""
     out: list[npt.NDArray[np.double]] = list()
-    for i, t in enumerate(results.settings.time_settings.output_times):
-        line_circ = results.geometry.mesh_joined.line_circulations(
-            results.circulations[i, :] / (2 * np.pi)
+    for i, state in enumerate(results):
+        positions = state.geometry.positions_at_time(state.time)
+        velocity = state.compute_velocity(
+            positions=positions, induced_only=False, n_threads=n_threads
         )
-        positions, motion = results.geometry.geometry_at_time(t)
+        # Copy circulations and set the circulation of shed lines to zero.
+        circ = state.circulation.copy()
+        circ[state.shed_lines] = 0
 
-        freestream = results.settings.flow_conditions.get_velocity(t, positions)
-        tol = results.settings.model_settings.vortex_limit
-        ind_mat = results.geometry.mesh_joined.induction_matrix(tol, positions, positions)
-        induced = np.sum(ind_mat * (results.circulations[i, :])[None, :, None], axis=1)
-
-        wm = results.wake_states[i]
-        induced += wm.induced_velocity(tol, positions)
-
-        forces = results.geometry.mesh_joined.line_forces(
-            line_circ, positions, freestream + induced - motion
-        )
+        forces = results.geometry.mesh_joined.line_forces(circ, positions, velocity)
 
         out.append(forces)
 
