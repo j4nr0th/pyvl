@@ -180,7 +180,8 @@ void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_AR
             const real3_t induction_regular = compute_filament_induction(tol, r1, r2, direction, cpts[icp]);
             const real3_t induction_symmetry = compute_filament_induction(
                 tol, r1, r2, direction, transformation_plane_transform_position(symmetry_plane, cpts[icp]));
-            out[icp * n_lines + iln] = real3_add(induction_regular, induction_symmetry);
+            out[icp * n_lines + iln] =
+                real3_add(induction_regular, transformation_plane_transform_vector(symmetry_plane, induction_symmetry));
         }
     }
 }

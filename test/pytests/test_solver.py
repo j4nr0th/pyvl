@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from pyvl.cvl import Mesh, ReferenceFrame, quad_induction
+from pyvl.cvl import (
+    Mesh,
+    ReferenceFrame,
+    TransformationPlane,
+    quad_induction,
+    quad_normal_induction,
+)
 from pyvl.flow_conditions import FlowConditionsUniform
 from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import (
@@ -256,6 +262,112 @@ def test_wake_induction_same_as_mesh():
     assert pytest.approx(wake_ind) == mesh_ind
 
 
+def test_quad_induction_symmetry_plane_matches_mirrored_copy() -> None:
+    """Check quad induction with symmetry matches an explicit mirrored copy."""
+    rng = np.random.default_rng(203)
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+    quad_positions = rng.random((1, 4, 3)) * 4 - 2  # Random numbers between -2 and +2
+    quad_circulation = rng.random(1)
+    target_positions = rng.random((5, 3)) * 4 - 2  # Random numbers between -2 and +2
+
+    base = quad_induction(
+        tol=1e-8,
+        quad_positions=quad_positions,
+        quad_circulations=quad_circulation,
+        target_positions=target_positions,
+    )
+    mirrored = quad_induction(
+        tol=1e-8,
+        quad_positions=plane.reflect(quad_positions),
+        quad_circulations=-quad_circulation,
+        target_positions=target_positions,
+    )
+
+    with_symmetry = quad_induction(
+        tol=1e-8,
+        quad_positions=quad_positions,
+        quad_circulations=quad_circulation,
+        target_positions=target_positions,
+        symmetry_plane=plane,
+    )
+
+    expected = base + mirrored
+
+    np.testing.assert_allclose(with_symmetry, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_quad_normal_induction_symmetry_plane_matches_mirrored_copy() -> None:
+    """Check quad normal induction with symmetry matches an explicit mirrored copy."""
+    rng = np.random.default_rng(204)
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+    quad_positions = rng.random((1, 4, 3)) * 4 - 2  # Random numbers between -2 and +2
+    quad_circulation = rng.random(1)
+    N_TARGET = 10
+    target_positions = (
+        rng.random((N_TARGET, 3)) * 4 - 2
+    )  # Random numbers between -2 and +2
+    target_normals = rng.random((N_TARGET, 3)) * 2 - 1  # Random numbers between -1 and +1
+
+    base = quad_normal_induction(
+        tol=1e-8,
+        quad_positions=quad_positions,
+        quad_circulations=quad_circulation,
+        target_positions=target_positions,
+        target_normals=target_normals,
+    )
+    mirrored_target_only = quad_normal_induction(
+        tol=1e-8,
+        quad_positions=plane.reflect(quad_positions),
+        quad_circulations=-quad_circulation,
+        target_positions=target_positions,
+        target_normals=target_normals,
+    )
+
+    with_symmetry = quad_normal_induction(
+        tol=1e-8,
+        quad_positions=quad_positions,
+        quad_circulations=quad_circulation,
+        target_positions=target_positions,
+        target_normals=target_normals,
+        symmetry_plane=plane,
+    )
+
+    expected = base + mirrored_target_only
+
+    np.testing.assert_allclose(with_symmetry, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_quad_normal_induction_matches_velocity_projection() -> None:
+    """Check quad normal induction matches projected quad induction."""
+    rng = np.random.default_rng(207)
+    quad_positions = rng.random((3, 4, 3)) * 4 - 2
+    quad_circulation = rng.random(3) * 2 - 1
+    target_positions = rng.random((9, 3)) * 4 - 2
+    target_normals = rng.random((9, 3)) * 2 - 1
+    target_normals /= np.linalg.norm(target_normals, axis=1, keepdims=True)
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+
+    for symmetry_plane in (None, plane):
+        velocity = quad_induction(
+            tol=1e-8,
+            quad_positions=quad_positions,
+            quad_circulations=quad_circulation,
+            target_positions=target_positions,
+            symmetry_plane=symmetry_plane,
+        )
+        normal_velocity = quad_normal_induction(
+            tol=1e-8,
+            quad_positions=quad_positions,
+            quad_circulations=quad_circulation,
+            target_positions=target_positions,
+            target_normals=target_normals,
+            symmetry_plane=symmetry_plane,
+        )
+
+        expected = np.sum(velocity * target_normals, axis=1)
+        np.testing.assert_allclose(normal_velocity, expected, rtol=1e-12, atol=1e-12)
+
+
 def test_state_update():
     """Ensure the state update computes the correct circulation."""
     rng = np.random.default_rng(241)
@@ -323,3 +435,6 @@ if __name__ == "__main__":
     test_induction_two_triangles_equal_to_quad()
     test_wake_induction_same_as_mesh()
     test_state_update()
+    test_quad_induction_symmetry_plane_matches_mirrored_copy()
+    test_quad_normal_induction_symmetry_plane_matches_mirrored_copy()
+    test_quad_normal_induction_matches_velocity_projection()

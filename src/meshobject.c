@@ -1682,7 +1682,7 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
             const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
 
             // Update the result
-            out[i_cp] = real3_add(out[i_cp], ind);
+            out[i_cp] = real3_add(out[i_cp], transformation_plane_transform_vector(&sym_plane, ind));
         }
     }
     Py_END_ALLOW_THREADS;

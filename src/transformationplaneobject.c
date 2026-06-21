@@ -240,16 +240,6 @@ static PyObject *pyvl_transformation_plane_reflect(PyObject *self, PyTypeObject 
     }
     Py_DECREF(time);
 
-    const real_t normal_mag = real3_mag(transformation_plane.normal);
-    if (normal_mag == 0)
-    {
-        Py_DECREF(x);
-        Py_DECREF(out_arr);
-        PyErr_SetString(PyExc_ValueError, "Normal vector cannot be zero.");
-        return NULL;
-    }
-    transformation_plane.normal = real3_mul1(transformation_plane.normal, 1.0 / normal_mag);
-
     size_t n = 1;
     for (int i = 0; i < ndim - 1; ++i)
         n *= PyArray_DIM(x, i);

@@ -102,48 +102,100 @@ def test_mesh_merge():
 
 
 def test_mesh_accepts_symmetry_plane() -> None:
-    """Check that mesh induction methods accept a symmetry plane argument."""
-    msh = Mesh(3, [[0, 1, 2]])
-    positions = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ]
-    )
-    control_points = np.array(
-        [
-            [0.2, 0.2, 0.1],
-            [0.3, 0.2, 0.2],
-        ]
-    )
-    normals = np.array(
-        [
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-    line_circulation = np.array([1.0, 0.5, -0.25])
-    plane = TransformationPlane(origin=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+    """Check that mesh induction with symmetry matches an explicit mirrored copy."""
+    rng = np.random.default_rng(205)
+    msh = Mesh(4, [[0, 1, 2, 3]])
+    positions = rng.random((4, 3))
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+    mirrored_positions = plane.reflect(positions)
+    line_circulation = rng.random(4)
+    control_points = rng.random((5, 3))
 
-    base_matrix = msh.induction_matrix3(1e-8, positions, control_points, normals)
-    plane_matrix = msh.induction_matrix3(
+    base = msh.induction_velocity(
         1e-8,
         positions,
         control_points,
-        normals,
-        symmetry_plane=plane,
+        line_circulation,
     )
-    assert plane_matrix == pytest.approx(base_matrix)
-
-    base_velocity = msh.induction_velocity(
-        1e-8, positions, control_points, line_circulation
+    mirrored = msh.induction_velocity(
+        1e-8,
+        mirrored_positions,
+        control_points,
+        -line_circulation,
     )
-    plane_velocity = msh.induction_velocity(
+    with_symmetry = msh.induction_velocity(
         1e-8,
         positions,
         control_points,
         line_circulation,
         symmetry_plane=plane,
     )
-    assert plane_velocity == pytest.approx(base_velocity)
+
+    expected = base + mirrored
+
+    np.testing.assert_allclose(with_symmetry, expected, rtol=1e-12, atol=1e-12)
+
+    # Now check that putting the control points on the plane results in
+    # no normal induction
+    control_points_on_plane = (plane.reflect(control_points) + control_points) / 2
+    with_symmetry = msh.induction_velocity(
+        1e-8,
+        positions,
+        control_points_on_plane,
+        line_circulation,
+        symmetry_plane=plane,
+    )
+    np.testing.assert_allclose(
+        with_symmetry @ plane.normal(), 0.0, rtol=1e-12, atol=1e-12
+    )
+
+
+def test_induction_matrix3_matches_velocity_projection() -> None:
+    """Check matrix3 matches velocity projected onto target normals."""
+    rng = np.random.default_rng(206)
+    msh = Mesh(
+        7,
+        [
+            [0, 1, 2, 3],
+            [0, 3, 4],
+            [2, 5, 6],
+        ],
+    )
+    positions = rng.random((msh.n_points, 3)) * 4 - 2
+    surface_circulations = rng.random(msh.n_surfaces) * 2 - 1
+    control_points = rng.random((8, 3)) * 4 - 2
+    target_normals = rng.random((8, 3)) * 2 - 1
+    target_normals /= np.linalg.norm(target_normals, axis=1, keepdims=True)
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+
+    line_circulations = msh.line_circulations(surface_circulations)
+
+    for symmetry_plane in (None, plane):
+        matrix3 = msh.induction_matrix3(
+            1e-8,
+            positions,
+            control_points,
+            target_normals,
+            symmetry_plane=symmetry_plane,
+        )
+        velocity = msh.induction_velocity(
+            1e-8,
+            positions,
+            control_points,
+            line_circulations,
+            symmetry_plane=symmetry_plane,
+        )
+
+        expected = np.sum(velocity * target_normals, axis=1)
+        np.testing.assert_allclose(
+            matrix3 @ surface_circulations, expected, rtol=1e-12, atol=1e-12
+        )
+
+
+if __name__ == "__main__":
+    test_mesh_construction()
+    test_mesh_surface_normals()
+    test_mesh_surface_centers()
+    test_mesh_merge()
+    test_mesh_accepts_symmetry_plane()
+    test_induction_matrix3_matches_velocity_projection()

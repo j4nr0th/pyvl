@@ -169,7 +169,7 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
                                                    transformation_plane_transform_position(&sym_plane, target[j])),
                         circulation);
 
-                    velocity[j] = real3_add(velocity[j], ind);
+                    velocity[j] = real3_add(velocity[j], transformation_plane_transform_vector(&sym_plane, ind));
                 }
             }
 
@@ -398,7 +398,8 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
                         compute_filament_induction(tol, pos_start, pos_end, direction,
                                                    transformation_plane_transform_position(&sym_plane, target[j])),
                         circulation);
-                    const real_t normal_induction = real3_dot(ind, normals[j]);
+                    const real_t normal_induction =
+                        real3_dot(transformation_plane_transform_vector(&sym_plane, ind), normals[j]);
 
                     velocity[j] += normal_induction;
                 }
