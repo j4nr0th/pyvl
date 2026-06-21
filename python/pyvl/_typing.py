@@ -16,3 +16,5 @@ VecLike3 = (
 
 CallableSerializer = Callable[[Callable], str]
 CallableDeserializer = Callable[[str], Callable]
+
+Vec3Callable = Callable[[float], VecLike3]

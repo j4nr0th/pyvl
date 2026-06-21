@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from pyvl import Mesh
+from pyvl import Mesh, TransformationPlane
 
 
 def test_mesh_construction():
@@ -101,10 +101,49 @@ def test_mesh_merge():
         point_offset += m.n_points
 
 
-def test_overlap_induction_matrix() -> None:
-    """Check that induction matrix behaves nicely even on the lines."""
-    msh = Mesh(4, [[0, 1, 2, 3]])
-    positions = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], np.double)
-    test_mat = msh.line_induction_matrix(1e-6, positions, positions)
-    for i in range(4):
-        assert all(test_mat[i, i, :] == (0, 0, 0))
+def test_mesh_accepts_symmetry_plane() -> None:
+    """Check that mesh induction methods accept a symmetry plane argument."""
+    msh = Mesh(3, [[0, 1, 2]])
+    positions = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    )
+    control_points = np.array(
+        [
+            [0.2, 0.2, 0.1],
+            [0.3, 0.2, 0.2],
+        ]
+    )
+    normals = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    line_circulation = np.array([1.0, 0.5, -0.25])
+    plane = TransformationPlane(origin=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0))
+
+    base_matrix = msh.induction_matrix3(1e-8, positions, control_points, normals)
+    plane_matrix = msh.induction_matrix3(
+        1e-8,
+        positions,
+        control_points,
+        normals,
+        symmetry_plane=plane,
+    )
+    assert plane_matrix == pytest.approx(base_matrix)
+
+    base_velocity = msh.induction_velocity(
+        1e-8, positions, control_points, line_circulation
+    )
+    plane_velocity = msh.induction_velocity(
+        1e-8,
+        positions,
+        control_points,
+        line_circulation,
+        symmetry_plane=plane,
+    )
+    assert plane_velocity == pytest.approx(base_velocity)

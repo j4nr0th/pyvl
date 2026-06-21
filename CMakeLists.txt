@@ -26,7 +26,9 @@ list(
         src/allocator.c
         src/geoidobject.c
         src/meshobject.c
+        src/time_dependent_vector.c
         src/referenceframeobject.c
+        src/transformationplaneobject.c
         src/methods.c
 )
 
@@ -36,7 +38,9 @@ list(
         src/allocator.h
         src/geoidobject.h
         src/meshobject.h
+        src/time_dependent_vector.h
         src/referenceframeobject.h
+        src/transformationplaneobject.h
         src/methods.h
 )
 

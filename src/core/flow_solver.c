@@ -144,6 +144,46 @@ void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(l
         }
     }
 }
+void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
+                                     const unsigned n_positions,
+                                     const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
+                                     const unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
+                                     real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t tol,
+                                     const transformation_plane_t *symmetry_plane, const unsigned n_threads)
+{
+    unsigned iln;
+#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol, symmetry_plane)       \
+    num_threads(n_threads)
+    for (iln = 0; iln < n_lines; ++iln)
+    {
+        const line_t line = lines[iln];
+        const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
+        const real3_t r1 = positions[pt1];
+        const real3_t r2 = positions[pt2];
+        real3_t direction = real3_sub(r2, r1);
+        const real_t len = real3_mag(direction);
+        if (len < tol)
+        {
+            //  Filament is too short, all control points get zero influence
+            for (unsigned icp = 0; icp < n_cpts; ++icp)
+                out[icp * n_lines + iln] = (real3_t){0};
+
+            continue;
+        }
+
+        direction.v0 /= len;
+        direction.v1 /= len;
+        direction.v2 /= len;
+
+        for (unsigned icp = 0; icp < n_cpts; ++icp)
+        {
+            const real3_t induction_regular = compute_filament_induction(tol, r1, r2, direction, cpts[icp]);
+            const real3_t induction_symmetry = compute_filament_induction(
+                tol, r1, r2, direction, transformation_plane_transform_position(symmetry_plane, cpts[icp]));
+            out[icp * n_lines + iln] = real3_add(induction_regular, induction_symmetry);
+        }
+    }
+}
 
 void line_induction_to_surface_induction(const unsigned n_surfaces,
                                          const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),

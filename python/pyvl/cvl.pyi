@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import collections.abc
 from collections.abc import Sequence
 from typing import Self, final
 
 import numpy as np
 from numpy import typing as npt
 
-from pyvl._typing import CallableDeserializer, CallableSerializer, VecLike3
+from pyvl._typing import CallableDeserializer, CallableSerializer, Vec3Callable, VecLike3
 from pyvl.fio.io_common import HirearchicalMap
 
 INVALID_ID: int = ...
@@ -51,6 +50,101 @@ class GeoID:
     def __neg__(self) -> GeoID: ...
 
 _GeoIDLike = GeoID | int
+
+@final
+class TransformationPlane:
+    """Type used to describe a plane used for a transformation.
+
+    Parameters
+    ----------
+    origin : VecLike3 or Callable, default: (0, 0, 0)
+        Origin of the plane. Can be a constant vector or a callable returning the origin
+        at time t.
+
+    normal : VecLike3 or Callable, default: (0, 0, 1)
+        Normal of the plane. Can be a constant vector or a callable returning the normal
+        at time t. Does not need to be normalized, but it will be internally.
+    """
+
+    def __new__(
+        cls,
+        origin: VecLike3 | Vec3Callable = (0, 0, 0),
+        normal: VecLike3 | Vec3Callable = (0, 0, 1),
+    ) -> Self: ...
+    def origin(self, t: float = 0) -> npt.NDArray[np.double]:
+        """Get the origin of the plane at the given time.
+
+        Parameters
+        ----------
+        t : float, default: 0
+            Time at which to evaluate the origin.
+
+        Returns
+        -------
+        (3,) array
+            Origin vector at the given time.
+        """
+        ...
+
+    def normal(self, t: float = 0) -> npt.NDArray[np.double]:
+        """Get the normal of the plane at the given time.
+
+        Parameters
+        ----------
+        t : float, default: 0
+            Time at which to evaluate the normal.
+
+        Returns
+        -------
+        (3,) array
+            Normal vector at the given time.
+        """
+        ...
+
+    def reflect(
+        self, x: npt.ArrayLike, t: float = 0, out: npt.NDArray[np.double] | None = None
+    ) -> npt.NDArray[np.double]:
+        """Reflect points across the plane.
+
+        Parameters
+        ----------
+        x : array
+            Array of points to reflect. Must be an aligned, continuous (N, 3) array,
+            where N is the number of points.
+
+        t : float, default: 0
+            Time at which to evaluate the plane's position and orientation.
+
+        out : array, optional
+            Array used to store the output. If not given or ``None``, a new array will
+            be created.
+
+        Returns
+        -------
+        array
+            Reflected points. If ``out`` was not ``None``, a reference to it is returned,
+        otherwise a new array is returned.
+        """
+        ...
+
+    def at_time(self, t: float) -> TransformationPlane:
+        """Get the plane at the given time.
+
+        For planes with constant origin and normal, this will return the same plane. For
+        planes with time-dependent origin and/or normal, this will return a new plane
+        with the origin and normal evaluated at the given time.
+
+        Parameters
+        ----------
+        t : float
+            Time at which to evaluate the plane's position and orientation.
+
+        Returns
+        -------
+        TransformationPlane
+            New plane at the given time.
+        """
+        ...
 
 @final
 class Mesh:
@@ -141,6 +235,7 @@ class Mesh:
         tol: float,
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
+        symmetry_plane: TransformationPlane | None = None,
         out: npt.NDArray[np.double] | None = None,
         line_buffer: npt.NDArray[np.double] | None = None,
         thread_count: int = 1,
@@ -154,6 +249,7 @@ class Mesh:
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
         normals: npt.NDArray[np.double],
+        symmetry_plane: TransformationPlane | None = None,
         out: npt.NDArray[np.double] | None = None,
         line_buffer: npt.NDArray[np.double] | None = None,
         thread_count: int = 1,
@@ -196,6 +292,7 @@ class Mesh:
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
         line_circulation: npt.NDArray[np.double],
+        symmetry_plane: TransformationPlane | None = None,
         out: npt.NDArray[np.double] | None = None,
         n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
@@ -220,9 +317,8 @@ class Mesh:
             An array with enough space for M velocity vectors, one for
             each of the control points.
 
-        line_buffer : array, optional
-            An array with enough space for induction vector for each of the
-            mesh lines.
+        symmetry_plane : TransformationPlane, optional
+            A plane of symmetry to consider in the induction calculation.
 
         n_threads : int, default: 1
             Number of threads to use for computing the induction.
@@ -273,17 +369,6 @@ class Mesh:
         """Create line-only mesh from line connectivity."""
         ...
 
-    def line_induction_matrix(
-        self,
-        tol: float,
-        positions: npt.NDArray[np.double],
-        control_points: npt.NDArray[np.double],
-        out: npt.NDArray[np.double] | None = None,
-        thread_count: int = 1,
-    ) -> npt.NDArray[np.double]:
-        """Compute an induction matrix for the mesh based on line circulations."""
-        ...
-
     def line_forces(
         self,
         line_circulation: npt.NDArray[np.double],
@@ -322,6 +407,7 @@ class Mesh:
         """Line connectivity of the mesh."""
         ...
 
+@final
 class ReferenceFrame:
     r"""Class which is used to define position and orientation of geometry.
 
@@ -374,10 +460,10 @@ class ReferenceFrame:
 
     def __new__(
         cls,
-        offset: VecLike3 | collections.abc.Callable[[float], VecLike3] = (0, 0, 0),
-        theta: VecLike3 | collections.abc.Callable[[float], VecLike3] = (0, 0, 0),
-        velocity: VecLike3 | collections.abc.Callable[[float], VecLike3] = (0, 0, 0),
-        rotation: VecLike3 | collections.abc.Callable[[float], VecLike3] = (0, 0, 0),
+        offset: VecLike3 | Vec3Callable = (0, 0, 0),
+        theta: VecLike3 | Vec3Callable = (0, 0, 0),
+        velocity: VecLike3 | Vec3Callable = (0, 0, 0),
+        rotation: VecLike3 | Vec3Callable = (0, 0, 0),
         parent: ReferenceFrame | None = None,
     ) -> Self: ...
     @property
@@ -1218,6 +1304,7 @@ def quad_induction(
     quad_positions: npt.ArrayLike,
     quad_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
+    symmetry_plane: TransformationPlane | None = None,
     out_velocity: npt.NDArray[np.double] | None = None,
     n_threads: int = 1,
 ) -> npt.NDArray[np.double]:
@@ -1243,6 +1330,10 @@ def quad_induction(
     target_positions : (K, 3) array
         Array of positions at which to compute the velocity influence.
 
+    symmetry_plane : TransformationPlane, optional
+        If given, the influence of the quadrilateral filaments is computed as if they were
+        mirrored across the given plane.
+
     out_velocity : (K, 3) array, optional
         Output array to write the computed velocities to. If not given, a new one is
         created.
@@ -1264,6 +1355,7 @@ def quad_normal_induction(
     quad_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
     target_normals: npt.ArrayLike,
+    symmetry_plane: TransformationPlane | None = None,
     out_velocity: npt.NDArray[np.double] | None = None,
     n_threads: int = 1,
 ) -> npt.NDArray[np.double]:
@@ -1292,6 +1384,10 @@ def quad_normal_induction(
     target_normals : (K, 3) array
         Array of normal vectors at the target positions. The normal vectors should be
         normalized.
+
+    symmetry_plane : TransformationPlane, optional
+        If given, the influence of the quadrilateral filaments is computed as if they were
+        mirrored across the given plane.
 
     out_velocity : (K, 3) array, optional
         Output array to write the computed velocities to. If not given, a new one is

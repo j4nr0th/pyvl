@@ -1,61 +1,37 @@
-//
-// Created by jan on 29.11.2024.
-//
-
-#ifndef TRANSFORMATION_H
-#define TRANSFORMATION_H
-
+#pragma once
 #include "common.h"
 
 typedef struct
 {
-    real3_t angles; // Rotation angles around x, y, and z axis
-    real3_t offset; // Offsets by x, y, and z axis
-} transformation_t;
+    real3_t origin; // Point on the plane
+    real3_t normal; // Unit vector normal to the plane
+} transformation_plane_t;
 
 /**
- * @brief Merges transformations A(x) = T_A @ x + r_A and B(x) = T_B @ x + r_B into an equivalent transformation
- * C(x) such that C(x) = A(B(x)) = T_A @ (T_B @ x + r_B) + r_A = (T_A @ T_B) @ x + (r_A + T_A @ r_B).
+ * Transforms a position according to the plane, reflecting it across it.
  *
- * This is useful when this operation will be repeatedly applied, as it will only require same cost as only one
- * transformation after the overhead of merging.
- *
- * @param trans_a Transformation matrix of first transformation.
- * @param off_a Offset of the first transformation.
- * @param trans_b Transformation matrix of second transformation.
- * @param off_b Offset of the second transformation.
- * @param p_trans_out Pointer which receives the output transformation matrix.
- * @param p_off_out Pointer which receives the output offset.
+ * @param plane Plane used for transformation.
+ * @param point Position to transform.
+ * @return Transformed position.
  */
-static inline void merge_transformations(const real3x3_t trans_a, const real3_t off_a, const real3x3_t trans_b,
-                                         const real3_t off_b, real3x3_t *p_trans_out, real3_t *p_off_out)
+static inline real3_t transformation_plane_transform_position(const transformation_plane_t *plane, const real3_t point)
 {
-    *p_trans_out = real3x3_matmul(trans_a, trans_b);
-    *p_off_out = real3_add(off_a, real3x3_vecmul(trans_a, off_b));
+    // Normal distance from the plane
+    const real_t dist = real3_dot(plane->normal, real3_sub(point, plane->origin));
+    // Reflect across the plane
+    return real3_sub(point, real3_mul1(plane->normal, 2 * dist));
 }
 
 /**
- * @brief Merges transformations A^{-1}(x) = T_A^T @ (x - r_A) and B^{-1}(x) = T_B^T @ (x - r_B) into an equivalent
- * transformation C^{-1}(x) such that:
+ * Transforms a direction vector according to the plane, reflecting it across it.
+ * The plane's origin is not relevant for this transformation.
  *
- * C^{-1}(x) = B^{-1}(A^{-1}(x)) = T_B^T @ (T_A^T @ (x - r_A) - r_B) = (T_B^T @ T_A^T) @ x - (T_A^T @ (r_A + T_B^T @
- * r_B)).
- *
- * This is useful when this operation will be repeatedly applied, as it will only require same cost as only one
- * transformation after the overhead of merging.
- *
- * @param trans_a Inverse transformation matrix of first transformation.
- * @param off_a Offset of the first transformation.
- * @param trans_b Inverse transformation matrix of second transformation.
- * @param off_b Offset of the second transformation.
- * @param p_trans_out Pointer which receives the output inverse transformation matrix.
- * @param p_off_out Pointer which receives the output offset.
+ * @param plane Plane to use for the transformation.
+ * @param vector Vector to transform.
+ * @return Transformed vector.
  */
-static inline void merge_transformations_reverse(const real3x3_t trans_a, const real3_t off_a, const real3x3_t trans_b,
-                                                 const real3_t off_b, real3x3_t *p_trans_out, real3_t *p_off_out)
+static inline real3_t transformation_plane_transform_vector(const transformation_plane_t *plane, const real3_t vector)
 {
-    *p_trans_out = real3x3_matmul(trans_b, trans_a);
-    *p_off_out = real3x3_vecmul(trans_a, real3_add(off_a, real3x3_vecmul(trans_b, off_b)));
+    // Reflect across the plane
+    return real3_sub(vector, real3_mul1(plane->normal, 2 * real3_dot(plane->normal, vector)));
 }
-
-#endif // TRANSFORMATION_H

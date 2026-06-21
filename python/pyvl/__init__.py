@@ -11,6 +11,7 @@ from pyvl.cvl import INVALID_ID as INVALID_ID
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Mesh as Mesh
 from pyvl.cvl import ReferenceFrame as ReferenceFrame
+from pyvl.cvl import TransformationPlane as TransformationPlane
 
 # File IO
 from pyvl.fio.io_common import HirearchicalMap as HirearchicalMap

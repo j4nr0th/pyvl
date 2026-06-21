@@ -13,44 +13,7 @@
  */
 static bool init_time_dependent(pyvl_rf_time_dependent_t *const field, PyObject *value)
 {
-    if (value == NULL || Py_IsNone(value))
-    {
-        // Is it None/missing?
-        field->type = PYVL_RF_CONSTANT;
-        field->value.constant = (real3_t){.x = 0, .y = 0, .z = 0};
-        return true;
-    }
-
-    if (PyCallable_Check(value))
-    {
-        // Do we have a callable?
-        field->type = PYVL_RF_CALLABLE;
-        field->value.callable = value;
-        Py_INCREF(value);
-        return true;
-    }
-
-    // Well, it should be a vector of 3 entries
-    PyArrayObject *const arr =
-        (PyArrayObject *)PyArray_FromAny(value, PyArray_DescrFromType(NPY_DOUBLE), 1, 1, NPY_ARRAY_C_CONTIGUOUS, NULL);
-    if (!arr)
-    {
-        PyErr_SetString(PyExc_TypeError, "Field must be a callable or a sequence of 3 numbers.");
-        return false;
-    }
-    const npy_intp n = PyArray_SIZE(arr);
-    if (n != 3)
-    {
-        Py_DECREF(arr);
-        PyErr_Format(PyExc_ValueError, "Expected 3 elements, got %d.", (int)n);
-        return false;
-    }
-    const double *const p = PyArray_DATA(arr);
-    // Extract the constant value
-    field->type = PYVL_RF_CONSTANT;
-    field->value.constant = (real3_t){.x = p[0], .y = p[1], .z = p[2]};
-    Py_DECREF(arr);
-    return true;
+    return pyvl_vec_time_dependent_init(field, value, "field");
 }
 
 /**
@@ -60,74 +23,19 @@ static bool init_time_dependent(pyvl_rf_time_dependent_t *const field, PyObject 
  * @param time_arg Time to evaluate at. Should be PyFloat.
  * @return Array of 3 doubles with the value of the field at the specified time.
  */
-static PyArrayObject *evaluate_time_dependent_callable(const pyvl_rf_time_dependent_t *field, PyObject *const time_arg)
-{
-    PyObject *const res = PyObject_Vectorcall(field->value.callable, (PyObject *const[1]){time_arg}, 1, NULL);
-    if (!res)
-        return NULL;
-
-    PyArrayObject *const arr =
-        (PyArrayObject *)PyArray_FROMANY(res, NPY_DOUBLE, 1, 1, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED);
-    Py_DECREF(res);
-
-    if (!arr)
-    {
-        PyErr_SetString(PyExc_TypeError, "Callable must return a sequence of 3 numbers.");
-        return NULL;
-    }
-    const npy_intp n = PyArray_SIZE(arr);
-    if (n != 3)
-    {
-        Py_DECREF(arr);
-        PyErr_Format(PyExc_ValueError, "Expected 3 elements, got %d.", (int)n);
-        return NULL;
-    }
-    return arr;
-}
-
 static bool evaluate_time_dependent_c(const pyvl_rf_time_dependent_t *field, PyObject *t, real3_t *val)
 {
-    if (field->type == PYVL_RF_CONSTANT)
-    {
-        *val = field->value.constant;
-        return true;
-    }
-
-    PyArrayObject *const arr = evaluate_time_dependent_callable(field, t);
-    if (!arr)
-        return false;
-
-    *val = *(real3_t *)PyArray_DATA(arr);
-    Py_DECREF(arr);
-
-    return true;
+    return pyvl_vec_time_dependent_eval_c(field, t, val);
 }
 
 static PyObject *evaluate_time_dependent_python(const pyvl_rf_time_dependent_t *field, PyObject *t)
 {
-    if (field->type == PYVL_RF_CALLABLE)
-    {
-        return (PyObject *)evaluate_time_dependent_callable(field, t);
-    }
-    static const npy_intp size = 3;
-    PyArrayObject *const out = (PyArrayObject *)PyArray_SimpleNew(1, &size, NPY_DOUBLE);
-    if (!out)
-        return NULL;
-    real3_t *const p_out = PyArray_DATA(out);
-    *p_out = field->value.constant;
-    return (PyObject *)out;
+    return pyvl_vec_time_dependent_eval_py(field, t);
 }
 
 static void clear_time_dependent(pyvl_rf_time_dependent_t *field)
 {
-    if (field->type == PYVL_RF_CALLABLE)
-    {
-        // Decref
-        Py_DECREF(field->value.callable);
-    }
-    // Clear it and set it to zero
-    field->type = PYVL_RF_CONSTANT;
-    field->value.constant = (real3_t){0};
+    pyvl_vec_time_dependent_clear(field);
 }
 
 static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
@@ -162,10 +70,10 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
         return NULL;
 
     // Set this so that the clear function is guaranteed to work correctly.
-    this->position.type = PYVL_RF_CONSTANT;
-    this->velocity.type = PYVL_RF_CONSTANT;
-    this->orientation.type = PYVL_RF_CONSTANT;
-    this->rotation.type = PYVL_RF_CONSTANT;
+    this->position.type = PYVL_VEC_CONSTANT;
+    this->velocity.type = PYVL_VEC_CONSTANT;
+    this->orientation.type = PYVL_VEC_CONSTANT;
+    this->rotation.type = PYVL_VEC_CONSTANT;
 
     if (!init_time_dependent(&this->position, offset_arg) || !init_time_dependent(&this->orientation, theta_arg) ||
         !init_time_dependent(&this->velocity, velocity_arg) || !init_time_dependent(&this->rotation, rotation_arg))
@@ -186,13 +94,13 @@ static PyObject *pyvl_reference_frame_new(PyTypeObject *type, PyObject *args, Py
 static int pyvl_reference_frame_traverse(PyObject *self, const visitproc visit, void *arg)
 {
     const PyVL_ReferenceFrame *const this = (PyVL_ReferenceFrame *)self;
-    if (this->position.type == PYVL_RF_CALLABLE)
+    if (this->position.type == PYVL_VEC_CALLABLE)
         Py_VISIT(this->position.value.callable);
-    if (this->velocity.type == PYVL_RF_CALLABLE)
+    if (this->velocity.type == PYVL_VEC_CALLABLE)
         Py_VISIT(this->velocity.value.callable);
-    if (this->orientation.type == PYVL_RF_CALLABLE)
+    if (this->orientation.type == PYVL_VEC_CALLABLE)
         Py_VISIT(this->orientation.value.callable);
-    if (this->rotation.type == PYVL_RF_CALLABLE)
+    if (this->rotation.type == PYVL_VEC_CALLABLE)
         Py_VISIT(this->rotation.value.callable);
     Py_VISIT(this->parent);
     return 0;
@@ -216,8 +124,8 @@ static void pyvl_reference_frame_dealloc(PyObject *self)
 static PyObject *pyvl_reference_frame_repr(PyObject *self)
 {
     const PyVL_ReferenceFrame *this = (PyVL_ReferenceFrame *)self;
-    const char *pos_str = this->position.type == PYVL_RF_CALLABLE ? "<callable>" : "(constant)";
-    const char *ori_str = this->orientation.type == PYVL_RF_CALLABLE ? "<callable>" : "(constant)";
+    const char *pos_str = this->position.type == PYVL_VEC_CALLABLE ? "<callable>" : "(constant)";
+    const char *ori_str = this->orientation.type == PYVL_VEC_CALLABLE ? "<callable>" : "(constant)";
     PyObject *out;
     if (this->parent)
     {
@@ -296,7 +204,7 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
             result = false;
             break;
         }
-        if (this->position.type == PYVL_RF_CONSTANT)
+        if (this->position.type == PYVL_VEC_CONSTANT)
         {
             const real3_t dr = real3_sub(this->position.value.constant, that->position.value.constant);
             if (real3_dot(dr, dr) > 1e-20)
@@ -310,7 +218,7 @@ static PyObject *pyvl_reference_frame_rich_compare(PyObject *self, PyObject *oth
             result = false;
             break;
         }
-        if (this->orientation.type == PYVL_RF_CONSTANT)
+        if (this->orientation.type == PYVL_VEC_CONSTANT)
         {
             const real3_t dr = real3_sub(this->orientation.value.constant, that->orientation.value.constant);
             if (real3_dot(dr, dr) > 1e-20)
@@ -340,8 +248,8 @@ static PyObject *pyvl_reference_frame_get_is_moving(PyObject *self, void *Py_UNU
     for (const PyVL_ReferenceFrame *rf = (PyVL_ReferenceFrame *)self; rf; rf = rf->parent)
     {
         // If either velocity or rotation are not constant and zero, it is moving.
-        if (!(rf->velocity.type == PYVL_RF_CONSTANT && real3_all_zero(rf->velocity.value.constant)) ||
-            !(rf->rotation.type == PYVL_RF_CONSTANT && real3_all_zero(rf->rotation.value.constant)))
+        if (!(rf->velocity.type == PYVL_VEC_CONSTANT && real3_all_zero(rf->velocity.value.constant)) ||
+            !(rf->rotation.type == PYVL_VEC_CONSTANT && real3_all_zero(rf->rotation.value.constant)))
             Py_RETURN_TRUE;
     }
 
@@ -1392,7 +1300,7 @@ static PyObject *pyvl_reference_frame_rotate_x(PyObject *self, PyTypeObject *def
     if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    if (this->orientation.type == PYVL_RF_CALLABLE)
+    if (this->orientation.type == PYVL_VEC_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
         return NULL;
@@ -1427,7 +1335,7 @@ static PyObject *pyvl_reference_frame_rotate_y(PyObject *self, PyTypeObject *def
     if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    if (this->orientation.type == PYVL_RF_CALLABLE)
+    if (this->orientation.type == PYVL_VEC_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
         return NULL;
@@ -1462,7 +1370,7 @@ static PyObject *pyvl_reference_frame_rotate_z(PyObject *self, PyTypeObject *def
     if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    if (this->orientation.type == PYVL_RF_CALLABLE)
+    if (this->orientation.type == PYVL_VEC_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot rotate a ReferenceFrame with time-varying orientation.");
         return NULL;
@@ -1497,7 +1405,7 @@ static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyTypeObject *
     if (!ensure_rf_and_state(self, defining_class, &this, &state))
         return NULL;
 
-    if (this->position.type == PYVL_RF_CALLABLE)
+    if (this->position.type == PYVL_VEC_CALLABLE)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot change offset of a ReferenceFrame with time-varying position.");
         return NULL;
@@ -1532,7 +1440,7 @@ static PyObject *pyvl_reference_frame_with_offset(PyObject *self, PyTypeObject *
     new->velocity = this->velocity;
     new->orientation = this->orientation;
     new->rotation = this->rotation;
-    new->position.type = PYVL_RF_CONSTANT;
+    new->position.type = PYVL_VEC_CONSTANT;
     new->position.value.constant = (real3_t){.x = p_in[0], .y = p_in[1], .z = p_in[2]};
     Py_XINCREF(this->parent);
     new->parent = this->parent;
@@ -1583,37 +1491,7 @@ static PyObject *pyvl_matrix_to_angles(PyObject *Py_UNUSED(module), PyObject *ar
 static bool pyvl_rf_serialize_entry(const pyvl_rf_time_dependent_t *entry, const char *key, PyObject *hmap,
                                     PyObject *serializer)
 {
-    PyObject *serial = NULL;
-    const npy_intp sz = 3;
-    switch (entry->type)
-    {
-    case PYVL_RF_CONSTANT:
-        // Simple, create numpy array and write it
-        serial = PyArray_SimpleNew(1, &sz, NPY_DOUBLE);
-        if (serial)
-            *(real3_t *)PyArray_DATA((PyArrayObject *)serial) = entry->value.constant;
-        break;
-
-    case PYVL_RF_CALLABLE:
-        // Convert callable to string
-        serial = PyObject_Vectorcall(serializer, &entry->value.callable, 1, NULL);
-        if (serial)
-        {
-            if (!PyUnicode_Check(serial))
-            {
-                PyErr_Format(PyExc_TypeError, "Serializer did not return a string, but a %s", Py_TYPE(serial)->tp_name);
-                Py_DECREF(serial);
-                serial = NULL;
-            }
-        }
-        break;
-    }
-    if (!serial)
-        return false;
-
-    const int insertion_res = PyMapping_SetItemString(hmap, key, serial);
-    Py_DECREF(serial);
-    return insertion_res == 0;
+    return pyvl_vec_time_dependent_serialize(entry, key, hmap, serializer);
 }
 
 static PyObject *pyvl_reference_frame_save(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
@@ -1657,54 +1535,7 @@ static PyObject *pyvl_reference_frame_save(PyObject *self, PyTypeObject *definin
 static bool pyvl_rf_deserialize_entry(const char *key, PyObject *hmap, PyObject *deserializer,
                                       pyvl_rf_time_dependent_t *entry)
 {
-    PyObject *const value = PyMapping_GetItemString(hmap, key);
-    if (!value)
-        return false;
-
-    if (PyArray_Check(value))
-    {
-        const PyArrayObject *const arr = (PyArrayObject *)value;
-        if (check_input_array(arr, 1, (npy_intp[1]){3}, NPY_DOUBLE, 0, key) < 0)
-        {
-            Py_DECREF(value);
-            return false;
-        }
-
-        *entry = (pyvl_rf_time_dependent_t){.type = PYVL_RF_CONSTANT,
-                                            .value = {.constant = {
-                                                          .x = *(double *)PyArray_GETPTR1(arr, 0),
-                                                          .y = *(double *)PyArray_GETPTR1(arr, 1),
-                                                          .z = *(double *)PyArray_GETPTR1(arr, 2),
-                                                      }}};
-        Py_DECREF(value);
-        return true;
-    }
-
-    if (PyUnicode_Check(value))
-    {
-        PyObject *const deserialized = PyObject_Vectorcall(deserializer, &value, 1, NULL);
-        Py_DECREF(value);
-        if (!deserializer)
-        {
-            return false;
-        }
-
-        if (!PyCallable_Check(deserialized))
-        {
-            PyErr_Format(PyExc_TypeError, "The deserializer did not produce a callable, but a %s",
-                         Py_TYPE(deserialized)->tp_name);
-            Py_DECREF(deserialized);
-            return false;
-        }
-
-        *entry = (pyvl_rf_time_dependent_t){.type = PYVL_RF_CALLABLE, .value = {.callable = deserialized}};
-        return true;
-    }
-
-    PyErr_Format(PyExc_TypeError, "Entry %s was neither a string nor an array and was instead %s.", key,
-                 Py_TYPE(value)->tp_name);
-    Py_DECREF(value);
-    return false;
+    return pyvl_vec_time_dependent_deserialize(key, hmap, deserializer, entry);
 }
 
 static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *args, const Py_ssize_t nargs,
@@ -1832,7 +1663,7 @@ static const PyVL_ReferenceFrame *nearest_non_constant_reference_frame(const PyV
     while (current != ancestor)
     {
         // Can we use the current one?
-        if (current->orientation.type != PYVL_RF_CONSTANT || current->position.type != PYVL_RF_CONSTANT)
+        if (current->orientation.type != PYVL_VEC_CONSTANT || current->position.type != PYVL_VEC_CONSTANT)
             used = current->parent;
 
         // Go down the hierarchy towards this
@@ -1877,13 +1708,13 @@ static PyObject *pyvl_reference_frame_moved_relative_to(PyObject *self, PyTypeOb
     // Keep on moving down the hierarchy until we either reach the ancestor or a RF that is not moving constantly
     while (this != ancestor)
     {
-        if (this->orientation.type != PYVL_RF_CONSTANT || this->position.type != PYVL_RF_CONSTANT)
+        if (this->orientation.type != PYVL_VEC_CONSTANT || this->position.type != PYVL_VEC_CONSTANT)
             break;
         this = this->parent;
     }
     while (that != ancestor)
     {
-        if (that->orientation.type != PYVL_RF_CONSTANT || that->position.type != PYVL_RF_CONSTANT)
+        if (that->orientation.type != PYVL_VEC_CONSTANT || that->position.type != PYVL_VEC_CONSTANT)
             break;
         that = that->parent;
     }

@@ -3,6 +3,7 @@
 #include <numpy/ndarrayobject.h>
 // Must be below the NUMPY include
 #include "core/flow_solver.h"
+#include "transformationplaneobject.h"
 
 #include <cpyutl.h>
 
@@ -14,6 +15,7 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
 
     double tol;
     PyObject *py_pos, *py_circ, *py_target;
+    const PyVL_TransformationPlane *symmetry_plane = NULL;
     PyArrayObject *out_velocity = NULL;
     Py_ssize_t n_threads = 1;
 
@@ -24,6 +26,10 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "quad_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "quad_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .p_val = (void *)&symmetry_plane,
+                 .kwname = "symmetry_plane",
+                 .optional = true},
                 {
                     .type = CPYARG_TYPE_PYTHON,
                     .p_val = (void *)&out_velocity,
@@ -40,6 +46,22 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     {
         PyErr_SetString(PyExc_TypeError, "n_threads must be non-negative");
         return NULL;
+    }
+
+    transformation_plane_t sym_plane;
+    bool has_symmetry = false;
+    if (symmetry_plane && !Py_IsNone((PyObject *)symmetry_plane))
+    {
+        if (!PyObject_TypeCheck((PyObject *)symmetry_plane, state->transformation_plane_type))
+        {
+            PyErr_SetString(PyExc_TypeError, "symmetry_plane must be a TransformationPlane object");
+            return NULL;
+        }
+        if (!pyvl_transformation_plane_ensure_time_invariant(symmetry_plane))
+            return NULL;
+        sym_plane.normal = symmetry_plane->normal.value.constant;
+        sym_plane.origin = symmetry_plane->origin.value.constant;
+        has_symmetry = true;
     }
 
     // Convert the input array-likes to arrays
@@ -103,8 +125,8 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
 
     real3_t *const velocity = PyArray_DATA(out_velocity);
     // Clear the output
+    Py_BEGIN_ALLOW_THREADS;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
-
     for (size_t i = 0; i < n_elements; ++i)
     {
         const real_t circulation = circulations[i];
@@ -132,16 +154,29 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
                 const real3_t ind =
                     real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
 
-                // Updates to these must be atomic
-                velocity[j].x += ind.x;
-                velocity[j].y += ind.y;
-                velocity[j].z += ind.z;
+                velocity[j] = real3_add(velocity[j], ind);
+            }
+
+            if (has_symmetry)
+            {
+                // We need to apply symmetry
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
+                                                  velocity, sym_plane) num_threads(n_threads) schedule(static)
+                for (unsigned j = 0; j < n_targets; ++j)
+                {
+                    const real3_t ind = real3_mul1(
+                        compute_filament_induction(tol, pos_start, pos_end, direction,
+                                                   transformation_plane_transform_position(&sym_plane, target[j])),
+                        circulation);
+
+                    velocity[j] = real3_add(velocity[j], ind);
+                }
             }
 
             pos_start = pos_end;
         }
     }
-
+    Py_END_ALLOW_THREADS;
     Py_DECREF(arr_target);
     Py_DECREF(arr_circ);
     Py_DECREF(arr_pos);
@@ -200,6 +235,7 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     PyObject *py_pos, *py_circ, *py_target, *py_normals;
     PyArrayObject *out_velocity = NULL;
     Py_ssize_t n_threads = 1;
+    const PyVL_TransformationPlane *symmetry_plane = NULL;
 
     // Parse arguments
     if (parse_arguments_check(
@@ -209,6 +245,12 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "quad_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_normals, .kwname = "target_normals"},
+                {
+                    .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&symmetry_plane,
+                    .kwname = "symmetry_plane",
+                    .optional = true,
+                },
                 {
                     .type = CPYARG_TYPE_PYTHON,
                     .p_val = (void *)&out_velocity,
@@ -225,6 +267,22 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     {
         PyErr_SetString(PyExc_TypeError, "n_threads must be non-negative");
         return NULL;
+    }
+
+    bool has_symmetry = false;
+    transformation_plane_t sym_plane;
+    if (symmetry_plane && !Py_IsNone((PyObject *)symmetry_plane))
+    {
+        if (!PyObject_TypeCheck((PyObject *)symmetry_plane, state->transformation_plane_type))
+        {
+            PyErr_SetString(PyExc_TypeError, "symmetry_plane must be a TransformationPlane object");
+            return NULL;
+        }
+        if (!pyvl_transformation_plane_ensure_time_invariant(symmetry_plane))
+            return NULL;
+        sym_plane.normal = symmetry_plane->normal.value.constant;
+        sym_plane.origin = symmetry_plane->origin.value.constant;
+        has_symmetry = true;
     }
 
     // Convert the input array-likes to arrays
@@ -296,8 +354,8 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
 
     real_t *const velocity = PyArray_DATA(out_velocity);
     // Clear the output
+    Py_BEGIN_ALLOW_THREADS;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
-
     for (size_t i = 0; i < n_elements; ++i)
     {
         const real_t circulation = circulations[i];
@@ -326,13 +384,30 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
                     real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
                 const real_t normal_induction = real3_dot(ind, normals[j]);
 
-                // Update to this must be atomic
                 velocity[j] += normal_induction;
+            }
+
+            if (has_symmetry)
+            {
+                // We need to apply symmetry
+#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
+                                                  velocity, normals, sym_plane) num_threads(n_threads)
+                for (unsigned j = 0; j < n_targets; ++j)
+                {
+                    const real3_t ind = real3_mul1(
+                        compute_filament_induction(tol, pos_start, pos_end, direction,
+                                                   transformation_plane_transform_position(&sym_plane, target[j])),
+                        circulation);
+                    const real_t normal_induction = real3_dot(ind, normals[j]);
+
+                    velocity[j] += normal_induction;
+                }
             }
 
             pos_start = pos_end;
         }
     }
+    Py_END_ALLOW_THREADS;
 
     Py_DECREF(arr_normals);
     Py_DECREF(arr_target);

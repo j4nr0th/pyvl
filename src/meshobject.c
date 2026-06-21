@@ -1,14 +1,12 @@
 #include "meshobject.h"
+#include "allocator.h"
 #include "core/flow_solver.h"
 #include "core/mesh.h"
-
+#include "geoidobject.h"
+#include "transformationplaneobject.h"
 #include <numpy/arrayobject.h>
 
-#include "allocator.h"
-
 // Should be the last to be included
-#include "geoidobject.h"
-
 #include <cpyutl.h>
 
 static PyObject *pyvl_mesh_str(PyObject *self)
@@ -483,6 +481,7 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
         return NULL;
 
     PyArrayObject *pos_array, *norm_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
+    PyVL_TransformationPlane *symmetry_plane = NULL;
     double tol;
     Py_ssize_t thrd_cnt = 1;
     if (parse_arguments_check(
@@ -501,6 +500,10 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
                  .type_check = &PyArray_Type,
                  .p_val = (void *)&norm_array},
                 {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "symmetry_plane",
+                 .p_val = (void *)&symmetry_plane,
+                 .optional = true},
+                {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "out",
                  .type_check = &PyArray_Type,
                  .p_val = (void *)&out_array,
@@ -515,6 +518,21 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
             },
             args, nargs, kwnames) < 0)
         return NULL;
+
+    transformation_plane_t sym_plane;
+    if (symmetry_plane != NULL && !Py_IsNone((PyObject *)symmetry_plane))
+    {
+        if (!PyObject_TypeCheck(symmetry_plane, state->transformation_plane_type))
+        {
+            PyErr_Format(PyExc_TypeError, "symmetry_plane must be a TransformationPlane or None, but was %s.",
+                         Py_TYPE(symmetry_plane)->tp_name);
+            return NULL;
+        }
+        if (!pyvl_transformation_plane_ensure_time_invariant(symmetry_plane))
+            return NULL;
+        sym_plane.origin = symmetry_plane->origin.value.constant;
+        sym_plane.normal = symmetry_plane->normal.value.constant;
+    }
 
     if (thrd_cnt < 1)
     {
@@ -582,8 +600,18 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
     real_t *restrict out_ptr = PyArray_DATA(out_array);
 
     Py_BEGIN_ALLOW_THREADS;
-    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           line_buffer, tol, thrd_cnt);
+    if (symmetry_plane == NULL || Py_IsNone((PyObject *)symmetry_plane))
+    {
+        // No symmetry
+        compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
+                               control_pts, line_buffer, tol, thrd_cnt);
+    }
+    else
+    {
+        // With symmetry
+        compute_line_induction_symmetry(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
+                                        control_pts, line_buffer, tol, &sym_plane, thrd_cnt);
+    }
     line_induction_to_normal_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets,
                                                this->mesh.surface_lines, this->mesh.n_lines, n_cpts, normals,
                                                line_buffer, out_ptr, thrd_cnt);
@@ -603,6 +631,7 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
         return NULL;
 
     PyArrayObject *pos_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
+    PyVL_TransformationPlane *symmetry_plane = NULL;
     double tol;
     Py_ssize_t thrd_cnt = 1;
     if (parse_arguments_check(
@@ -616,6 +645,10 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
                  .kwname = "control_points",
                  .type_check = &PyArray_Type,
                  .p_val = (void *)&in_array},
+                {.type = CPYARG_TYPE_PYTHON,
+                 .kwname = "symmetry_plane",
+                 .p_val = (void *)&symmetry_plane,
+                 .optional = true},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "out",
                  .type_check = &PyArray_Type,
@@ -631,6 +664,21 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
             },
             args, nargs, kwnames) < 0)
         return NULL;
+
+    transformation_plane_t sym_plane;
+    if (symmetry_plane != NULL && !Py_IsNone((PyObject *)symmetry_plane))
+    {
+        if (!PyObject_TypeCheck(symmetry_plane, state->transformation_plane_type))
+        {
+            PyErr_Format(PyExc_TypeError, "symmetry_plane must be a TransformationPlane or None, but was %s.",
+                         Py_TYPE(symmetry_plane)->tp_name);
+            return NULL;
+        }
+        if (!pyvl_transformation_plane_ensure_time_invariant(symmetry_plane))
+            return NULL;
+        sym_plane.normal = symmetry_plane->normal.value.constant;
+        sym_plane.origin = symmetry_plane->origin.value.constant;
+    }
 
     if (thrd_cnt < 1)
     {
@@ -690,8 +738,18 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
     const real3_t *positions = PyArray_DATA(pos_array);
     real3_t *out_ptr = PyArray_DATA(out_array);
     Py_BEGIN_ALLOW_THREADS;
-    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           line_buffer, tol, thrd_cnt);
+    if (symmetry_plane == NULL || Py_IsNone((PyObject *)symmetry_plane))
+    {
+        // No symmetry
+        compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
+                               control_pts, line_buffer, tol, thrd_cnt);
+    }
+    else
+    {
+        // With symmetry
+        compute_line_induction_symmetry(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
+                                        control_pts, line_buffer, tol, &sym_plane, thrd_cnt);
+    }
     line_induction_to_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets, this->mesh.surface_lines,
                                         this->mesh.n_lines, n_cpts, line_buffer, out_ptr, thrd_cnt);
     Py_END_ALLOW_THREADS;
@@ -1216,82 +1274,6 @@ static PyObject *pyvl_mesh_from_lines(PyObject *type, PyObject *args, PyObject *
     return (PyObject *)this;
 }
 
-static PyObject *pyvl_mesh_line_induction_matrix(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
-                                                 const Py_ssize_t nargs, const PyObject *kwnames)
-{
-
-    const PyVL_MeshObject *this;
-    const module_state_t *state;
-    if (!ensure_mesh_and_state(defining_class, self, &this, &state))
-        return NULL;
-    PyArrayObject *pos_array, *in_array, *out_array = NULL;
-    double tol;
-    Py_ssize_t thrd_cnt = 1;
-    if (parse_arguments_check(
-            (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "positions",
-                 .type_check = &PyArray_Type,
-                 .p_val = (void *)&pos_array},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "control_points",
-                 .type_check = &PyArray_Type,
-                 .p_val = (void *)&in_array},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .kwname = "out",
-                 .type_check = &PyArray_Type,
-                 .p_val = (void *)&out_array,
-                 .optional = true},
-                {.type = CPYARG_TYPE_SSIZE, .kwname = "thread_count", .p_val = &thrd_cnt, .optional = true},
-                {}, // sentinel
-            },
-            args, nargs, kwnames) < 0)
-        return NULL;
-
-    if (thrd_cnt < 1)
-    {
-        PyErr_SetString(PyExc_ValueError, "Thread count must be at least 1.");
-        return NULL;
-    }
-
-    if (check_input_array(pos_array, 2, (const npy_intp[2]){this->mesh.n_points, 3}, NPY_DOUBLE,
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "Position array") < 0 ||
-        check_input_array(in_array, 2, (const npy_intp[2]){0, 3}, NPY_DOUBLE,
-                          NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED, "Control point array") < 0)
-        return NULL;
-
-    const npy_intp *dims = PyArray_DIMS(in_array);
-    const unsigned n_cpts = dims[0];
-
-    const npy_intp out_dims[3] = {n_cpts, this->mesh.n_lines, 3};
-    if (out_array)
-    {
-        // If None is second arg, treat it as if it is not present at all.
-        if (check_input_array(out_array, 3, out_dims, NPY_DOUBLE,
-                              NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_ALIGNED | NPY_ARRAY_WRITEABLE, "Output tensor") < 0)
-            return NULL;
-        Py_INCREF(out_array);
-    }
-    else
-    {
-        out_array = (PyArrayObject *)PyArray_SimpleNew(3, out_dims, NPY_DOUBLE);
-        if (!out_array)
-            return NULL;
-    }
-
-    // Now I can be sure the arrays are well-behaved
-    const real3_t *control_pts = PyArray_DATA(in_array);
-    const real3_t *positions = PyArray_DATA(pos_array);
-    real3_t *out_ptr = PyArray_DATA(out_array);
-    Py_BEGIN_ALLOW_THREADS;
-    compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts, control_pts,
-                           out_ptr, tol, thrd_cnt);
-    Py_END_ALLOW_THREADS;
-
-    return (PyObject *)out_array;
-}
-
 static PyObject *pyvl_mesh_line_forces(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                        const Py_ssize_t nargs, const PyObject *kwnames)
 {
@@ -1504,6 +1486,7 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
         return NULL;
 
     double vortex_tol;
+    PyVL_TransformationPlane *symmetry_plane = NULL;
     PyArrayObject *pos_arr, *cp_arr, *circ_arr, *out_arr = NULL;
     Py_ssize_t n_threads = 1;
 
@@ -1534,6 +1517,12 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
                 },
                 {
                     .type = CPYARG_TYPE_PYTHON,
+                    .p_val = (void *)&symmetry_plane,
+                    .kwname = "symmetry_plane",
+                    .optional = true,
+                },
+                {
+                    .type = CPYARG_TYPE_PYTHON,
                     .p_val = (void *)&out_arr,
                     .kwname = "out",
                     .optional = true,
@@ -1548,6 +1537,23 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
             },
             args, nargs, kwnames) < 0)
         return NULL;
+
+    transformation_plane_t sym_plane;
+    bool has_symmetry = false;
+    if (symmetry_plane != NULL && !Py_IsNone((PyObject *)symmetry_plane))
+    {
+        if (!PyObject_TypeCheck(symmetry_plane, state->transformation_plane_type))
+        {
+            PyErr_Format(PyExc_TypeError, "symmetry_plane must be a TransformationPlane or None, but was %s.",
+                         Py_TYPE(symmetry_plane)->tp_name);
+            return NULL;
+        }
+        if (!pyvl_transformation_plane_ensure_time_invariant(symmetry_plane))
+            return NULL;
+        sym_plane.normal = symmetry_plane->normal.value.constant;
+        sym_plane.origin = symmetry_plane->origin.value.constant;
+        has_symmetry = true;
+    }
 
     // Check vortex tol is valid
     if (vortex_tol < 0)
@@ -1620,6 +1626,8 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
     const real_t *const restrict circulations = PyArray_DATA(circ_arr);
     real3_t *const restrict out = PyArray_DATA(out_arr);
     // Clear the output
+    Py_BEGIN_ALLOW_THREADS;
+
     memset(out, 0, sizeof(*out) * cp_cnt);
 
     // For each line
@@ -1648,7 +1656,7 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
 
         // For each of the target points
 #pragma omp parallel for default(none) num_threads(n_threads)                                                          \
-    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt)
+    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt, has_symmetry, sym_plane)
         for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
         {
             const real3_t cp = control_points[i_cp];
@@ -1656,12 +1664,28 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
             // Compute induction and scale it by circulation
             const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
 
-            // Update the result atomically
-            out[i_cp].x += ind.x;
-            out[i_cp].y += ind.y;
-            out[i_cp].z += ind.z;
+            // Update the result
+            out[i_cp] = real3_add(out[i_cp], ind);
+        }
+
+        if (!has_symmetry)
+            continue;
+
+        // Now we deal with the symmetry points
+#pragma omp parallel for default(none) num_threads(n_threads)                                                          \
+    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt, sym_plane)
+        for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
+        {
+            const real3_t cp = transformation_plane_transform_position(&sym_plane, control_points[i_cp]);
+
+            // Compute induction and scale it by circulation
+            const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
+
+            // Update the result
+            out[i_cp] = real3_add(out[i_cp], ind);
         }
     }
+    Py_END_ALLOW_THREADS;
 
     return (PyObject *)out_arr;
 }
@@ -1784,12 +1808,6 @@ static PyMethodDef pyvl_mesh_methods[] = {
         .ml_meth = (void *)pyvl_mesh_from_lines,
         .ml_flags = METH_FASTCALL | METH_CLASS | METH_KEYWORDS,
         .ml_doc = "Create line-only mesh from line connectivity.",
-    },
-    {
-        .ml_name = "line_induction_matrix",
-        .ml_meth = (void *)pyvl_mesh_line_induction_matrix,
-        .ml_flags = METH_FASTCALL | METH_KEYWORDS | METH_METHOD,
-        .ml_doc = "Compute an induction matrix for the mesh based on line circulations.",
     },
     {
         .ml_name = "line_forces",

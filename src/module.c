@@ -3,6 +3,7 @@
 #include "geoidobject.h"
 #include "meshobject.h"
 #include "referenceframeobject.h"
+#include "transformationplaneobject.h"
 
 #include "methods.h"
 #include <numpy/arrayobject.h>
@@ -49,6 +50,7 @@ static int cvl_module_add_types(PyObject *mod)
     } types_to_add[] = {
         {&pyvl_geoid_typespec, &state->geoid_type},
         {&pyvl_reference_frame_typespec, &state->rf_type},
+        {&pyvl_transformation_plane_typespec, &state->transformation_plane_type},
         {&pyvl_mesh_typespec, &state->mesh_type},
         {0},
     };

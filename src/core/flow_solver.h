@@ -6,6 +6,7 @@
 #define FLOW_SOLVER_H
 
 #include "solver_state.h"
+#include "transformation.h"
 
 real3_t compute_mesh_line_induction(const real3_t *restrict positions, real3_t control_point, geo_id_t i_line,
                                     const mesh_t *mesh, real_t tol);
@@ -31,6 +32,13 @@ void compute_line_induction(unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, 
                             unsigned n_positions, const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
                             unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
                             real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), real_t tol, unsigned n_threads);
+
+void compute_line_induction_symmetry(unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
+                                     unsigned n_positions,
+                                     const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
+                                     unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
+                                     real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), real_t tol,
+                                     const transformation_plane_t *symmetry_plane, unsigned n_threads);
 
 void line_induction_to_surface_induction(unsigned n_surfaces,
                                          const unsigned CVL_ARRAY_ARG(surface_offsets, static restrict n_surfaces + 1),
