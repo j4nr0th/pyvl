@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 
 from pyvl._typing import CallableDeserializer, CallableSerializer
+from pyvl.cvl import TransformationPlane
 from pyvl.fio.io_common import HirearchicalMap
 from pyvl.fio.type_resolution import flow_conditions_from_serial
 from pyvl.flow_conditions import FlowConditions
@@ -159,6 +160,9 @@ class ModelSettings:
     This becomes important if the two panels of either geometry or wake approach each
     other, as the induction might become too large and make the results unstable.
     """
+
+    symmetry_plane: TransformationPlane | None = None
+    """Optional symmetry plane used when computing induced velocities."""
 
     def save(self) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.

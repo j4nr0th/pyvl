@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
-from pyvl.cvl import quad_induction, quad_normal_induction
+from pyvl.cvl import TransformationPlane, quad_induction, quad_normal_induction
 from pyvl.fio.io_common import HirearchicalMap
 
 
@@ -80,6 +80,7 @@ class WakeState:
         self,
         tol: float,
         positions: npt.NDArray[np.double],
+        symmetry_plane: TransformationPlane | None = None,
         out_velocity: npt.NDArray[np.double] | None = None,
         n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
@@ -94,6 +95,7 @@ class WakeState:
             quad_positions=self.quad_positions[: self.quad_count],
             quad_circulations=self.quad_circulations[: self.quad_count],
             target_positions=positions,
+            symmetry_plane=symmetry_plane,
             out_velocity=out_velocity,
             n_threads=n_threads,
         )
@@ -103,6 +105,7 @@ class WakeState:
         tol: float,
         control_pts: npt.NDArray[np.double],
         normals: npt.NDArray[np.double],
+        symmetry_plane: TransformationPlane | None = None,
         out_velocity: npt.NDArray[np.double] | None = None,
         n_threads: int = 1,
     ) -> npt.NDArray[np.double]:
@@ -118,6 +121,7 @@ class WakeState:
             quad_circulations=self.quad_circulations[: self.quad_count],
             target_positions=control_pts,
             target_normals=normals,
+            symmetry_plane=symmetry_plane,
             out_velocity=out_velocity,
             n_threads=n_threads,
         )

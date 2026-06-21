@@ -1,7 +1,5 @@
 """Test the solver module functions."""
 
-from unittest.mock import patch
-
 import numpy as np
 import pytest
 from pyvl.cvl import (
@@ -22,6 +20,7 @@ from pyvl.settings import (
 from pyvl.solver import (
     OutputSettings,
     SolverState,
+    SolverSystem,
     _compute_induced_velocity,
     run_solver,
     update_simulation_state,
@@ -29,17 +28,23 @@ from pyvl.solver import (
 from pyvl.wake import WakeState
 
 
-@pytest.fixture
-def basic_setup():
-    """Set up a minimal geometry."""
+def make_square_geometry(
+    label: str = "test_geo", reference_frame: ReferenceFrame | None = None
+) -> Geometry:
+    """Create a simple two-triangle square geometry."""
     points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
     connectivity = [
         np.array([0, 1, 2], dtype=np.uint32),
         np.array([0, 2, 3], dtype=np.uint32),
     ]
     mesh = Mesh(len(points), connectivity)
-    rf = ReferenceFrame()
-    geo = Geometry("test_geo", rf, mesh, points)
+    return Geometry(label, reference_frame or ReferenceFrame(), mesh, points)
+
+
+@pytest.fixture
+def basic_setup():
+    """Set up a minimal geometry."""
+    geo = make_square_geometry()
     sim_geo = SimulationGeometry.from_geometries(geo)
 
     flow_cond = FlowConditionsUniform(1.0, 0.0, 0.0)
@@ -59,6 +64,114 @@ def test_run_solver(basic_setup):
     assert isinstance(results[0], SolverState)
 
 
+def test_solver_system_forwards_symmetry_plane():
+    """Check the solver system constructor uses the symmetry plane."""
+    plane = TransformationPlane((0.25, 0.0, 0.0), (1.0, 0.0, 0.0))
+    geometry = make_square_geometry()
+
+    system_with_plane = SolverSystem(
+        time=0.0,
+        tol=1e-6,
+        geo=[geometry],
+        symmetry_plane=plane,
+    )
+    system_without_plane = SolverSystem(
+        time=0.0,
+        tol=1e-6,
+        geo=[geometry],
+        symmetry_plane=None,
+    )
+
+    assert system_with_plane.symmetry_plane is plane
+    assert not np.allclose(
+        system_with_plane._self_induction_diags[geometry.label],
+        system_without_plane._self_induction_diags[geometry.label],
+    )
+
+
+def test_solver_system_updates_self_diagonal_on_global_motion():
+    """Check diagonal blocks are refreshed when a part moves globally under symmetry."""
+    plane = TransformationPlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    moving_frame = ReferenceFrame(theta=lambda t: (0.0, 0.0, t))
+    geometry = make_square_geometry(reference_frame=moving_frame)
+
+    system_with_plane = SolverSystem(
+        time=0.0,
+        tol=1e-6,
+        geo=[geometry],
+        symmetry_plane=plane,
+    )
+    before_with_plane = system_with_plane._self_induction_diags[geometry.label].copy()
+    system_with_plane.update(1.0)
+
+    system_without_plane = SolverSystem(
+        time=0.0,
+        tol=1e-6,
+        geo=[geometry],
+        symmetry_plane=None,
+    )
+    before_without_plane = system_without_plane._self_induction_diags[
+        geometry.label
+    ].copy()
+    system_without_plane.update(1.0)
+
+    np.testing.assert_array_equal(
+        before_without_plane, system_without_plane._self_induction_diags[geometry.label]
+    )
+    assert not np.array_equal(
+        before_with_plane, system_with_plane._self_induction_diags[geometry.label]
+    )
+
+
+def test_compute_induced_velocity_forwards_symmetry_plane(basic_setup):
+    """Check the induced-velocity helper forwards the symmetry plane to both calls."""
+    sim_geo, settings = basic_setup
+    plane = TransformationPlane((0.25, 0.0, 0.0), (1.0, 0.0, 0.0))
+    settings.model_settings.symmetry_plane = plane
+
+    geometry = make_square_geometry()
+    positions = geometry.positions
+    target = np.array([[0.25, 0.25, 0.25]], dtype=np.double)
+    line_circulation = geometry.msh.line_circulations(np.array([1.0, -0.5]))
+    wake = WakeState.empty(1).add_quads(
+        new_positions=np.array(
+            [
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+            ],
+            dtype=np.double,
+        ),
+        new_circulations=np.array([1.0], dtype=np.double),
+    )
+
+    result = _compute_induced_velocity(
+        time=0.0,
+        tol=settings.model_settings.vortex_limit,
+        mesh=geometry.msh,
+        positions=positions,
+        line_circulation=line_circulation,
+        wake=wake,
+        flow_cond=None,
+        target=target,
+        symmetry_plane=plane,
+    )
+
+    mesh_induced = geometry.msh.induction_velocity(
+        tol=settings.model_settings.vortex_limit,
+        positions=positions,
+        control_points=target,
+        line_circulation=line_circulation,
+        symmetry_plane=plane,
+    )
+    wake_induced = wake.induced_velocity(
+        tol=settings.model_settings.vortex_limit,
+        positions=target,
+        symmetry_plane=plane,
+    )
+
+    assert result.shape == target.shape
+    np.testing.assert_allclose(result, mesh_induced + wake_induced)
+
+
 def test_run_solver_with_output(basic_setup, tmp_path):
     """Check that the solver runs and produces output files with output settings."""
     sim_geo, settings = basic_setup
@@ -67,18 +180,7 @@ def test_run_solver_with_output(basic_setup, tmp_path):
         return str(tmp_path / f"out_{i}.json")
 
     output_settings = OutputSettings.simple_python("JSON", naming_callback)
-    with (
-        patch("scipy.linalg.lu_factor") as mock_lu_f,
-        patch("scipy.linalg.lu_solve") as mock_lu_s,
-    ):
-        mock_lu_f.return_value = (
-            np.eye(sim_geo.n_surfaces),
-            np.ones(sim_geo.n_surfaces, dtype=int),
-        )
-        mock_lu_s.return_value = np.zeros(sim_geo.n_surfaces)
-        results = run_solver(
-            sim_geo, settings, times=[0], output_settings=output_settings
-        )
+    results = run_solver(sim_geo, settings, times=[0], output_settings=output_settings)
 
     assert isinstance(results[0], SolverState)
     assert (tmp_path / "out_0.json").exists()
@@ -89,21 +191,40 @@ def test_update_simulation_state_basic(basic_setup):
     sim_geo, settings = basic_setup
 
     state = SolverState.create_new(0.0, sim_geo, settings)
-
-    with (
-        patch("scipy.linalg.lu_factor") as mock_lu_f,
-        patch("scipy.linalg.lu_solve") as mock_lu_s,
-    ):
-        mock_lu_f.return_value = (
-            np.eye(sim_geo.n_surfaces),
-            np.ones(sim_geo.n_surfaces, dtype=int),
-        )
-        mock_lu_s.return_value = np.zeros(sim_geo.n_surfaces)
-        new_state = update_simulation_state(state, 0.1)
+    new_state = update_simulation_state(state, 0.1)
 
     assert new_state.time == 0.1
     assert new_state.circulation.shape == (sim_geo.n_lines,)
     assert new_state.wake.capacity == settings.wake_settings.wake_element_capacity
+
+
+def test_update_simulation_state_forwards_symmetry_plane():
+    """Check diagonal blocks refresh during an update when symmetry is active."""
+    plane = TransformationPlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    moving_frame = ReferenceFrame(theta=lambda t: (0.0, 0.0, t))
+    geometry = make_square_geometry(reference_frame=moving_frame)
+    sim_geo = SimulationGeometry.from_geometries(geometry)
+    settings = SolverSettings(
+        flow_conditions=FlowConditionsUniform(0.0, 0.0, 1.0),
+        model_settings=ModelSettings(
+            vortex_limit=1e-6,
+            symmetry_plane=plane,
+        ),
+        wake_settings=WakeSettings(None, 1),
+    )
+    state = SolverState.create_new(0.0, sim_geo, settings)
+    system = SolverSystem(
+        time=0.0,
+        tol=settings.model_settings.vortex_limit,
+        geo=[geometry],
+        symmetry_plane=plane,
+    )
+
+    before = system._self_induction_diags[geometry.label].copy()
+    new_state = update_simulation_state(state, 1.0, system=system)
+
+    assert new_state.time == 1.0
+    assert not np.array_equal(before, system._self_induction_diags[geometry.label])
 
 
 def test_line_circulation():
@@ -438,3 +559,4 @@ if __name__ == "__main__":
     test_quad_induction_symmetry_plane_matches_mirrored_copy()
     test_quad_normal_induction_symmetry_plane_matches_mirrored_copy()
     test_quad_normal_induction_matches_velocity_projection()
+    test_solver_system_updates_self_diagonal_on_global_motion()

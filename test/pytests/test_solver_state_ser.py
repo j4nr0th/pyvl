@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 from pyvl import Geometry, ReferenceFrame, flow_conditions, settings
+from pyvl.cvl import TransformationPlane
 from pyvl.fio.io_common import PythonSerializer
 from pyvl.geometry import SimulationGeometry
 from pyvl.solver import SolverState
@@ -47,6 +48,7 @@ def test_solver_state_serialization():
         flow_conditions=flow_conditions.FlowConditionsUniform(10.0, 0, 0),
         model_settings=settings.ModelSettings(
             vortex_limit=1e-6,
+            symmetry_plane=TransformationPlane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         ),
         wake_settings=settings.WakeSettings(settings.WakeShedderUniform([3, 2, 1]), 31),
     )
@@ -63,6 +65,8 @@ def test_solver_state_serialization():
     assert pytest.approx(state_in.circulation) == state.circulation
     assert state_in.geometry == sim_geo
     assert pytest.approx(state_in.time) == t
+    assert state.settings.model_settings.symmetry_plane is not None
+    assert state_in.settings.model_settings.symmetry_plane is None
 
 
 if __name__ == "__main__":

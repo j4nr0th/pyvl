@@ -1241,7 +1241,7 @@ class ReferenceFrame:
         ...
 
     def moved_relative_to(
-        self, other: ReferenceFrame, t_start: float, t_end: float, tol: float
+        self, other: ReferenceFrame | None, t_start: float, t_end: float, tol: float
     ) -> bool:
         """Check if the reference frame had motion relative to another.
 
@@ -1261,8 +1261,9 @@ class ReferenceFrame:
 
         Parameters
         ----------
-        other : ReferenceFrame
-            Reference frame to compare it to.
+        other : ReferenceFrame or None
+            Reference frame to compare it to. ``None`` corresponds to the global reference
+            frame.
 
         t_start : float
             First time to compare to.
@@ -1290,7 +1291,8 @@ class ReferenceFrame:
         Parameters
         ----------
         other : ReferenceFrame or None
-            The reference frame to find the ancestor with.
+            The reference frame to find the ancestor with. ``None`` corresponds to the
+            global reference frame.
 
         Returns
         -------

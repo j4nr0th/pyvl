@@ -3,7 +3,7 @@
 import numpy as np
 import numpy.typing as npt
 import pytest
-from pyvl.cvl import Mesh, ReferenceFrame
+from pyvl.cvl import Mesh, ReferenceFrame, TransformationPlane
 from pyvl.geometry import Geometry
 from pyvl.solver import SolverSystem
 
@@ -13,6 +13,7 @@ def _compute_normal_rhs(
     vtol: float,
     real_circulations: dict[str, npt.NDArray[np.double]],
     time: float = 0.0,
+    symmetry_plane: TransformationPlane | None = None,
 ) -> dict[str, npt.NDArray[np.double]]:
     """Compute the RHS using the solver's own matrix assembly path.
 
@@ -42,6 +43,7 @@ def _compute_normal_rhs(
                     positions=source_pos,
                     control_points=target_cpts,
                     normals=target_normals,
+                    symmetry_plane=symmetry_plane,
                 )
             y[target_name] += nmat @ real_circulations[source_name]
     return y
@@ -256,8 +258,82 @@ def test_solver_system_mixed_motion_groups():
             )
 
 
+def test_solver_system_rotating_motion_assignments():
+    """Verify update stays correct when moving frames rotate between geometries."""
+    rng = np.random.default_rng(8128)
+    vtol = 1e-15
+    symmetry_plane = TransformationPlane(rng.random(3), rng.random(3))
+
+    points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
+    connectivity = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+
+    def make_translation_frame() -> ReferenceFrame:
+        offset0 = rng.uniform(-2, 2, 3)
+        offset1 = rng.uniform(-2, 2, 3)
+
+        def offset_fn(t: float) -> tuple[float, float, float]:
+            return tuple(offset0 + (offset1 - offset0) * t)
+
+        return ReferenceFrame(offset=offset_fn)
+
+    def make_rotation_frame() -> ReferenceFrame:
+        theta0 = rng.uniform(-np.pi / 4, np.pi / 4, 3)
+        theta1 = rng.uniform(-np.pi / 4, np.pi / 4, 3)
+
+        def theta_fn(t: float) -> tuple[float, float, float]:
+            return tuple(theta0 + (theta1 - theta0) * t)
+
+        return ReferenceFrame(theta=theta_fn)
+
+    frame_catalog = [
+        ReferenceFrame(),
+        make_translation_frame(),
+        make_rotation_frame(),
+    ]
+
+    geos = [
+        Geometry(
+            f"geo{i}",
+            frame_catalog[i],
+            Mesh(len(points), connectivity),
+            points,
+        )
+        for i in range(3)
+    ]
+
+    solver = SolverSystem(time=0.0, tol=vtol, geo=geos, symmetry_plane=symmetry_plane)
+
+    for step, t_new in enumerate((0.5, 1.0, 1.5, 2.0)):
+        assignment = (
+            frame_catalog[step % len(frame_catalog) :]
+            + frame_catalog[: step % len(frame_catalog)]
+        )
+        for geo, frame in zip(geos, assignment, strict=True):
+            object.__setattr__(geo, "reference_frame", frame)
+
+        solver.update(t_new=t_new)
+
+        x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
+        y = _compute_normal_rhs(
+            solver,
+            vtol,
+            x_true,
+            time=t_new,
+            symmetry_plane=symmetry_plane,
+        )
+
+        u = {label: values.copy() for label, values in y.items()}
+        solver.solve_inverse(u)
+
+        for label in u:
+            assert u[label] == pytest.approx(x_true[label], rel=1e-10), (
+                f"Failed at step {step} for {label}"
+            )
+
+
 if __name__ == "__main__":
     test_solver_system_inverse_consistency()
     test_solver_system_inverse_complex_moving()
     test_solver_system_multi_move_cycles()
     test_solver_system_mixed_motion_groups()
+    test_solver_system_rotating_motion_assignments()

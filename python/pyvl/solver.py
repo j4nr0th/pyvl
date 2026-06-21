@@ -13,7 +13,7 @@ import numpy.typing as npt
 import scipy.linalg as la
 
 from pyvl._typing import CallableDeserializer, CallableSerializer
-from pyvl.cvl import Mesh
+from pyvl.cvl import Mesh, TransformationPlane
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationFunction
 from pyvl.fio.io_hdf5 import serialize_hdf5
 from pyvl.fio.io_json import serialize_json
@@ -43,6 +43,8 @@ class SolverSystem:
     time: float
     # Distance below which the induction of a horse shoe vortex is set to zero.
     vortex_tol: float
+    # Symmetry plane used for induction calculations, if any.
+    symmetry_plane: TransformationPlane | None
 
     def _compute_induction_matrix(
         self, source: str, target: str, t: float, tol: float
@@ -86,7 +88,27 @@ class SolverSystem:
             positions=source_pos,
             control_points=target_cpts,
             normals=target_normals,
+            symmetry_plane=self.symmetry_plane,
             out=self._normal_induction_matrices[(source, target)],
+        )
+
+        return ind_mat
+
+    def _compute_self_induction_matrix(
+        self, part_name: str, t: float, tol: float
+    ) -> npt.NDArray[np.double]:
+        """Compute the self-induction matrix of a part at a given time."""
+        part = self._geometry[part_name]
+        part_pos = part.reference_frame.to_global_position(part.positions, time=t)
+        part_centers = part.reference_frame.to_global_position(part.centers, time=t)
+        part_normals = part.reference_frame.to_global_vector(part.normals, time=t)
+        ind_mat = part.msh.induction_matrix3(
+            tol=tol,
+            positions=part_pos,
+            control_points=part_centers,
+            normals=part_normals,
+            symmetry_plane=self.symmetry_plane,
+            out=self._self_induction_diags[part_name],
         )
 
         return ind_mat
@@ -96,7 +118,7 @@ class SolverSystem:
 
         Parameters
         ----------
-        t_end : float
+        t_new : float
             New time at which we need the matrices
 
         tol : float
@@ -106,14 +128,47 @@ class SolverSystem:
             # Done, no need to do anything :)
             return
 
-        if len(self._geometry) == 1:
+        if len(self._geometry) == 1 and self.symmetry_plane is None:
             # A single part never moves with respect to itself.
             return
+
+        global_motions: list[str] = list()
+        if self.symmetry_plane is not None:
+            # Check which parts need their self-induction updated
+            for i, part_name in enumerate(self._part_order):
+                part = self._geometry[part_name]
+                if not part.reference_frame.moved_relative_to(
+                    None, t_start=self.time, t_end=t_new, tol=self.vortex_tol
+                ):
+                    continue
+
+                # Moved, so recompute the self-induction part
+                self._compute_self_induction_matrix(
+                    part_name=part_name, t=t_new, tol=self.vortex_tol
+                )
+
+                # Also need to update all other induction matrices
+                for other_name in self._part_order:
+                    if other_name == part_name:
+                        continue
+                    self._compute_induction_matrix(
+                        source=part_name, target=other_name, t=t_new, tol=self.vortex_tol
+                    )
+                    self._compute_induction_matrix(
+                        source=other_name, target=part_name, t=t_new, tol=self.vortex_tol
+                    )
+
+                global_motions.append(part_name)
 
         # Groups together parts which do not move relative to each other
         static_groups: list[list[str]] = list()
 
+        # Check for motion of each part relative to others
         for i, part_1_name in enumerate(self._part_order):
+            if part_1_name in global_motions:
+                # Already know this one moves with respect to all others, so skip it.
+                continue
+
             part_1 = self._geometry[part_1_name]
             for part_2_name in self._part_order[i + 1 :]:
                 part_2 = self._geometry[part_2_name]
@@ -176,6 +231,8 @@ class SolverSystem:
                 key=lambda g: sum([self._geometry[n].msh.n_surfaces for n in g]),
                 reverse=True,
             )
+
+            # Preserve as many as we can that are not in the global motion group
             preserved = len(static_groups[0])
             # Create a new order, while preserving existing relative order within groups
             new_order: list[str] = list()
@@ -190,7 +247,9 @@ class SolverSystem:
                     reverse=True,
                 )
             )
-
+            # Finally add those in the global motions at the end, since they cannot be
+            # preserved.
+            new_order.extend(global_motions)
         # Update the current inverse
         self._update_inverse(new_order, max_preserved=preserved)
         # Update the time
@@ -256,8 +315,15 @@ class SolverSystem:
         # Done with the Gaussian elimination, now we can update the order
         self._part_order = new_order
 
-    def __init__(self, time: float, tol: float, geo: Iterable[Geometry]) -> None:
+    def __init__(
+        self,
+        time: float,
+        tol: float,
+        geo: Iterable[Geometry],
+        symmetry_plane: TransformationPlane | None = None,
+    ) -> None:
         self._diag_decomposes = dict()
+        self.symmetry_plane = symmetry_plane
         geo = tuple(geo)
         sizes = np.array([g.msh.n_surfaces for g in geo])
         order = np.argsort(-sizes)
@@ -267,14 +333,11 @@ class SolverSystem:
 
         # Compute the self-induction decompositions for all the elements
         self._self_induction_diags = {
-            g.label: g.msh.induction_matrix3(
-                tol=tol,
-                positions=g.positions,
-                control_points=g.centers,
-                normals=g.normals,
-            )
+            g.label: np.empty((g.msh.n_surfaces, g.msh.n_surfaces), np.double)
             for g in geo
         }
+        for g in geo:
+            self._compute_self_induction_matrix(g.label, time, tol)
 
         # Allocate the memory and compute the induction matrices
         self._normal_induction_matrices = dict()
@@ -505,6 +568,7 @@ class SolverState:
             wake=self.wake,
             flow_cond=None if induced_only else self.settings.flow_conditions,
             target=np.asarray(positions, np.double),
+            symmetry_plane=self.settings.model_settings.symmetry_plane,
             out=out,
             n_threads=n_threads,
         )
@@ -641,6 +705,7 @@ def _compute_induced_velocity(
     wake: WakeState,
     flow_cond: FlowConditions | None,
     target: npt.NDArray[np.double],
+    symmetry_plane: TransformationPlane | None = None,
     out: npt.NDArray[np.double] | None = None,
     tmp: npt.NDArray[np.double] | None = None,
     n_threads: int = 1,
@@ -708,12 +773,17 @@ def _compute_induced_velocity(
         positions=positions,
         control_points=target,
         line_circulation=line_circulation,
+        symmetry_plane=symmetry_plane,
         out=out,
         n_threads=n_threads,
     )
     # Compute wake induction
     wake.induced_velocity(
-        tol=tol, positions=target, out_velocity=tmp, n_threads=n_threads
+        tol=tol,
+        positions=target,
+        symmetry_plane=symmetry_plane,
+        out_velocity=tmp,
+        n_threads=n_threads,
     )
     # Add wake induction to the mesh induction
     np.add(out, tmp, out=out)
@@ -775,6 +845,7 @@ def update_simulation_state(
     geometry = state.geometry
     settings = state.settings
     tol = settings.model_settings.vortex_limit
+    symmetry_plane = settings.model_settings.symmetry_plane
     flow_cond = settings.flow_conditions
     wake = state.wake
 
@@ -837,6 +908,7 @@ def update_simulation_state(
         tol=tol,
         control_pts=cp_pos,
         normals=norm,
+        symmetry_plane=symmetry_plane,
         out_velocity=work_flux_e2,
         n_threads=n_threads,
     )
@@ -865,6 +937,7 @@ def update_simulation_state(
             positions=pos,
             control_points=cp_pos,
             normals=norm,
+            symmetry_plane=symmetry_plane,
             out=mat_buffer,
             line_buffer=line_buffer,
             thread_count=n_threads,
@@ -904,6 +977,7 @@ def update_simulation_state(
             wake=wake,
             flow_cond=flow_cond,
             target=wake.positions,
+            symmetry_plane=symmetry_plane,
             out=work_wake_1[: wake.quad_count],
             tmp=work_wake_2[: wake.quad_count],
             n_threads=n_threads,
@@ -928,6 +1002,7 @@ def update_simulation_state(
                 wake=wake,
                 flow_cond=flow_cond,
                 target=pos,
+                symmetry_plane=symmetry_plane,
                 out=work_velocity_p1,
                 n_threads=n_threads,
             )
@@ -978,6 +1053,7 @@ def update_simulation_state(
                 wake=wake,
                 flow_cond=flow_cond,
                 target=shed_pos,
+                symmetry_plane=symmetry_plane,
                 n_threads=n_threads,
             )
         else:
@@ -1157,6 +1233,7 @@ def run_solver(
         time=initial_time,
         tol=settings.model_settings.vortex_limit,
         geo=[geometry.geometries[name] for name in geometry.geometries],
+        symmetry_plane=settings.model_settings.symmetry_plane,
     )
 
     iteration = 0

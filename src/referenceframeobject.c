@@ -1686,10 +1686,7 @@ static PyObject *pyvl_reference_frame_moved_relative_to(PyObject *self, PyTypeOb
     double tol;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_PYTHON,
-                 .p_val = (void *)&that,
-                 .kwname = "other",
-                 .type_check = mod_state->rf_type},
+                {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&that, .kwname = "other"},
                 {.type = CPYARG_TYPE_DOUBLE, .p_val = &t_start, .kwname = "t_start"},
                 {.type = CPYARG_TYPE_DOUBLE, .p_val = &t_end, .kwname = "t_end"},
                 {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
@@ -1701,6 +1698,19 @@ static PyObject *pyvl_reference_frame_moved_relative_to(PyObject *self, PyTypeOb
     if (tol < 0)
     {
         PyErr_SetString(PyExc_ValueError, "Tolerance cannot be less than 0.");
+        return NULL;
+    }
+
+    if (Py_IsNone((PyObject *)that))
+    {
+        // Global RF
+        that = NULL;
+    }
+    else if (!PyObject_TypeCheck(that, mod_state->rf_type))
+    {
+        // Not a RF, error
+        PyErr_Format(PyExc_TypeError, "other must be a %s, but was %s.", mod_state->rf_type->tp_name,
+                     Py_TYPE(that)->tp_name);
         return NULL;
     }
 
@@ -2536,7 +2546,7 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
         .ml_name = "moved_relative_to",
         .ml_meth = (void *)pyvl_reference_frame_moved_relative_to,
         .ml_flags = METH_METHOD | METH_KEYWORDS | METH_FASTCALL,
-        .ml_doc = "moved_relative_to(other: ReferenceFrame, t_start: float, t_end: float, tol: float) -> bool\n"
+        .ml_doc = "moved_relative_to(other: ReferenceFrame | None, t_start: float, t_end: float, tol: float) -> bool\n"
                   "Check if the reference frame had motion relative to another.\n"
                   "\n"
                   "This function is intended to be used to determine if relative induction matrices\n"
@@ -2555,8 +2565,8 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
                   "\n"
                   "Parameters\n"
                   "----------\n"
-                  "other : ReferenceFrame\n"
-                  "    Reference frame to compare it to.\n"
+                  "other : ReferenceFrame | None\n"
+                  "    Reference frame to compare it to. ``None`` corresponds to the global reference frame.\n"
                   "\n"
                   "t_start : float\n"
                   "    First time to compare to.\n"
@@ -2577,21 +2587,22 @@ static PyMethodDef pyvl_reference_frame_methods[] = {
         .ml_name = "common_ancestor",
         .ml_meth = (void *)pyvl_reference_frame_common_ancestor,
         .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
-        .ml_doc = "common_ancestor(other: ReferenceFrame | None) -> ReferenceFrame | None\n"
-                  "Find the first common ancestor with another reference frame.\n"
-                  "\n"
-                  "This function is intended to find the shortest transformation needed by the\n"
-                  "two reference frames.\n"
-                  "\n"
-                  "Parameters\n"
-                  "----------\n"
-                  "other : ReferenceFrame or None\n"
-                  "    The reference frame to find the ancestor with.\n"
-                  "\n"
-                  "Returns\n"
-                  "-------\n"
-                  "ReferenceFrame of None\n"
-                  "    The nearest common ancestor of the two reference frames.\n",
+        .ml_doc =
+            "common_ancestor(other: ReferenceFrame | None) -> ReferenceFrame | None\n"
+            "Find the first common ancestor with another reference frame.\n"
+            "\n"
+            "This function is intended to find the shortest transformation needed by the\n"
+            "two reference frames.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "other : ReferenceFrame or None\n"
+            "    The reference frame to find the ancestor with. ``None`` corresponds to the global reference frame.\n"
+            "\n"
+            "Returns\n"
+            "-------\n"
+            "ReferenceFrame of None\n"
+            "    The nearest common ancestor of the two reference frames.\n",
     },
     {0},
 };
