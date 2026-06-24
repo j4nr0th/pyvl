@@ -1,6 +1,7 @@
 """Tests related to the ReferenceFrame class."""
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from pyvl import ReferenceFrame
 
@@ -369,5 +370,116 @@ def test_moved_relative():
     )
 
 
+def _manually_to_parent_position(
+    rf: ReferenceFrame, x: npt.ArrayLike, time: float
+) -> npt.NDArray[np.double]:
+    """Manually compute the parent position of a point in a reference frame."""
+    x = np.asarray(x)
+    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
+    offset = rf.offset_at(time)
+    rot_mat = rf.rotation_matrix_at(time)
+    return (rot_mat @ x.T).T + offset
+
+
+def _manually_from_parent_position(
+    rf: ReferenceFrame, x: npt.ArrayLike, time: float
+) -> npt.NDArray[np.double]:
+    """Manually compute the local position of a point in a reference frame."""
+    x = np.asarray(x)
+    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
+    offset = rf.offset_at(time)
+    rot_mat = rf.rotation_matrix_at(time)
+    return (rot_mat.T @ (x - offset).T).T
+
+
+def test_parent_global_transforms():
+    """Check that global transforms are applied correctly even when we have a parent."""
+    rng = np.random.default_rng(15)
+    rf_1 = ReferenceFrame(
+        offset=lambda t: (2 + t, 3 * t + 1, t**2), theta=lambda t: (2 * np.pi * t, 0, 0)
+    )
+    rf_11 = ReferenceFrame(parent=rf_1, offset=(-1, -2, +3), theta=(9, 1, 1))
+    rf_12 = ReferenceFrame(parent=rf_1, offset=(4, 2, 0), theta=(6, 7, 7))
+
+    # Check that the parent transforms are applied correctly
+    t0 = 0  # rng.random()
+    x_local = rng.random((5, 3))
+    v_local = rng.random((5, 3))
+
+    x_global_11 = rf_11.to_global_position(x_local, time=t0)
+    x_global_11_1, v_global_11 = rf_11.to_global_velocity(x_local, v_local, time=t0)
+    assert pytest.approx(x_global_11) == x_global_11_1
+
+    x_global_12 = rf_12.to_global_position(x_local, time=t0)
+    x_global_12_1, v_global_12 = rf_12.to_global_velocity(x_local, v_local, time=t0)
+    assert pytest.approx(x_global_12) == x_global_12_1
+
+    # Transform back to local coordinates and check if we get the original values
+    x_local_back_11 = rf_11.from_global_position(x_global_11, time=t0)
+    x_local_back_11_1, v_local_back_11 = rf_11.from_global_velocity(
+        x_global_11, v_global_11, time=t0
+    )
+    assert pytest.approx(x_local_back_11) == x_local_back_11_1
+
+    x_local_back_12 = rf_12.from_global_position(x_global_12, time=t0)
+    x_local_back_12_1, v_local_back_12 = rf_12.from_global_velocity(
+        x_global_12, v_global_12, time=t0
+    )
+    assert pytest.approx(x_local_back_12) == x_local_back_12_1
+
+    assert np.allclose(x_local_back_11, x_local)
+    assert np.allclose(v_local_back_11, v_local)
+
+    assert np.allclose(x_local_back_12, x_local)
+    assert np.allclose(v_local_back_12, v_local)
+
+
+def test_parent_transforms():
+    """Check that parent transforms are applied correctly."""
+    rng = np.random.default_rng(15)
+    rf_1 = ReferenceFrame(
+        offset=lambda t: (2 + t, 3 * t + 1, t**2), theta=lambda t: (2 * np.pi * t, 0, 0)
+    )
+    rf_11 = ReferenceFrame(parent=rf_1, offset=(-1, -2, +3), theta=(9, 1, 1))
+    rf_12 = ReferenceFrame(parent=rf_1, offset=(4, 2, 0), theta=(6, 7, 7))
+
+    # Check that the parent transforms are applied correctly
+    t0 = rng.random()
+    x_local = rng.random((5, 3))
+    v_local = rng.random((5, 3))
+
+    x_parent_11 = rf_11.to_parent_position(x_local, time=t0)
+    assert pytest.approx(x_parent_11) == _manually_to_parent_position(
+        rf_11, x_local, time=t0
+    )
+    x_parent_11_1, v_parent_11 = rf_11.to_parent_velocity(x_local, v_local, time=t0)
+    assert pytest.approx(x_parent_11) == x_parent_11_1
+
+    x_parent_12 = rf_12.to_parent_position(x_local, time=t0)
+    x_parent_12_1, v_parent_12 = rf_12.to_parent_velocity(x_local, v_local, time=t0)
+    assert pytest.approx(x_parent_12) == x_parent_12_1
+
+    # Transform back to local coordinates and check if we get the original values
+    x_local_back_11 = rf_11.from_parent_position(x_parent_11, time=t0)
+    x_local_back_11_1, v_local_back_11 = rf_11.from_parent_velocity(
+        x_parent_11, v_parent_11, time=t0
+    )
+    assert pytest.approx(x_local_back_11) == x_local_back_11_1
+
+    x_local_back_12 = rf_12.from_parent_position(x_parent_12, time=t0)
+    x_local_back_12_1, v_local_back_12 = rf_12.from_parent_velocity(
+        x_parent_12, v_parent_12, time=t0
+    )
+    assert pytest.approx(x_local_back_12) == x_local_back_12_1
+
+    assert np.allclose(x_local_back_11, x_local)
+    assert np.allclose(v_local_back_11, v_local)
+
+    assert np.allclose(x_local_back_12, x_local)
+    assert np.allclose(v_local_back_12, v_local)
+
+
 if __name__ == "__main__":
     test_moved_relative()
+    test_parent_transforms()
+    test_parent_global_transforms()

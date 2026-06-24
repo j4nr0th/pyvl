@@ -558,11 +558,10 @@ static inline bool reference_frame_iterate_up_to_descendant(const PyVL_Reference
  */
 typedef struct
 {
-    PyObject *t;       // Python time object.
-    size_t n;          // Number of vectors to transform.
-    const real3_t *in; // Input vectors to transform.
-    real3_t *out;      // Output where transformed vectors are written.
-    bool inv;          // Inverse transformation.
+    PyObject *t;  // Python time object.
+    size_t n;     // Number of vectors to transform.
+    real3_t *out; // In-Out where transformed vectors are read from, transformed, and written.
+    bool inv;     // Inverse transformation.
 } transformation_args_t;
 
 static inline bool transform_position_parent(const PyVL_ReferenceFrame *this, void *param)
@@ -581,8 +580,8 @@ static inline bool transform_position_parent(const PyVL_ReferenceFrame *this, vo
 
     for (size_t i = 0; i < args->n; ++i)
     {
-        args->out[i] = !args->inv ? real3_add(real3x3_vecmul(mat, args->in[i]), off)
-                                  : real3x3_vecmul_transpose(mat, real3_sub(args->in[i], off));
+        args->out[i] = !args->inv ? real3_add(real3x3_vecmul(mat, args->out[i]), off)
+                                  : real3x3_vecmul_transpose(mat, real3_sub(args->out[i], off));
     }
 
     return true;
@@ -600,7 +599,7 @@ static inline bool transform_vector_parent(const PyVL_ReferenceFrame *this, void
 
     for (size_t i = 0; i < args->n; ++i)
     {
-        args->out[i] = !args->inv ? real3x3_vecmul(mat, args->in[i]) : real3x3_vecmul_transpose(mat, args->in[i]);
+        args->out[i] = !args->inv ? real3x3_vecmul(mat, args->out[i]) : real3x3_vecmul_transpose(mat, args->out[i]);
     }
 
     return true;
@@ -611,13 +610,11 @@ static inline bool transform_vector_parent(const PyVL_ReferenceFrame *this, void
  */
 typedef struct
 {
-    PyObject *t;           // Python time object.
-    size_t n;              // Number of vectors to transform.
-    const real3_t *in_vel; // Input velocity vectors to transform.
-    real3_t *out_vel;      // Output where transformed velocity vectors are written.
-    const real3_t *in_pos; // Input position vectors to transform.
-    real3_t *out_pos;      // Output where transformed position vectors are written.
-    bool inv;              // Perform the inverse transformation instead.
+    PyObject *t;  // Python time object.
+    size_t n;     // Number of vectors to transform.
+    real3_t *vel; // Array where transformed velocity vectors are written.
+    real3_t *pos; // Array where transformed position vectors are written.
+    bool inv;     // Perform the inverse transformation instead.
 } transformation_vel_pos_args_t;
 
 static bool transform_vel_pos_parent(const PyVL_ReferenceFrame *this, void *param)
@@ -639,8 +636,8 @@ static bool transform_vel_pos_parent(const PyVL_ReferenceFrame *this, void *para
 #pragma omp simd
     for (size_t i = 0; i < args->n; ++i)
     {
-        real3_t pos = args->in_pos[i];
-        real3_t vel = args->in_vel[i];
+        real3_t pos = args->pos[i];
+        real3_t vel = args->vel[i];
         if (!args->inv)
         {
             if (!real3_all_zero(angles))
@@ -679,8 +676,8 @@ static bool transform_vel_pos_parent(const PyVL_ReferenceFrame *this, void *para
                 vel = real3x3_vecmul_transpose(mat, vel);
             }
         }
-        args->out_pos[i] = pos;
-        args->out_vel[i] = vel;
+        args->pos[i] = pos;
+        args->vel[i] = vel;
     }
 
     return true;
@@ -787,40 +784,34 @@ static inline PyObject *reference_frame_process_transformation(const PyVL_Refere
         Py_DECREF(in_array);
         return NULL;
     }
-    PyObject *const time = PyFloat_FromDouble(t);
-    if (!time)
-    {
-        Py_DECREF(in_array);
-        Py_DECREF(out_array);
-        return NULL;
-    }
-
     size_t n_entries = 1;
     for (unsigned i = 0; i < dim_in - 1; i++)
         n_entries *= dims_in[i];
 
     const real3_t *const p_in = PyArray_DATA(in_array);
     real3_t *const p_out = PyArray_DATA(out_array);
-    if (start == end)
-    {
-        Py_DECREF(time);
-        // Just copy
+    if (in_array != out_array)
         for (size_t i = 0; i < n_entries; ++i)
         {
             p_out[i] = p_in[i];
         }
-        Py_DECREF(in_array);
+    Py_DECREF(in_array);
+    if (start == end)
         return (PyObject *)out_array;
+
+    PyObject *const time = PyFloat_FromDouble(t);
+    if (!time)
+    {
+        Py_DECREF(out_array);
+        return NULL;
     }
 
-    transformation_args_t args_down =
-        (transformation_args_t){.t = time, .n = n_entries, .in = p_in, .out = p_out, .inv = true};
+    transformation_args_t args_down = (transformation_args_t){.t = time, .n = n_entries, .out = p_out, .inv = false};
     transformation_args_t args_up = args_down;
-    args_up.inv = false;
+    args_up.inv = true;
     const rf_iter_callback_t callback_backward = {.iter_func = trans_func, .param = &args_down};
     const rf_iter_callback_t callback_forward = {.iter_func = trans_func, .param = &args_up};
     const bool res = reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
-    Py_DECREF(in_array);
     Py_DECREF(time);
     if (!res)
     {
@@ -919,16 +910,6 @@ static inline PyObject *reference_frame_process_velocity(const PyVL_ReferenceFra
         return NULL;
     }
 
-    PyObject *const time = PyFloat_FromDouble(t);
-    if (!time)
-    {
-        Py_DECREF(out_pos);
-        Py_DECREF(out_vel);
-        Py_DECREF(pos_array);
-        Py_DECREF(vel_array);
-        return NULL;
-    }
-
     size_t n_entries = 1;
     for (unsigned i = 0; i < dim_in - 1; i++)
         n_entries *= dims_in[i];
@@ -937,38 +918,33 @@ static inline PyObject *reference_frame_process_velocity(const PyVL_ReferenceFra
     const real3_t *const in_pos = PyArray_DATA(pos_array);
     real3_t *const out_v = PyArray_DATA(out_vel);
     real3_t *const out_p = PyArray_DATA(out_pos);
-
-    if (start == end)
-    {
-        // Just copy
-        Py_DECREF(time);
+    if (vel_array != out_vel)
         for (size_t i = 0; i < n_entries; ++i)
-        {
-            out_p[i] = in_pos[i];
             out_v[i] = in_vel[i];
-        }
-        Py_DECREF(vel_array);
-        Py_DECREF(pos_array);
-    }
-    else
+    Py_DECREF(vel_array);
+
+    if (pos_array != out_pos)
+        for (size_t i = 0; i < n_entries; ++i)
+            out_p[i] = in_pos[i];
+    Py_DECREF(pos_array);
+
+    if (start != end)
     {
-        transformation_vel_pos_args_t args_down = (transformation_vel_pos_args_t){
-            .t = time,
-            .n = n_entries,
-            .in_vel = in_vel,
-            .out_vel = out_v,
-            .in_pos = in_pos,
-            .out_pos = out_p,
-            .inv = true,
-        };
+        PyObject *const time = PyFloat_FromDouble(t);
+        if (!time)
+        {
+            Py_DECREF(out_pos);
+            Py_DECREF(out_vel);
+            return NULL;
+        }
+        transformation_vel_pos_args_t args_down =
+            (transformation_vel_pos_args_t){.t = time, .n = n_entries, .vel = out_v, .pos = out_p, .inv = false};
         transformation_vel_pos_args_t args_up = args_down;
-        args_up.inv = false;
+        args_up.inv = true;
         const rf_iter_callback_t callback_backward = {.iter_func = transform_vel_pos_parent, .param = &args_down};
         const rf_iter_callback_t callback_forward = {.iter_func = transform_vel_pos_parent, .param = &args_up};
         const bool res =
             reference_frame_iterate_between_reference_frames(start, end, callback_backward, callback_forward);
-        Py_DECREF(vel_array);
-        Py_DECREF(pos_array);
         Py_DECREF(time);
         if (!res)
         {
