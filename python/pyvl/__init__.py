@@ -3,6 +3,9 @@
 # Examples
 from pyvl import examples as examples
 
+# Mesh utilities
+from pyvl import meshing as meshing
+
 # Post processing
 from pyvl import postprocess as postprocess
 
@@ -15,6 +18,7 @@ from pyvl.cvl import TransformationPlane as TransformationPlane
 
 # File IO
 from pyvl.fio.io_common import HirearchicalMap as HirearchicalMap
+from pyvl.fio.io_common import PredefinedSerializer as PredefinedSerializer
 from pyvl.fio.io_common import PythonSerializer as PythonSerializer
 
 # Flow Conditions
@@ -37,6 +41,7 @@ from pyvl.settings import WakeShedderUniform as WakeShedderUniform
 
 # Solver
 from pyvl.solver import OutputSettings as OutputSettings
+from pyvl.solver import SolverState as SolverState
 from pyvl.solver import run_solver as run_solver
 from pyvl.solver import run_solver_steady_state as run_solver_steady_state
 

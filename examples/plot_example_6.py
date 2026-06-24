@@ -1,4 +1,4 @@
-r"""Example 5: Symmetry
+r"""Example 6: Symmetry
 ===================
 
 .. currentmodule:: pyvl

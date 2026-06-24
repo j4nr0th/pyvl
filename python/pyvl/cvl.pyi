@@ -407,6 +407,25 @@ class Mesh:
         """Line connectivity of the mesh."""
         ...
 
+    @classmethod
+    def make_quad2d_plane(cls, n1: int, n2: int, /) -> Self:
+        """Make a simple quad mesh of a 2D plane topology.
+
+        Parameters
+        ----------
+        n1 : int
+            Number of quads in the first direction.
+
+        n2 : int
+            Number of quads in the second direction.
+
+        Returns
+        -------
+        Self
+            Newly created mesh instance.
+        """
+        ...
+
 @final
 class ReferenceFrame:
     r"""Class which is used to define position and orientation of geometry.

@@ -131,7 +131,6 @@ def rf_to_serial(rf: ReferenceFrame, serializer: CallableSerializer) -> Hirearch
     """
     out = HirearchicalMap()
     rf.save(out, serializer)
-    print(f"DEBUG: ReferenceFrame keys after save: {list(out.keys())}")
     if rf.parent is not None:
         parent = rf_to_serial(rf.parent, serializer)
         out.insert_hirearchical_map("parent", parent)

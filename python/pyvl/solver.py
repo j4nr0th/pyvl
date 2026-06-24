@@ -15,8 +15,8 @@ import scipy.linalg as la
 from pyvl._typing import CallableDeserializer, CallableSerializer
 from pyvl.cvl import Mesh, TransformationPlane
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationFunction
-from pyvl.fio.io_hdf5 import serialize_hdf5
-from pyvl.fio.io_json import serialize_json
+from pyvl.fio.io_hdf5 import deserialize_hdf5, serialize_hdf5
+from pyvl.fio.io_json import deserialize_json, serialize_json
 from pyvl.flow_conditions import FlowConditions
 from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import SolverSettings, WakeShedderCallback, WakeShedderUniform
@@ -533,6 +533,56 @@ class SolverState:
         )
 
     @classmethod
+    def load_from_file(
+        cls,
+        path: Path,
+        deserializer: CallableDeserializer,
+        file_type: OutputFileType | None = None,
+    ) -> Self:
+        """Load a solver state from a file.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the file to load the solver state from.
+
+        deserializer : CallableDeserializer
+            Function to deserialize a callable object from a string.
+
+        file_type : "JSON" or "HDF5", optional
+            File type to use for loading the solver state. If not provided, the file
+            type will be inferred from the file extension. If the file extension is not
+            recognized, an error will be raised.
+
+        Returns
+        -------
+        SolverState
+            The loaded solver state.
+        """
+        deserialize_fn: Callable[[Path], HirearchicalMap]
+        match file_type:
+            case "HDF5":
+                deserialize_fn = deserialize_hdf5
+            case "JSON":
+                deserialize_fn = deserialize_json
+            case None:
+                match path.suffix.lower():
+                    case ".h5" | ".hdf5":
+                        deserialize_fn = deserialize_hdf5
+                    case ".json":
+                        deserialize_fn = deserialize_json
+                    case _:
+                        raise ValueError(
+                            f"Could not infer file type from extension {path.suffix}. "
+                            "Please provide a file_type argument."
+                        )
+            case _:
+                raise ValueError(f"The file type {file_type=} is not valid.")
+
+        hmap = deserialize_fn(path)
+        return cls.load(hmap, deserializer)
+
+    @classmethod
     def create_new(
         cls,
         time: float,
@@ -622,7 +672,7 @@ class OutputSettings:
     output_predicate: SavePredicate | None = None
 
     @classmethod
-    def simple_python(
+    def new_python(
         cls,
         ftype: OutputFileType,
         naming_callback: Callable[[int, float], str | Path],
@@ -666,6 +716,58 @@ class OutputSettings:
             output_predicate=output_predicate,
             callable_serializer=callable_serialization.serialize,
             callable_deserializer=callable_serialization.deserialize,
+        )
+
+    @classmethod
+    def new_simple(
+        cls,
+        ftype: OutputFileType,
+        naming_callback: Callable[[int, float], str | Path],
+        callable_serializer: CallableSerializer,
+        callable_deserializer: CallableDeserializer,
+        output_predicate: SavePredicate | None = None,
+    ) -> Self:
+        """Create a simple output settings object that uses custom serialization.
+
+        Parameters
+        ----------
+        ftype : "JSON" or "HDF5"
+            File format to write the output as.
+
+        naming_callback : (int, float) -> str | Path
+            Callback to use to determine the name of the next file
+            to write based on the iteration number and the simulation time.
+
+        callable_serializer : (Callable) -> str
+            Function to serialize a callable object to a string.
+
+        callable_deserializer : (str) -> Callable
+            Function to deserialize a callable object from a string.
+
+        output_predicate : (int, float) -> bool, optional
+            Predicate to determine if the solver state should be saved at step.
+            If not provided, all steps will be saved.
+
+        Returns
+        -------
+        OutputSettings
+            OutputSettings, which use custom serialization and the specified file type.
+        """
+        serialization_fn: SerializationFunction
+        match ftype:
+            case "HDF5":
+                serialization_fn = serialize_hdf5
+            case "JSON":
+                serialization_fn = serialize_json
+            case _:
+                raise ValueError(f"The file type {ftype=} is not valid.")
+
+        return cls(
+            serialization_fn=serialization_fn,
+            naming_callback=naming_callback,
+            output_predicate=output_predicate,
+            callable_serializer=callable_serializer,
+            callable_deserializer=callable_deserializer,
         )
 
 

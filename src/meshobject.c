@@ -1690,6 +1690,110 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
     return (PyObject *)out_arr;
 }
 
+static PyObject *pyvl_mesh_make_quad2d_plane(PyTypeObject *subtype, PyObject *const *args, const Py_ssize_t nargs,
+                                             const PyObject *kwnames)
+{
+    Py_ssize_t n1, n2;
+    if (parse_arguments_check(
+            (cpyutl_argument_t[]){
+                {.type = CPYARG_TYPE_SSIZE, .p_val = &n1},
+                {.type = CPYARG_TYPE_SSIZE, .p_val = &n2},
+                {0},
+            },
+            args, nargs, kwnames) < 0)
+        return NULL;
+
+    if (n1 < 1 || n2 < 1)
+    {
+        PyErr_SetString(PyExc_ValueError, "Number of quads in each direction must be at least 1.");
+        return NULL;
+    }
+
+    PyVL_MeshObject *const this = (PyVL_MeshObject *)subtype->tp_alloc(subtype, 0);
+    if (!this)
+        return NULL;
+
+    // First, zero the memory for the mesh
+    this->mesh = (mesh_t){
+        .n_points = 0,
+        .n_lines = 0,
+        .n_surfaces = 0,
+        .lines = NULL,
+        .surface_lines = NULL,
+        .surface_offsets = NULL,
+    };
+
+    // Set the number of points, lines, and surfaces
+    this->mesh.n_points = (unsigned)(n1 + 1) * (unsigned)(n2 + 1);
+    this->mesh.n_lines = (unsigned)(n1 * (n2 + 1) + n2 * (n1 + 1));
+    this->mesh.n_surfaces = (unsigned)(n1 * n2);
+
+    // We have just quads, so we can already allocate all the arrays
+    this->mesh.lines =
+        CVL_OBJ_ALLOCATOR.allocate(CVL_OBJ_ALLOCATOR.state, sizeof *this->mesh.lines * this->mesh.n_lines);
+    this->mesh.surface_lines = CVL_OBJ_ALLOCATOR.allocate(CVL_OBJ_ALLOCATOR.state,
+                                                          sizeof *this->mesh.surface_lines * this->mesh.n_surfaces * 4);
+    this->mesh.surface_offsets = CVL_OBJ_ALLOCATOR.allocate(
+        CVL_OBJ_ALLOCATOR.state, sizeof *this->mesh.surface_offsets * (this->mesh.n_surfaces + 1));
+    if (!this->mesh.lines || !this->mesh.surface_lines || !this->mesh.surface_offsets)
+    {
+        Py_DECREF(this);
+        return NULL;
+    }
+
+    // Now loops to fill in the lines and surfaces
+    unsigned i_line = 0;
+    for (unsigned j = 0; j < (unsigned)(n2 + 1); ++j)
+    {
+        for (unsigned i = 0; i < (unsigned)n1; ++i)
+        {
+            // 1st dimension lines, going positive in the 1st dimension
+            this->mesh.lines[i_line++] = (line_t){
+                .p1 = {.orientation = 0, .value = j * (unsigned)(n1 + 1) + i},
+                .p2 = {.orientation = 0, .value = j * (unsigned)(n1 + 1) + i + 1},
+            };
+        }
+    }
+    const unsigned n_1_lines = i_line;
+
+    for (unsigned j = 0; j < (unsigned)n2; ++j)
+    {
+        for (unsigned i = 0; i < (unsigned)(n1 + 1); ++i)
+        {
+            // 2nd dimension lines, going positive in the 2nd dimension
+            this->mesh.lines[i_line++] = (line_t){
+                .p1 = {.orientation = 0, .value = j * (unsigned)(n1 + 1) + i},
+                .p2 = {.orientation = 0, .value = (j + 1) * (unsigned)(n1 + 1) + i},
+            };
+        }
+    }
+    // const unsigned n_2_lines = i_line - n_1_lines;
+
+    unsigned i_surf = 0;
+    for (unsigned j = 0; j < (unsigned)n2; ++j)
+    {
+        for (unsigned i = 0; i < (unsigned)n1; ++i)
+        {
+            // Bottom line is positive in the 1st dimension, left to right
+            this->mesh.surface_lines[i_surf * 4 + 0] = (geo_id_t){.orientation = 0, .value = j * (unsigned)n1 + i};
+            // Right line is positive in the 2nd dimension, bottom to top
+            this->mesh.surface_lines[i_surf * 4 + 1] =
+                (geo_id_t){.orientation = 0, .value = n_1_lines + j * (unsigned)(n1 + 1) + i + 1};
+            // Top line is negative in the 1st dimension, right to left
+            this->mesh.surface_lines[i_surf * 4 + 2] =
+                (geo_id_t){.orientation = 1, .value = (j + 1) * (unsigned)n1 + i};
+            // Left line is negative in the 2nd dimension, top to bottom
+            this->mesh.surface_lines[i_surf * 4 + 3] =
+                (geo_id_t){.orientation = 1, .value = n_1_lines + j * (unsigned)(n1 + 1) + i};
+            this->mesh.surface_offsets[i_surf] = i_surf * 4;
+            i_surf += 1;
+        }
+    }
+    this->mesh.surface_offsets[i_surf] = i_surf * 4;
+
+    return (PyObject *)this;
+}
+
 static PyMethodDef pyvl_mesh_methods[] = {
     {
         .ml_name = "get_line_points",
@@ -1911,6 +2015,26 @@ static PyMethodDef pyvl_mesh_methods[] = {
                   "array\n"
                   "    Line circulation values. If ``out`` was not ``None``, a reference to it is\n"
                   "    returned, otherwise a new array is returned.\n",
+    },
+    {
+        .ml_name = "make_quad2d_plane",
+        .ml_meth = (void *)pyvl_mesh_make_quad2d_plane,
+        .ml_flags = METH_CLASS | METH_FASTCALL | METH_KEYWORDS,
+        .ml_doc = "make_quad2d_plane(n1: int, n2: int, /) -> typing.Self\n"
+                  "Make a simple quad mesh of a 2D plane topology.\n"
+                  "\n"
+                  "Parameters\n"
+                  "----------\n"
+                  "n1 : int\n"
+                  "    Number of quads in the first direction.\n"
+                  "\n"
+                  "n2 : int\n"
+                  "    Number of quads in the second direction.\n"
+                  "\n"
+                  "Returns\n"
+                  "-------\n"
+                  "Self\n"
+                  "    Newly created mesh instance.\n",
     },
     {0},
 };

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -374,4 +374,78 @@ class PythonSerializer:
         Callable
             The callable associated with the label.
         """
+        return self._contents[key]
+
+
+class PredefinedSerializer(Mapping[str, Callable]):
+    """Serializer which is initialized with a predefined set of callables.
+
+    Parameters
+    ----------
+    contents : Callable
+        The predefined set of callables to initialize the serializer with.
+        The argument names that are passed to the constructor will be used as the
+        labels for the callables.
+    """
+
+    _contents: dict[str, Callable]
+
+    def __init__(self, **contents: Callable) -> None:
+        """Initialize the PredefinedSerializer."""
+        for c in contents:
+            if not callable(contents[c]):
+                raise TypeError(f"The value associated with key '{c}' is not callable.")
+        self._contents = contents
+
+    def __getitem__(self, key: str) -> Callable:
+        """Return the callable associated with the label."""
+        return self._contents[key]
+
+    def __len__(self) -> int:
+        """Return the number of callables in the serializer."""
+        return len(self._contents)
+
+    def __iter__(self) -> Iterator[str]:
+        """Return an iterator over the labels of the callables in the serializer."""
+        return iter(self._contents)
+
+    def __contains__(self, key: object) -> bool:
+        """Check if the serializer contains a callable with the given label."""
+        return key in self._contents
+
+    def serialize(self, fn: Callable) -> str:
+        """Serialize a callable to a string.
+
+        Parameters
+        ----------
+        fn : Callable
+            The callable to serialize.
+
+        Returns
+        -------
+        str
+            The label associated with the serialized callable.
+        """
+        for k, v in self._contents.items():
+            if v is fn:
+                return k
+
+        raise ValueError(f"The callable {fn} is not in the predefined serializer.")
+
+    def deserialize(self, key: str) -> Callable:
+        """Deserialize a callable based on the label.
+
+        Parameters
+        ----------
+        key : str
+            The label to deserialize.
+
+        Returns
+        -------
+        Callable
+            The callable associated with the label.
+        """
+        if key not in self._contents:
+            raise KeyError(f"The key '{key}' is not in the predefined serializer.")
+
         return self._contents[key]

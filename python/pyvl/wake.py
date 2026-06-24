@@ -24,17 +24,17 @@ class WakeState:
 
     @property
     def positions(self) -> npt.NDArray[np.double]:
-        """Return the positions of the quads in the wake."""
+        """The positions of the quads in the wake."""
         return self.quad_positions[: self.quad_count]
 
     @property
     def circulations(self) -> npt.NDArray[np.double]:
-        """Return the circulations of the quads in the wake."""
+        """The circulations of the quads in the wake."""
         return self.quad_circulations[: self.quad_count]
 
     @property
     def capacity(self) -> int:
-        """Return the maximum number of quads that can be stored in the wake state."""
+        """The maximum number of quads that can be stored in the wake state."""
         return self.quad_positions.shape[0]
 
     def __post_init__(self) -> None:
@@ -260,18 +260,28 @@ class WakeState:
     def save(self) -> HirearchicalMap:
         """Serialize the wake state into a HirearchicalMap."""
         hmap = HirearchicalMap()
-        hmap.insert_array("quad_positions", self.quad_positions)
-        hmap.insert_array("quad_circulations", self.quad_circulations)
+        hmap.insert_array("quad_positions", self.positions)
+        hmap.insert_array("quad_circulations", self.circulations)
         hmap.insert_int("quad_count", self.quad_count)
+        hmap.insert_int("quad_capacity", self.quad_positions.shape[0])
         hmap.insert_int("next_insertion_index", self.next_insertion_index)
         return hmap
 
     @classmethod
     def load(cls, hmap: HirearchicalMap) -> Self:
         """Deserialize the wake state from a HirearchicalMap."""
+        capacity = hmap.get_int("quad_capacity")
+        quad_positions = np.zeros((capacity, 4, 3), dtype=np.double)
+        quad_circulations = np.zeros(capacity, dtype=np.double)
+        quad_positions[: hmap.get_int("quad_count"), ...] = hmap.get_array(
+            "quad_positions"
+        ).reshape(-1, 4, 3)
+        quad_circulations[: hmap.get_int("quad_count"), ...] = hmap.get_array(
+            "quad_circulations"
+        ).reshape(-1)
         return cls(
-            quad_positions=hmap.get_array("quad_positions"),
-            quad_circulations=hmap.get_array("quad_circulations"),
+            quad_positions=quad_positions,
+            quad_circulations=quad_circulations,
             quad_count=hmap.get_int("quad_count"),
             next_insertion_index=hmap.get_int("next_insertion_index"),
         )
