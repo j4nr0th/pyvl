@@ -179,7 +179,7 @@ def test_run_solver_with_output(basic_setup, tmp_path):
     def naming_callback(i, _):
         return str(tmp_path / f"out_{i}.json")
 
-    output_settings = OutputSettings.simple_python("JSON", naming_callback)
+    output_settings = OutputSettings.new_python("JSON", naming_callback)
     results = run_solver(sim_geo, settings, times=[0], output_settings=output_settings)
 
     assert isinstance(results[0], SolverState)

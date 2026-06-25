@@ -147,20 +147,52 @@ def test_transformation_output() -> None:
     assert np.all(res_out == x_in)
 
 
+def _manually_to_parent_position(
+    rf: ReferenceFrame, x: npt.ArrayLike, time: float
+) -> npt.NDArray[np.double]:
+    """Manually compute the parent position of a point in a reference frame."""
+    x = np.asarray(x)
+    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
+    offset = rf.offset_at(time)
+    rot_mat = rf.rotation_matrix_at(time)
+    return (rot_mat @ x.T).T + offset
+
+
+def _manually_from_parent_position(
+    rf: ReferenceFrame, x: npt.ArrayLike, time: float
+) -> npt.NDArray[np.double]:
+    """Manually compute the local position of a point in a reference frame."""
+    x = np.asarray(x)
+    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
+    offset = rf.offset_at(time)
+    rot_mat = rf.rotation_matrix_at(time)
+    return (rot_mat.T @ (x - offset).T).T
+
+
+def _manually_from_parent_vector(
+    rf: ReferenceFrame, x: npt.ArrayLike, time: float
+) -> npt.NDArray[np.double]:
+    """Manually compute the local vector of a point in a reference frame."""
+    x = np.asarray(x)
+    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
+    rot_mat = rf.rotation_matrix_at(time)
+    return (rot_mat.T @ x.T).T
+
+
 def test_simple_transformations() -> None:
     """Manually check some basic transformations."""
     eye = np.eye(3)
     rf1 = ReferenceFrame(offset=(0, 1.0, 0), theta=(np.pi / 2, 0, 0))
     eye2 = rf1.from_parent_position(eye)
-    assert pytest.approx(eye2) == [[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [0.0, 0.0, 0.0]]
+    assert pytest.approx(eye2) == _manually_from_parent_position(rf1, eye, time=0)
     eye2 = rf1.from_parent_vector(eye)
-    assert pytest.approx(eye2) == [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]
+    assert pytest.approx(eye2) == _manually_from_parent_vector(rf1, eye, time=0)
     rf1 = ReferenceFrame(theta=(0.0, 0, np.pi / 2))
     out = np.empty_like(eye)
     eye2 = rf1.from_parent_position(eye, out=out)
-    assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    assert pytest.approx(eye2) == _manually_from_parent_position(rf1, eye, time=0)
     eye2 = rf1.from_parent_vector(eye, out=out)
-    assert pytest.approx(eye2) == [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    assert pytest.approx(eye2) == _manually_from_parent_vector(rf1, eye, time=0)
 
 
 def test_angles_from_rotation() -> None:
@@ -370,28 +402,6 @@ def test_moved_relative():
     )
 
 
-def _manually_to_parent_position(
-    rf: ReferenceFrame, x: npt.ArrayLike, time: float
-) -> npt.NDArray[np.double]:
-    """Manually compute the parent position of a point in a reference frame."""
-    x = np.asarray(x)
-    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
-    offset = rf.offset_at(time)
-    rot_mat = rf.rotation_matrix_at(time)
-    return (rot_mat @ x.T).T + offset
-
-
-def _manually_from_parent_position(
-    rf: ReferenceFrame, x: npt.ArrayLike, time: float
-) -> npt.NDArray[np.double]:
-    """Manually compute the local position of a point in a reference frame."""
-    x = np.asarray(x)
-    assert x.ndim == 2 and x.shape[-1] == 3, "Input must be an array of shape (N, 3)"
-    offset = rf.offset_at(time)
-    rot_mat = rf.rotation_matrix_at(time)
-    return (rot_mat.T @ (x - offset).T).T
-
-
 def test_parent_global_transforms():
     """Check that global transforms are applied correctly even when we have a parent."""
     rng = np.random.default_rng(15)
@@ -480,6 +490,7 @@ def test_parent_transforms():
 
 
 if __name__ == "__main__":
+    test_simple_transformations()
     test_moved_relative()
     test_parent_transforms()
     test_parent_global_transforms()
