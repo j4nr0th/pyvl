@@ -10,7 +10,7 @@ from pyvl import Geometry, ReferenceFrame, fio, mesh_from_mesh_io
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer
 from pyvl.fio.type_resolution import flow_conditions_from_serial
 from pyvl.flow_conditions import FlowConditionsUniform
-from pyvl.geometry import rf_from_serial, rf_to_serial
+from pyvl.geometry import rf_to_serial
 
 
 def test_rf_serialization1() -> None:
@@ -27,7 +27,7 @@ def test_rf_serialization1() -> None:
     )
 
     out = rf_to_serial(rf, serializer.serialize)
-    rf1 = rf_from_serial(out, serializer.deserialize)
+    rf1 = ReferenceFrame.load(out, serializer.deserialize)
     assert all(rf.offset_at() == rf1.offset_at())
     assert all(rf.angles_at() == rf1.angles_at())
     assert all(rf.velocity_at() == rf1.velocity_at())
@@ -56,7 +56,7 @@ def test_rf_serialization2() -> None:
     serializer = PythonSerializer()
     out = rf_to_serial(rf_2, serializer.serialize)
 
-    rf_in = rf_from_serial(out, serializer.deserialize)
+    rf_in = ReferenceFrame.load(out, serializer.deserialize)
     assert all(rf_in.offset_at() == rf_2.offset_at())
     assert all(rf_in.angles_at() == rf_2.angles_at())
     assert all(rf_in.velocity_at() == rf_2.velocity_at())

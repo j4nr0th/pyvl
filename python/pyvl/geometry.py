@@ -15,7 +15,6 @@ import pyvista as pv
 from pyvl._typing import CallableDeserializer, CallableSerializer
 from pyvl.cvl import INVALID_ID, GeoID, Mesh, ReferenceFrame
 from pyvl.fio.io_common import HirearchicalMap
-from pyvl.fio.type_resolution import reference_frame_from_serial
 
 
 def mesh_from_mesh_io(m: mio.Mesh) -> tuple[npt.NDArray[np.double], Mesh]:
@@ -135,35 +134,6 @@ def rf_to_serial(rf: ReferenceFrame, serializer: CallableSerializer) -> Hirearch
         parent = rf_to_serial(rf.parent, serializer)
         out.insert_hirearchical_map("parent", parent)
     return out
-
-
-def rf_from_serial(
-    group: HirearchicalMap, deserializer: CallableDeserializer
-) -> ReferenceFrame:
-    """Load reference frame from a HirearchicalMap.
-
-    Parameters
-    ----------
-    group : HirearchicalMap
-        The serialized reference frame data.
-    deserializer : CallableDeserializer
-        The deserializer for callables.
-
-    Returns
-    -------
-    ReferenceFrame
-        The deserialized reference frame.
-    """
-    parent = None
-    if "parent" in group:
-        parent_group = group.get_hirearchical_map("parent")
-        parent = reference_frame_from_serial(parent_group, deserializer)
-
-    return (
-        ReferenceFrame.load(group, deserializer, parent)
-        if parent
-        else ReferenceFrame.load(group, deserializer)
-    )
 
 
 @dataclass(init=False, frozen=True, eq=False)
@@ -623,7 +593,7 @@ class Geometry:
         label = group.get_string("label")
 
         msh = mesh_from_serial(mesh_group)
-        rf = rf_from_serial(rf_group, deserializer)
+        rf = ReferenceFrame.load(rf_group, deserializer)
 
         return cls(label=label, reference_frame=rf, mesh=msh, positions=positions)
 
@@ -724,7 +694,9 @@ class GeometryInfo:
     def load(cls, group: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Load geometry info from a HirearchicalMap."""
         pos = group.get_array("pos")
-        rf = rf_from_serial(group.get_hirearchical_map("reference_frame"), deserializer)
+        rf = ReferenceFrame.load(
+            group.get_hirearchical_map("reference_frame"), deserializer
+        )
         closed = bool(group.get_int("closed"))
         points = slice(
             group.get_int("points_start"),
@@ -884,17 +856,17 @@ class SimulationGeometry(Mapping):
 
     @property
     def n_surfaces(self) -> int:
-        """Return the total number of surfaces in the simulation geometry."""
+        """The total number of surfaces in the simulation geometry."""
         return self.mesh_joined.n_surfaces
 
     @property
     def n_lines(self) -> int:
-        """Return the total number of lines in the simulation geometry."""
+        """The total number of lines in the simulation geometry."""
         return self.mesh_joined.n_lines
 
     @property
     def n_points(self) -> int:
-        """Return the total number of points in the simulation geometry."""
+        """The total number of points in the simulation geometry."""
         return self.mesh_joined.n_points
 
     def positions_at_time(

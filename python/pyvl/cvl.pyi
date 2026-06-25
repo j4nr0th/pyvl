@@ -1097,12 +1097,7 @@ class ReferenceFrame:
         ...
 
     @classmethod
-    def load(
-        cls,
-        group: HirearchicalMap,
-        deserializer: CallableDeserializer,
-        parent: ReferenceFrame | None = None,
-    ) -> Self:
+    def load(cls, group: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Load the ReferenceFrame from a HirearchicalMap.
 
         Parameters
@@ -1113,9 +1108,6 @@ class ReferenceFrame:
 
         deserializer: CallableDeserializer
             Callable that is used to convert strings into callables.
-
-        parent : ReferenceFrame, optional
-            Parent of the reference frame.
 
         Returns
         -------

@@ -1521,16 +1521,11 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
     if (!state)
         return NULL;
 
-    PyObject *group, *deserializer, *parent = NULL;
+    PyObject *group, *deserializer;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&group, .kwname = "group"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&deserializer, .kwname = "deserializer"},
-                {.type = CPYARG_TYPE_PYTHON,
-                 .p_val = (void *)&parent,
-                 .kwname = "parent",
-                 .type_check = state->rf_type,
-                 .optional = true},
                 {0},
             },
             args, nargs, kwnames) < 0)
@@ -1556,6 +1551,7 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
     this->orientation = (pyvl_rf_time_dependent_t){0};
     this->velocity = (pyvl_rf_time_dependent_t){0};
     this->rotation = (pyvl_rf_time_dependent_t){0};
+    this->parent = NULL;
 
     if (!pyvl_rf_deserialize_entry("position", group, deserializer, &this->position) ||
         !pyvl_rf_deserialize_entry("velocity", group, deserializer, &this->velocity) ||
@@ -1566,8 +1562,38 @@ static PyObject *pyvl_reference_frame_load(PyTypeObject *type, PyObject *const *
         return NULL;
     }
 
-    this->parent = (PyVL_ReferenceFrame *)parent;
-    Py_XINCREF(parent);
+    // Deserialize the parent
+    PyObject *parent_group;
+    int res;
+    if ((res = PyMapping_GetOptionalItemString(group, "parent", &parent_group)))
+    {
+        if (res < 0)
+        {
+            // Some weird error happened
+            Py_DECREF(this);
+            return NULL;
+        }
+
+        if (!PyObject_TypeCheck(parent_group, Py_TYPE(group)))
+        {
+            PyErr_Format(PyExc_TypeError, "Parent group is not a %s, but is %s.", Py_TYPE(group)->tp_name,
+                         Py_TYPE(parent_group)->tp_name);
+            Py_DECREF(this);
+            Py_DECREF(parent_group);
+            return NULL;
+        }
+
+        PyVL_ReferenceFrame *parent = (PyVL_ReferenceFrame *)pyvl_reference_frame_load(
+            type, (PyObject *[2]){parent_group, deserializer}, 2, NULL);
+        Py_DECREF(parent_group);
+        if (!parent)
+        {
+            Py_DECREF(this);
+            return NULL;
+        }
+
+        this->parent = parent;
+    }
 
     return (PyObject *)this;
 }

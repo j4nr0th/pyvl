@@ -293,7 +293,7 @@ class SolverSystem:
                 # A_{i,j} = induction of part_j on part_i
                 # Solve L_ij @ U_jj = A_ij using U_jj^T @ L_ij^T = A_ij^T
                 rhs = self._normal_induction_matrices[(other, part)].T.copy()
-                self._normal_induction_matrices[(other, part)][:] = la.lu_solve(
+                self._normal_induction_matrices[(other, part)][:] = la.lu_solve(  # type: ignore
                     self._diag_decomposes[other],
                     rhs,
                     trans=1,
