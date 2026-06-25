@@ -7,6 +7,8 @@ from pyvl.cvl import (
     Mesh,
     ReferenceFrame,
     TransformationPlane,
+    line_induction,
+    line_normal_induction,
     quad_induction,
     quad_normal_induction,
 )
@@ -565,6 +567,157 @@ def test_state_update():
     assert np.isclose(np.dot(ind_vel + flow_vel, normal), 0)
 
 
+def test_line_induction_matches_quad_induction() -> None:
+    """Check line induction output matches quad induction by decomposing quads."""
+    rng = np.random.default_rng(301)
+    M = 5
+    K = 8
+    tol = 1e-8
+
+    quad_positions = rng.random((M, 4, 3)) * 4 - 2
+    quad_circulations = rng.random(M) * 2 - 1
+    target_positions = rng.random((K, 3)) * 4 - 2
+
+    # Map quads to individual line segments
+    line_positions = np.empty((4 * M, 2, 3), dtype=np.double)
+    line_circulations = np.empty((4 * M,), dtype=np.double)
+    for i in range(M):
+        element_pos = quad_positions[i]
+        circ = quad_circulations[i]
+        # Decompose the quad
+        line_positions[4 * i + 0, 0, :] = element_pos[3]
+        line_positions[4 * i + 0, 1, :] = element_pos[0]
+        line_circulations[4 * i + 0] = circ
+
+        line_positions[4 * i + 1, 0, :] = element_pos[0]
+        line_positions[4 * i + 1, 1, :] = element_pos[1]
+        line_circulations[4 * i + 1] = circ
+
+        line_positions[4 * i + 2, 0, :] = element_pos[1]
+        line_positions[4 * i + 2, 1, :] = element_pos[2]
+        line_circulations[4 * i + 2] = circ
+
+        line_positions[4 * i + 3, 0, :] = element_pos[2]
+        line_positions[4 * i + 3, 1, :] = element_pos[3]
+        line_circulations[4 * i + 3] = circ
+
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+
+    for symmetry_plane in (None, plane):
+        for n_threads in (1, 2):
+            q_ind = quad_induction(
+                tol=tol,
+                quad_positions=quad_positions,
+                quad_circulations=quad_circulations,
+                target_positions=target_positions,
+                symmetry_plane=symmetry_plane,
+                n_threads=n_threads,
+            )
+
+            l_ind = line_induction(
+                tol=tol,
+                line_positions=line_positions,
+                line_circulations=line_circulations,
+                target_positions=target_positions,
+                symmetry_plane=symmetry_plane,
+                n_threads=n_threads,
+            )
+
+            np.testing.assert_allclose(l_ind, q_ind, rtol=1e-12, atol=1e-12)
+
+            # Test using a pre-allocated out buffer
+            out_buf = np.empty((K, 3), dtype=np.double)
+            returned_buf = line_induction(
+                tol=tol,
+                line_positions=line_positions,
+                line_circulations=line_circulations,
+                target_positions=target_positions,
+                symmetry_plane=symmetry_plane,
+                out_velocity=out_buf,
+                n_threads=n_threads,
+            )
+            assert returned_buf is out_buf
+            np.testing.assert_allclose(out_buf, q_ind, rtol=1e-12, atol=1e-12)
+
+
+def test_line_normal_induction_matches_quad_normal_induction() -> None:
+    """Check line normal induction matches quad normal induction by decomposing quads."""
+    rng = np.random.default_rng(302)
+    M = 5
+    K = 8
+    tol = 1e-8
+
+    quad_positions = rng.random((M, 4, 3)) * 4 - 2
+    quad_circulations = rng.random(M) * 2 - 1
+    target_positions = rng.random((K, 3)) * 4 - 2
+    target_normals = rng.random((K, 3)) * 2 - 1
+    target_normals /= np.linalg.norm(target_normals, axis=1, keepdims=True)
+
+    # Map quads to individual line segments
+    line_positions = np.empty((4 * M, 2, 3), dtype=np.double)
+    line_circulations = np.empty((4 * M,), dtype=np.double)
+    for i in range(M):
+        element_pos = quad_positions[i]
+        circ = quad_circulations[i]
+        # Decompose the quad
+        line_positions[4 * i + 0, 0, :] = element_pos[3]
+        line_positions[4 * i + 0, 1, :] = element_pos[0]
+        line_circulations[4 * i + 0] = circ
+
+        line_positions[4 * i + 1, 0, :] = element_pos[0]
+        line_positions[4 * i + 1, 1, :] = element_pos[1]
+        line_circulations[4 * i + 1] = circ
+
+        line_positions[4 * i + 2, 0, :] = element_pos[1]
+        line_positions[4 * i + 2, 1, :] = element_pos[2]
+        line_circulations[4 * i + 2] = circ
+
+        line_positions[4 * i + 3, 0, :] = element_pos[2]
+        line_positions[4 * i + 3, 1, :] = element_pos[3]
+        line_circulations[4 * i + 3] = circ
+
+    plane = TransformationPlane(origin=rng.random(3), normal=rng.random(3))
+
+    for symmetry_plane in (None, plane):
+        for n_threads in (1, 2):
+            q_norm_ind = quad_normal_induction(
+                tol=tol,
+                quad_positions=quad_positions,
+                quad_circulations=quad_circulations,
+                target_positions=target_positions,
+                target_normals=target_normals,
+                symmetry_plane=symmetry_plane,
+                n_threads=n_threads,
+            )
+
+            l_norm_ind = line_normal_induction(
+                tol=tol,
+                line_positions=line_positions,
+                line_circulations=line_circulations,
+                target_positions=target_positions,
+                target_normals=target_normals,
+                symmetry_plane=symmetry_plane,
+                n_threads=n_threads,
+            )
+
+            np.testing.assert_allclose(l_norm_ind, q_norm_ind, rtol=1e-12, atol=1e-12)
+
+            # Test using a pre-allocated out buffer
+            out_buf = np.empty((K,), dtype=np.double)
+            returned_buf = line_normal_induction(
+                tol=tol,
+                line_positions=line_positions,
+                line_circulations=line_circulations,
+                target_positions=target_positions,
+                target_normals=target_normals,
+                symmetry_plane=symmetry_plane,
+                out_velocity=out_buf,
+                n_threads=n_threads,
+            )
+            assert returned_buf is out_buf
+            np.testing.assert_allclose(out_buf, q_norm_ind, rtol=1e-12, atol=1e-12)
+
+
 if __name__ == "__main__":
     test_line_circulation()
     test_induction_two_triangles_equal_to_quad()
@@ -574,3 +727,5 @@ if __name__ == "__main__":
     test_quad_normal_induction_symmetry_plane_matches_mirrored_copy()
     test_quad_normal_induction_matches_velocity_projection()
     test_solver_system_updates_self_diagonal_on_global_motion()
+    test_line_induction_matches_quad_induction()
+    test_line_normal_induction_matches_quad_normal_induction()

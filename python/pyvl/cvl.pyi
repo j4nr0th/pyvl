@@ -1417,3 +1417,109 @@ def quad_normal_induction(
         returned.
     """
     ...
+
+def line_induction(
+    tol: float,
+    line_positions: npt.ArrayLike,
+    line_circulations: npt.ArrayLike,
+    target_positions: npt.ArrayLike,
+    symmetry_plane: TransformationPlane | None = None,
+    out_velocity: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
+) -> npt.NDArray[np.double]:
+    """Compute the influence of line circulation filaments at input positions.
+
+    This is mainly used for computing the influence of the wake, which contains lines,
+    which are considered separate (hence no mesh).
+
+    Parameters
+    ----------
+    tol : float
+        Distance at which the induced velocity is set to zero due to being too
+        close to the vortex line.
+
+    line_positions : (M, 2, 3) array
+        Array of positions of the endpoints of the line filaments. The first
+        dimension corresponds to the filaments, while the second dimension corresponds to
+        the endpoints of each filament.
+
+    line_circulations : (M,) array
+        Array of circulations for each line filament.
+
+    target_positions : (K, 3) array
+        Array of positions at which to compute the velocity influence.
+
+    symmetry_plane : TransformationPlane, optional
+        If given, the influence of the line filaments is computed as if they were
+        mirrored across the given plane.
+
+    out_velocity : (K, 3) array, optional
+        Output array to write the computed velocities to. If not given, a new one is
+        created.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocities.
+
+    Returns
+    -------
+    (K, 3) array
+        Array of velocity vectors at the target positions induced by the line
+        filaments. If ``out_velocity`` was given, then the reference to it is returned.
+    """
+    ...
+
+def line_normal_induction(
+    tol: float,
+    line_positions: npt.ArrayLike,
+    line_circulations: npt.ArrayLike,
+    target_positions: npt.ArrayLike,
+    target_normals: npt.ArrayLike,
+    symmetry_plane: TransformationPlane | None = None,
+    out_velocity: npt.NDArray[np.double] | None = None,
+    n_threads: int = 1,
+) -> npt.NDArray[np.double]:
+    """Compute the normal velocity induced by the line filaments at the given positions.
+
+    This is mainly used for computing the influence of the wake, which contains lines,
+    which are considered separate (hence no mesh).
+
+    Parameters
+    ----------
+    tol : float
+        Distance at which the induced velocity is set to zero due to being too
+        close to the vortex line.
+
+    line_positions : (M, 2, 3) array
+        Array of positions of the endpoints of the line filaments. The first
+        dimension corresponds to the filaments, while the second dimension corresponds to
+        the endpoints of each filament.
+
+    line_circulations : (M,) array
+        Array of circulations for each line filament.
+
+    target_positions : (K, 3) array
+        Array of positions at which to compute the velocity influence.
+
+    target_normals : (K, 3) array
+        Array of normal vectors at the target positions. The normal vectors should be
+        normalized.
+
+    symmetry_plane : TransformationPlane, optional
+        If given, the influence of the line filaments is computed as if they were
+        mirrored across the given plane.
+
+    out_velocity : (K, 3) array, optional
+        Output array to write the computed velocities to. If not given, a new one is
+        created.
+
+    n_threads : int, default: 1
+        Number of threads to use for computing the velocities.
+
+    Returns
+    -------
+    (K,) array
+        Array of normal components of velocity vectors at the target positions induced by
+        the line filaments. If ``out_velocity`` was given, then the reference to it is
+        returned.
+    """
+    ...
