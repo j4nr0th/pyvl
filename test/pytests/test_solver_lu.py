@@ -54,8 +54,14 @@ def test_solver_system_inverse_consistency():
     rng = np.random.default_rng(3935)
     vtol = 1e-15
     # Create simple geometries
-    points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    connectivity = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+    points = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.double,
+    )
+    connectivity = [
+        np.array([0, 1, 2, 3], dtype=np.uint32),
+        np.array([1, 4, 5, 2], dtype=np.uint32),
+    ]
 
     geos = []
     for i in range(2):
@@ -87,8 +93,14 @@ def test_solver_system_inverse_complex_moving():
     rng = np.random.default_rng(3935)
     vtol = 1e-15
 
-    quad_points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    quad_conn = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+    quad_points = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.double,
+    )
+    quad_conn = [
+        np.array([0, 1, 2, 3], dtype=np.uint32),
+        np.array([1, 4, 5, 2], dtype=np.uint32),
+    ]
 
     def make_time_varying_frame(rng):
         offset0 = rng.uniform(-10, 10, 3)
@@ -144,11 +156,22 @@ def test_solver_system_multi_move_cycles():
     rng = np.random.default_rng(42)
     vtol = 1e-15
 
-    quad_points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    quad_conn = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+    quad_points = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.double,
+    )
+    quad_conn = [
+        np.array([0, 1, 2, 3], dtype=np.uint32),
+        np.array([1, 4, 5, 2], dtype=np.uint32),
+    ]
 
-    tri_points = np.array([[0, 0, 0], [1, 0, 0], [0.5, 1, 0]], dtype=np.double)
-    tri_conn = [np.array([0, 1, 2], dtype=np.uint32)]
+    tri_points = np.array(
+        [[0, 0, 0], [1, 0, 0], [0.5, 1, 0], [1.5, 1, 0]], dtype=np.double
+    )
+    tri_conn = [
+        np.array([0, 1, 2], dtype=np.uint32),
+        np.array([1, 3, 2], dtype=np.uint32),
+    ]
 
     def make_moving_frame(rng):
         offset0 = rng.uniform(-10, 10, 3)
@@ -216,8 +239,14 @@ def test_solver_system_mixed_motion_groups():
     rng = np.random.default_rng(12345)
     vtol = 1e-15
 
-    points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    conn = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+    points = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.double,
+    )
+    conn = [
+        np.array([0, 1, 2, 3], dtype=np.uint32),
+        np.array([1, 4, 5, 2], dtype=np.uint32),
+    ]
 
     fixed_rf = ReferenceFrame(offset=np.array([0.0, 0.0, 0.0]))
     geos = [
@@ -264,8 +293,14 @@ def test_solver_system_rotating_motion_assignments():
     vtol = 1e-15
     symmetry_plane = TransformationPlane(rng.random(3), rng.random(3))
 
-    points = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.double)
-    connectivity = [np.array([0, 1, 2, 3], dtype=np.uint32)]
+    points = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+        dtype=np.double,
+    )
+    connectivity = [
+        np.array([0, 1, 2, 3], dtype=np.uint32),
+        np.array([1, 4, 5, 2], dtype=np.uint32),
+    ]
 
     def make_translation_frame() -> ReferenceFrame:
         offset0 = rng.uniform(-2, 2, 3)
@@ -331,9 +366,110 @@ def test_solver_system_rotating_motion_assignments():
             )
 
 
+def test_manual_block_lu_equivalence():
+    """Verify manual block LU factorization implementation on random blocks."""
+    # 3 blocks, each of size 2x2
+    block_sizes = [2, 2, 2]
+    total_size = sum(block_sizes)
+
+    # Generate random matrix
+    rng = np.random.default_rng(42)
+    A = rng.normal(size=(total_size, total_size))
+
+    # Random RHS
+    x = rng.normal(size=total_size)
+
+    # Direct solution
+    import scipy.linalg as la
+
+    direct_sol = la.lu_solve(la.lu_factor(A), x.copy())
+
+    # Let's extract the blocks!
+    slices = [slice(0, 2), slice(2, 4), slice(4, 6)]
+    names = ["A0", "A1", "A2"]
+
+    _normal_induction_matrices = {}
+    _self_induction_diags = {}
+    _diag_decomposes = {}
+
+    for i in range(3):
+        # self-induction diags
+        _self_induction_diags[names[i]] = A[slices[i], slices[i]].copy()
+        for j in range(3):
+            # normal induction matrices
+            _normal_induction_matrices[(names[j], names[i])] = A[
+                slices[i], slices[j]
+            ].copy()
+
+    # Now run our block LU factorization (unpivoted LU block by block)
+    new_order = names
+    n = len(new_order)
+
+    for i in range(0, n):
+        part = new_order[i]
+        _normal_induction_matrices[(part, part)] = _self_induction_diags[part].copy()
+
+        for j in range(0, i):
+            other = new_order[j]
+            # Solve L_ij @ U_jj = A_ij using U_jj^T @ L_ij^T = A_ij^T
+            rhs = _normal_induction_matrices[(other, part)].T.copy()
+            _normal_induction_matrices[(other, part)][:] = la.lu_solve(
+                _diag_decomposes[other],
+                rhs,
+                trans=1,
+                overwrite_b=True,
+            ).T
+
+            for k in range(j + 1, n):
+                t = new_order[k]
+                np.subtract(
+                    _normal_induction_matrices[(t, part)],
+                    _normal_induction_matrices[(other, part)]
+                    @ _normal_induction_matrices[(t, other)],
+                    out=_normal_induction_matrices[(t, part)],
+                )
+
+        _diag_decomposes[part] = la.lu_factor(_normal_induction_matrices[(part, part)])
+
+    # Solve inverse!
+    x_vecs = {names[i]: x[slices[i]].copy() for i in range(3)}
+
+    # Step 1: Forward substitution
+    for i in range(1, n):
+        row_name = new_order[i]
+        target_vec = x_vecs[row_name]
+        for j in range(0, i):
+            col_name = new_order[j]
+            np.subtract(
+                target_vec,
+                _normal_induction_matrices[(col_name, row_name)] @ x_vecs[col_name],
+                out=target_vec,
+            )
+
+    # Step 2: Backward substitution
+    for i in reversed(range(0, n)):
+        row_name = new_order[i]
+        target_vec = x_vecs[row_name]
+        for j in range(i + 1, n):
+            col_name = new_order[j]
+            np.subtract(
+                target_vec,
+                _normal_induction_matrices[(col_name, row_name)] @ x_vecs[col_name],
+                out=target_vec,
+            )
+        target_vec[:] = la.lu_solve(
+            _diag_decomposes[row_name], target_vec, overwrite_b=True
+        )
+
+    block_sol = np.concatenate([x_vecs[names[i]] for i in range(3)])
+    max_diff = np.max(np.abs(block_sol - direct_sol))
+    assert max_diff < 1e-12, f"Discrepancy too large: {max_diff}"
+
+
 if __name__ == "__main__":
     test_solver_system_inverse_consistency()
     test_solver_system_inverse_complex_moving()
     test_solver_system_multi_move_cycles()
     test_solver_system_mixed_motion_groups()
     test_solver_system_rotating_motion_assignments()
+    test_manual_block_lu_equivalence()

@@ -7,6 +7,7 @@ r"""Example 7: Propeller Refinement Study
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import pyvista as pv
 import pyvl
 from pyvl import meshing
@@ -92,7 +93,7 @@ plotter.show()
 #
 # With the geometry defined, we can set up the simulation settings.
 
-v_inf = 10.0
+v_inf = 0.0
 
 shedding_lines: list[int] = []
 line_offset = 0
@@ -119,8 +120,33 @@ plotter.add_axes_at_origin()
 plotter.show()
 
 
+# Custom flow conditions
+class FlowConditionsCustom(pyvl.FlowConditionsUniform):
+    """Custom flow conditions that stop the flow after a certain time."""
+
+    def __init__(self, vx: float, vy: float, vz: float, t_stop: float):
+        self.t_stop = t_stop
+        super().__init__(vx=vx, vy=vy, vz=vz)
+
+    def get_velocity(
+        self,
+        time: float,
+        positions: npt.NDArray[np.double],
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        """Override the get_velocity method to stop the flow after t_stop."""
+        if time < self.t_stop:
+            return super().get_velocity(time, positions, out_array)
+
+        if out_array is None:
+            return np.zeros_like(positions)
+
+        out_array[...] = 0
+        return out_array
+
+
 settings = pyvl.SolverSettings(
-    flow_conditions=pyvl.FlowConditionsUniform(vx=0.0, vy=0.0, vz=v_inf),
+    flow_conditions=FlowConditionsCustom(vx=0.0, vy=0.0, vz=-v_inf, t_stop=1.0),
     model_settings=pyvl.ModelSettings(
         vortex_limit=1e-10,
         # pyvl.TransformationPlane(origin=(0, -0.5, 0), normal=(0, 0, 1)),
@@ -165,26 +191,26 @@ output_settings = pyvl.OutputSettings.new_simple(
 # output directory.
 
 # Compute time steps based on angular velocity
-N_PER_REV = 36
+N_PER_REV = 96
 dt = OMEGA / (2 * np.pi * N_PER_REV)
 
 # Do not run more than this many steps
-MAX_STEPS = 30
+MAX_STEPS = 100
 
-# if not out_dir.exists():
-out_dir.mkdir(exist_ok=True, parents=True)
-# Run the actual solver to steady state
-try:
-    pyvl.run_solver_steady_state(
-        geometry=sim_geo,
-        settings=settings,
-        dt=dt,
-        max_steps=MAX_STEPS,
-        output_settings=output_settings,
-        n_threads=4,
-    )
-except Exception as e:
-    print(f"An error occurred during the simulation: {e}")
+if not out_dir.exists():
+    out_dir.mkdir(exist_ok=True, parents=True)
+    # Run the actual solver to steady state
+    try:
+        pyvl.run_solver_steady_state(
+            geometry=sim_geo,
+            settings=settings,
+            dt=dt,
+            max_steps=MAX_STEPS,
+            output_settings=output_settings,
+            n_threads=4,
+        )
+    except Exception as e:
+        print(f"An error occurred during the simulation: {e}")
 
 
 # %%
@@ -195,12 +221,11 @@ except Exception as e:
 # With the simulation complete, we can now post process the results. We will load the
 # results from the output directory, and then plot the results.
 
-plotter = pv.Plotter(off_screen=True, window_size=(800, 600))
-plotter.open_movie("output/example_7/rotor.mp4", framerate=10)
+plotter = pv.Plotter(off_screen=True, window_size=(800, 800))
+plotter.open_movie(out_dir / "rotor.mp4", framerate=10)
 
-plotter.set_position((3, 3, 3))
-plotter.set_focus((0, 0, 0))
-plotter.add_axes_at_origin()
+plotter.set_position((3, 3, 2))
+plotter.set_focus((0, 0, -1))
 
 for res_file in out_dir.iterdir():
     if res_file.suffix != ".json":
@@ -213,7 +238,11 @@ for res_file in out_dir.iterdir():
         result.geometry.polydata_at_time(result.time), color="lightblue", name="rotor"
     )
     if result.wake.quad_count > 0:
-        plotter.add_mesh(result.wake.as_polydata(), color="orange", name="wake")
+        plotter.add_mesh(
+            result.wake.as_polydata().extract_all_edges(), color="orange", name="wake"
+        )
     plotter.write_frame()
 
 plotter.show()
+plotter.close()
+del plotter

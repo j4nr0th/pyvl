@@ -291,11 +291,14 @@ class SolverSystem:
             for j in range(0, i):
                 other = new_order[j]
                 # A_{i,j} = induction of part_j on part_i
+                # Solve L_ij @ U_jj = A_ij using U_jj^T @ L_ij^T = A_ij^T
+                rhs = self._normal_induction_matrices[(other, part)].T.copy()
                 self._normal_induction_matrices[(other, part)][:] = la.lu_solve(
                     self._diag_decomposes[other],
-                    self._normal_induction_matrices[(other, part)],
+                    rhs,
+                    trans=1,
                     overwrite_b=True,
-                )
+                ).T
                 # Apply this to the other entries of the row (part, ...) after the
                 # element (part, other)
                 for k in range(j + 1, n):

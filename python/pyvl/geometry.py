@@ -340,7 +340,7 @@ class Geometry:
         pyvista.PolyData
             PolyData, which represents the geometry.
         """
-        positions = self.reference_frame.from_parent_position(self.positions)
+        positions = self.reference_frame.to_global_position(self.positions, time=0.0)
         faces = mesh_to_polydata_faces(self.msh)
         pd = pv.PolyData.from_irregular_faces(positions, faces)
         return pd
@@ -642,7 +642,7 @@ class Geometry:
 
     @property
     def normals(self) -> npt.NDArray[np.double]:
-        r"""Normals to geometry surfaces in the global reference frame.
+        r"""Normals to geometry surfaces in the local reference frame.
 
         This property computes the unit normal vectors to each surface. The normal
         vector is computed as:
@@ -659,15 +659,14 @@ class Geometry:
         Returns
         -------
         (N, 3) array
-            Array of unit normal vectors for surfaces of the geometry in the global
+            Array of unit normal vectors for surfaces of the geometry in the local
             reference frame.
         """
-        n = self.msh.surface_normal(self.positions)
-        return self.reference_frame.from_parent_vector(n, out=n)
+        return self.msh.surface_normal(self.positions)
 
     @property
     def centers(self) -> npt.NDArray[np.double]:
-        r"""Compute centers of geometry sufraces in the global reference frame.
+        r"""Compute centers of geometry surfaces in the local reference frame.
 
         These are computed by simply finding the average position vector:
 
@@ -678,11 +677,9 @@ class Geometry:
         Returns
         -------
         (N, 3) array
-            Array of position vectors of surface centers in  in the global reference
-            frame.
+            Array of position vectors of surface centers in the local reference frame.
         """
-        n = self.msh.surface_average_vec3(self.positions)
-        return self.reference_frame.from_parent_vector(n, out=n)
+        return self.msh.surface_average_vec3(self.positions)
 
 
 @dataclass(frozen=True, eq=False)
