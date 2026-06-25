@@ -2,10 +2,11 @@
 
 import numpy as np
 import pytest
-from pyvl import Geometry, ReferenceFrame, flow_conditions, settings
+from pyvl import Geometry, ReferenceFrame
 from pyvl.cvl import TransformationPlane
 from pyvl.fio.io_common import PythonSerializer
 from pyvl.geometry import SimulationGeometry
+from pyvl.settings import ModelSettings, SolverSettings, WakeSettings, WakeShedderUniform
 from pyvl.solver import SolverState
 
 
@@ -44,13 +45,13 @@ def create_simple_geometry() -> SimulationGeometry:
 def test_solver_state_serialization():
     """Check the entire state is serialized and deserialized correctly."""
     sim_geo = create_simple_geometry()
-    s_settings = settings.SolverSettings(
-        flow_conditions=flow_conditions.FlowConditionsUniform(10.0, 0, 0),
-        model_settings=settings.ModelSettings(
+    s_settings = SolverSettings(
+        flow_velocity=(10.0, 0, 0),
+        model_settings=ModelSettings(
             vortex_limit=1e-6,
             symmetry_plane=TransformationPlane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         ),
-        wake_settings=settings.WakeSettings(settings.WakeShedderUniform([3, 2, 1]), 31),
+        wake_settings=WakeSettings(WakeShedderUniform([3, 2, 1]), 31),
     )
     t = 3.21
 

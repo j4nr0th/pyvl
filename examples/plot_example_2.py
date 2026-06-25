@@ -75,7 +75,7 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 alpha = np.radians(15)  # 5 degrees
 v_inf = 10  # 10 m/s
-flow_conditions = pyvl.FlowConditionsUniform(
+flow_velocity = pyvl.FlowConditionsUniform(
     v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
 )
 
@@ -93,7 +93,7 @@ model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 #
 # These can now be combined togethere into the :class:`SolverSettings` object.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings)
+settings = pyvl.SolverSettings(flow_velocity=flow_velocity, model_settings=model_settings)
 
 # %%
 #

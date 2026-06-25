@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -12,12 +12,11 @@ import numpy as np
 import numpy.typing as npt
 import scipy.linalg as la
 
-from pyvl._typing import CallableDeserializer, CallableSerializer
+from pyvl._typing import CallableDeserializer, CallableSerializer, FlowConditionCallable
 from pyvl.cvl import Mesh, TransformationPlane
 from pyvl.fio.io_common import HirearchicalMap, PythonSerializer, SerializationFunction
 from pyvl.fio.io_hdf5 import deserialize_hdf5, serialize_hdf5
 from pyvl.fio.io_json import deserialize_json, serialize_json
-from pyvl.flow_conditions import FlowConditions
 from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import SolverSettings, WakeShedderCallback, WakeShedderUniform
 from pyvl.wake import WakeState
@@ -500,24 +499,16 @@ class SolverState:
         return out
 
     @classmethod
-    def load(
-        cls,
-        hmap: HirearchicalMap,
-        deserializer: CallableDeserializer,
-        custom_types: Mapping[str, type] | None = None,
-        allow_override: bool = False,
-    ) -> Self:
+    def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Deserialize current state from a HirearchicalMap.
 
         Parameters
         ----------
         hmap : HirearchicalMap
             Serialized state of the :class:`SolverState` object.
-        custom_types : Mapping[str, type], optional
-            A mapping of type names to types for custom subclasses of FlowConditions
-            and WakeModel.
-        allow_override : bool, default: False
-            If True, custom types can override built-in types.
+
+        deserializer : CallableDeserializer
+            Function to deserialize a callable object from a string.
         """
         return cls(
             time=hmap.get_scalar("time"),
@@ -525,10 +516,7 @@ class SolverState:
                 hmap.get_hirearchical_map("simulation_geometry"), deserializer
             ),
             settings=SolverSettings.load(
-                hmap.get_hirearchical_map("solver_settings"),
-                deserializer,
-                custom_types,
-                allow_override,
+                hmap.get_hirearchical_map("solver_settings"), deserializer
             ),
             wake=WakeState.load(hmap.get_hirearchical_map("wake")),
             circulation=hmap.get_array("circulation"),
@@ -619,7 +607,7 @@ class SolverState:
             mesh=self.geometry.mesh_joined,
             positions=self.geometry.positions_at_time(self.time),
             wake=self.wake,
-            flow_cond=None if induced_only else self.settings.flow_conditions,
+            flow_velocity=None if induced_only else self.settings.get_flow_velocity,
             target=np.asarray(positions, np.double),
             symmetry_plane=self.settings.model_settings.symmetry_plane,
             out=out,
@@ -808,7 +796,7 @@ def _compute_induced_velocity(
     positions: npt.NDArray[np.double],
     line_circulation: npt.NDArray[np.double],
     wake: WakeState,
-    flow_cond: FlowConditions | None,
+    flow_velocity: FlowConditionCallable | None,
     target: npt.NDArray[np.double],
     symmetry_plane: TransformationPlane | None = None,
     out: npt.NDArray[np.double] | None = None,
@@ -892,9 +880,9 @@ def _compute_induced_velocity(
     )
     # Add wake induction to the mesh induction
     np.add(out, tmp, out=out)
-    if flow_cond is not None:
+    if flow_velocity is not None:
         # Compute flow conditions
-        flow_cond.get_velocity(time=time, positions=target, out_array=tmp)
+        flow_velocity(time=time, positions=target, out_array=tmp)
         # Add the flow conditions
         np.add(out, tmp, out=out)
 
@@ -951,7 +939,6 @@ def update_simulation_state(
     settings = state.settings
     tol = settings.model_settings.vortex_limit
     symmetry_plane = settings.model_settings.symmetry_plane
-    flow_cond = settings.flow_conditions
     wake = state.wake
 
     # Ensure output state
@@ -1019,7 +1006,7 @@ def update_simulation_state(
     )
 
     # Compute flow velocity
-    element_velocity = flow_cond.get_velocity(
+    element_velocity = settings.get_flow_velocity(
         target_time, cp_pos, out_array=work_velocity_e1
     )
     # Compute the normal velocity on each CP due to flow conditions
@@ -1071,25 +1058,6 @@ def update_simulation_state(
 
     # Compute the velocities of wake elements at this time step
     dt = target_time - state.time
-    if wake.quad_count > 0:
-        # Get wake induced velocity
-        wake_ind_vel = _compute_induced_velocity(
-            time=target_time,
-            tol=tol,
-            mesh=geometry.mesh_joined,
-            positions=pos,
-            line_circulation=out_circ,
-            wake=wake,
-            flow_cond=flow_cond,
-            target=wake.positions,
-            symmetry_plane=symmetry_plane,
-            out=work_wake_1[: wake.quad_count],
-            tmp=work_wake_2[: wake.quad_count],
-            n_threads=n_threads,
-        )
-
-    else:
-        wake_ind_vel = None
 
     induced_vel: npt.NDArray[np.double] | None = None
     match state.settings.wake_settings.wake_shedder:
@@ -1105,7 +1073,7 @@ def update_simulation_state(
                 positions=pos,
                 line_circulation=out_circ,
                 wake=wake,
-                flow_cond=flow_cond,
+                flow_velocity=settings.get_flow_velocity,
                 target=pos,
                 symmetry_plane=symmetry_plane,
                 out=work_velocity_p1,
@@ -1156,7 +1124,7 @@ def update_simulation_state(
                 positions=pos,
                 line_circulation=out_circ,
                 wake=wake,
-                flow_cond=flow_cond,
+                flow_velocity=settings.get_flow_velocity,
                 target=shed_pos,
                 symmetry_plane=symmetry_plane,
                 n_threads=n_threads,
@@ -1176,7 +1144,22 @@ def update_simulation_state(
         new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[:, 0, :]
 
         # Finally, update the wake if we can
-        if wake_ind_vel is not None:
+        if wake.quad_count > 0:
+            # Get wake induced velocity
+            wake_ind_vel = _compute_induced_velocity(
+                time=target_time,
+                tol=tol,
+                mesh=geometry.mesh_joined,
+                positions=pos,
+                line_circulation=out_circ,
+                wake=wake,
+                flow_velocity=settings.get_flow_velocity,
+                target=wake.positions,
+                symmetry_plane=symmetry_plane,
+                out=work_wake_1[: wake.quad_count],
+                tmp=work_wake_2[: wake.quad_count],
+                n_threads=n_threads,
+            )
             # update the wake model
             out_wake = wake = wake.update_wake(
                 dt=dt, velocities=wake_ind_vel, out_state=out_wake
@@ -1190,7 +1173,22 @@ def update_simulation_state(
             out_state=out_wake,
         )
 
-    elif wake_ind_vel is not None and dt != 0:
+    elif wake.quad_count > 0 and dt != 0:
+        # Get wake induced velocity
+        wake_ind_vel = _compute_induced_velocity(
+            time=target_time,
+            tol=tol,
+            mesh=geometry.mesh_joined,
+            positions=pos,
+            line_circulation=out_circ,
+            wake=wake,
+            flow_velocity=settings.get_flow_velocity,
+            target=wake.positions,
+            symmetry_plane=symmetry_plane,
+            out=work_wake_1[: wake.quad_count],
+            tmp=work_wake_2[: wake.quad_count],
+            n_threads=n_threads,
+        )
         # update the wake model
         out_wake = wake.update_wake(dt=dt, velocities=wake_ind_vel, out_state=out_wake)
 

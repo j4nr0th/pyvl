@@ -48,16 +48,6 @@ related to different aspects of the solver.
 While the other categories are described below, more information about :class:`SolverSettings`
 can be found :ref:`here <pyvl.solver_settings>`
 
-Describing Flow
-~~~~~~~~~~~~~~~
-
-Besides geometry, the flow conditions need to be described. This is done by using a subtype
-of :class:`FlowConditions`. This is an abstract base class (inherits from :class:`abc.ABC`), which
-means it defines methods which must be implemented. For most basic cases this is unnecessary, as
-almost all common cases can be easily be represented by the subtypes implemented in the :mod:`pyvl`
-module. More information about the base class and subtypes already implemented is provided
-:ref:`here <pyvl.flow_conditions>`.
-
 Adjusting the Model
 ~~~~~~~~~~~~~~~~~~~
 
@@ -109,7 +99,6 @@ which allow for these values to be computed.
 
     reference_frame
     geometry
-    flow_conditions
     model_settings
     solver_settings
     output_settings

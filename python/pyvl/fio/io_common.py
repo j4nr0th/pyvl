@@ -228,6 +228,12 @@ class HirearchicalMap(MutableMapping[str, Any]):
             The scalar associated with the key.
         """
         value = self._map[key]
+        if isinstance(value, (np.integer)):
+            return int(value)
+
+        if isinstance(value, (np.floating)):
+            return float(value)
+
         if not isinstance(value, (int, float)):
             raise TypeError(
                 f"The value was not an int or float but {type(value).__name__}"

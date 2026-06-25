@@ -1,6 +1,7 @@
 """Test the solver module functions."""
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 from pyvl.cvl import (
     Mesh,
@@ -9,7 +10,6 @@ from pyvl.cvl import (
     quad_induction,
     quad_normal_induction,
 )
-from pyvl.flow_conditions import FlowConditionsUniform
 from pyvl.geometry import Geometry, SimulationGeometry
 from pyvl.settings import (
     ModelSettings,
@@ -26,6 +26,20 @@ from pyvl.solver import (
     update_simulation_state,
 )
 from pyvl.wake import WakeState
+
+
+def _random_flow_velocity(
+    time: float,
+    positions: npt.NDArray[np.double],
+    out_array: npt.NDArray[np.double] | None = None,
+):
+    """Return random flow velocity for testing."""
+    del time
+    if out_array is None:
+        out_array = np.empty_like(positions)
+    # Some random function
+    out_array[:] = 3 * positions**2 - 2 * positions + 1
+    return out_array
 
 
 def make_square_geometry(
@@ -47,10 +61,13 @@ def basic_setup():
     geo = make_square_geometry()
     sim_geo = SimulationGeometry.from_geometries(geo)
 
-    flow_cond = FlowConditionsUniform(1.0, 0.0, 0.0)
     wake_settings = WakeSettings(WakeShedderUniform(np.array([0], dtype=np.uint)))
     model_settings = ModelSettings(vortex_limit=1e-6)
-    settings = SolverSettings(flow_cond, model_settings, wake_settings)
+    settings = SolverSettings(
+        model_settings=model_settings,
+        flow_velocity=(1.0, 0.0, 0.0),
+        wake_settings=wake_settings,
+    )
 
     return sim_geo, settings
 
@@ -150,7 +167,7 @@ def test_compute_induced_velocity_forwards_symmetry_plane(basic_setup):
         positions=positions,
         line_circulation=line_circulation,
         wake=wake,
-        flow_cond=None,
+        flow_velocity=None,
         target=target,
         symmetry_plane=plane,
     )
@@ -205,7 +222,7 @@ def test_update_simulation_state_forwards_symmetry_plane():
     geometry = make_square_geometry(reference_frame=moving_frame)
     sim_geo = SimulationGeometry.from_geometries(geometry)
     settings = SolverSettings(
-        flow_conditions=FlowConditionsUniform(0.0, 0.0, 1.0),
+        flow_velocity=(0.0, 0.0, 1.0),
         model_settings=ModelSettings(
             vortex_limit=1e-6,
             symmetry_plane=plane,
@@ -307,7 +324,6 @@ def test_induction_two_triangles_equal_to_quad():
 
     # make empty conditions
     empty_wake = WakeState.empty(1)
-    some_flow_conditions = FlowConditionsUniform(vx=2, vy=3, vz=4, rho=1e-3, p_stat=5)
     # Check with constant circulation for both
     tol = 1e-6
     # Use 4 random induction values for circulation
@@ -323,7 +339,7 @@ def test_induction_two_triangles_equal_to_quad():
         positions=positions,
         line_circulation=cv,
         wake=empty_wake,
-        flow_cond=some_flow_conditions,
+        flow_velocity=_random_flow_velocity,
         target=tgt,
     )
     assert velocity_q.shape == tgt.shape
@@ -336,7 +352,7 @@ def test_induction_two_triangles_equal_to_quad():
         # The center line would be zero
         line_circulation=np.array((cv[0], cv[1], 0, cv[2], cv[3])),
         wake=empty_wake,
-        flow_cond=some_flow_conditions,
+        flow_velocity=_random_flow_velocity,
         target=tgt,
     )
     assert velocity_t.shape == tgt.shape
@@ -521,12 +537,10 @@ def test_state_update():
         )
     )
     # Pick some (pseudo) random flow conditions
-    flow_conditions = FlowConditionsUniform(
-        vx=rng.random(), vy=rng.random(), vz=rng.random()
-    )
+    flow_conditions = _random_flow_velocity
     # Settings have nothing interesting besides the flow conditions
     settings = SolverSettings(
-        flow_conditions=flow_conditions, model_settings=ModelSettings(vortex_limit=1e-6)
+        flow_velocity=flow_conditions, model_settings=ModelSettings(vortex_limit=1e-6)
     )
     # Create new empty state
     state = SolverState.create_new(time=0, geometry=sim_geo, settings=settings)
@@ -545,7 +559,7 @@ def test_state_update():
         target_positions=tgt.reshape(1, 3),
     )
     # Get the flow velocity at the CP
-    flow_vel = flow_conditions.get_velocity(time=target_time, positions=tgt)
+    flow_vel = flow_conditions(time=target_time, positions=tgt)
 
     # Normal flow through CP should be (basically) zero for the no penetration condition
     assert np.isclose(np.dot(ind_vel + flow_vel, normal), 0)

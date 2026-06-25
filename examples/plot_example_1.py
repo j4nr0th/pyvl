@@ -49,17 +49,6 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 # solver.
 #
 
-# %%
-#
-# First, there's the :class:`FlowConditions`. This is an :class:`abc.ABC` intended to be
-# subclassed in case anything more specific is required. If a constant free-stream
-# velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
-# be used for constant free-stream.
-
-v_inf = 1
-rho_inf = 1
-flow_conditions = pyvl.FlowConditionsUniform(0, 0, v_inf, rho=rho_inf)
-
 
 # %%
 #
@@ -73,8 +62,9 @@ model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 # %%
 #
 # These can now be combined togethere into the :class:`SolverSettings` object.
-
-settings = pyvl.SolverSettings(flow_conditions, model_settings)
+v_inf = 1.0
+rho_inf = 1.0
+settings = pyvl.SolverSettings(flow_velocity=(0, 0, v_inf), model_settings=model_settings)
 
 # %%
 #
@@ -145,7 +135,8 @@ for i, state in enumerate(results):
 # :math:`\frac{1}{2} \rho {v_\infty}^2`. Further away the pressure drop decreases.
 
 pressure_fields = [
-    pyvl.postprocess.compute_dynamic_pressure(state, mesh.points) for state in results
+    pyvl.postprocess.compute_dynamic_pressure(state, mesh.points, density=rho_inf)
+    for state in results
 ]
 
 for field, state in zip(pressure_fields, results):

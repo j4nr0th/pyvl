@@ -5,11 +5,8 @@ from pathlib import Path
 
 import meshio as mio
 import numpy as np
-import pytest
 from pyvl import Geometry, ReferenceFrame, fio, mesh_from_mesh_io
-from pyvl.fio.io_common import HirearchicalMap, PythonSerializer
-from pyvl.fio.type_resolution import flow_conditions_from_serial
-from pyvl.flow_conditions import FlowConditionsUniform
+from pyvl.fio.io_common import PythonSerializer
 from pyvl.geometry import rf_to_serial
 
 
@@ -140,60 +137,3 @@ def test_geometry_serialization_json() -> None:
     assert geo1.label == geo.label
     assert np.all(geo1.positions == geo.positions)
     assert geo1.msh == geo.msh
-
-
-def test_flow_conditions_unknown_type() -> None:
-    """Test that unknown FlowConditions type raises TypeError."""
-    group = HirearchicalMap()
-    group.insert_string("type", "pyvl.nonexistent.CustomFlowConditions")
-    data = HirearchicalMap()
-    group.insert_hirearchical_map("data", data)
-
-    with pytest.raises(TypeError, match="Unknown FlowConditions type"):
-        flow_conditions_from_serial(group)
-
-
-def test_flow_conditions_custom_types() -> None:
-    """Test that custom types can be registered for FlowConditions."""
-
-    class CustomFlowConditions(FlowConditionsUniform):
-        """Custom flow conditions for testing."""
-
-        pass
-
-    group = HirearchicalMap()
-    group.insert_string("type", "my.custom.FlowConditions")
-    data = FlowConditionsUniform(1.0, 2.0, 3.0).save()
-    group.insert_hirearchical_map("data", data)
-
-    custom_types = {"my.custom.FlowConditions": CustomFlowConditions}
-    with pytest.raises(
-        TypeError, match="is registered in custom_types but allow_override is False"
-    ):
-        flow_conditions_from_serial(group, custom_types, allow_override=False)
-
-    fc = flow_conditions_from_serial(group, custom_types, allow_override=True)
-    assert isinstance(fc, CustomFlowConditions)
-
-
-def test_flow_conditions_override() -> None:
-    """Test that custom types can override built-in FlowConditions."""
-
-    class CustomFlowConditions(FlowConditionsUniform):
-        """Custom flow conditions for testing."""
-
-        pass
-
-    group = HirearchicalMap()
-    group.insert_string("type", "pyvl.flow_conditions.FlowConditionsUniform")
-    data = FlowConditionsUniform(1.0, 2.0, 3.0).save()
-    group.insert_hirearchical_map("data", data)
-
-    custom_types = {"pyvl.flow_conditions.FlowConditionsUniform": CustomFlowConditions}
-    with pytest.raises(
-        TypeError, match="is registered in custom_types but allow_override is False"
-    ):
-        flow_conditions_from_serial(group, custom_types, allow_override=False)
-
-    fc = flow_conditions_from_serial(group, custom_types, allow_override=True)
-    assert isinstance(fc, CustomFlowConditions)

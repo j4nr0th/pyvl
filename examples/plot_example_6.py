@@ -46,7 +46,7 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 
 v_inf = 10
-flow_conditions = pyvl.FlowConditionsUniform(v_inf, 0.0, 0.0)
+flow_velocity = (v_inf, 0.0, 0.0)
 
 # Plot it just to show what it looks like
 sim_geo.polydata_at_time(0.0).plot(interactive=False)
@@ -70,7 +70,11 @@ wake_settings = pyvl.WakeSettings(
     wake_shedder=pyvl.WakeShedderUniform(te_lines),
     wake_element_capacity=len(te_lines) * NT * 2,
 )
-settings = pyvl.SolverSettings(flow_conditions, model_settings, wake_settings)
+settings = pyvl.SolverSettings(
+    flow_velocity=flow_velocity,
+    model_settings=model_settings,
+    wake_settings=wake_settings,
+)
 
 
 # %%
@@ -109,7 +113,11 @@ def plot_symmetry_plane_velocities(have_symmetry: bool, out_name: str):
         )
     else:
         model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
-    settings = pyvl.SolverSettings(flow_conditions, model_settings, wake_settings)
+    settings = pyvl.SolverSettings(
+        flow_velocity=flow_velocity,
+        model_settings=model_settings,
+        wake_settings=wake_settings,
+    )
     results = pyvl.run_solver(sim_geo, settings, times=times, n_threads=4)
 
     velocities = [

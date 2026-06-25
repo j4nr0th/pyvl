@@ -36,9 +36,7 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 alpha = np.radians(10)  # 10 degrees
 v_inf = 10  # 10 m/s
-flow_conditions = pyvl.FlowConditionsUniform(
-    v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
-)
+flow_velocity = (v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha))
 model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
 
 # Plot it just to show what it looks like
@@ -49,7 +47,7 @@ sim_geo.polydata_at_time(0.0).plot(interactive=False)
 # The case will be run with and without the wake model, to show the difference between
 # the two cases.
 
-settings = pyvl.SolverSettings(flow_conditions, model_settings)
+settings = pyvl.SolverSettings(flow_velocity=flow_velocity, model_settings=model_settings)
 
 # %%
 #
@@ -185,8 +183,8 @@ te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 ands, asur = sim_geo.line_adjecency_information(te_lines)
 
 settings = pyvl.SolverSettings(
-    flow_conditions,
-    pyvl.ModelSettings(
+    flow_velocity=flow_velocity,
+    model_settings=pyvl.ModelSettings(
         vortex_limit=1e-6,
     ),
     wake_settings=pyvl.WakeSettings(

@@ -39,9 +39,7 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 alpha = np.radians(10)  # 10 degrees
 v_inf = 10  # 10 m/s
-flow_conditions = pyvl.FlowConditionsUniform(
-    v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
-)
+flow_velocity = (v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha))
 
 # %%
 #
@@ -82,7 +80,9 @@ wake_settings = pyvl.WakeSettings(
 # :class:`WakeModelLineExplicitUnsteady`.
 
 settings = pyvl.SolverSettings(
-    flow_conditions, model_settings, wake_settings=wake_settings
+    flow_velocity=flow_velocity,
+    model_settings=model_settings,
+    wake_settings=wake_settings,
 )
 
 results = pyvl.run_solver(sim_geo, settings, times=times)
@@ -151,10 +151,11 @@ for vel, state in zip(velocities, results, strict=True):
 #
 
 forces = [pyvl.postprocess.circulatory_forces(state) for state in results]
+rho_inf = 1
 
 for field, state in zip(forces, results, strict=True):
     total_force = np.sum(field, axis=0)
-    cl = np.linalg.norm(total_force / (0.5 * v_inf**2))
+    cl = np.linalg.norm(total_force / (0.5 * rho_inf * v_inf**2))
     print(
         f"Total force: {total_force}. Cl={float(cl):.3f} while theory says "
         f"{float(2 * np.pi * alpha):.3f}"

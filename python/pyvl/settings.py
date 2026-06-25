@@ -1,17 +1,18 @@
 """Implementation of the flow solver settings."""
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, Self
 
 import numpy as np
 import numpy.typing as npt
 
-from pyvl._typing import CallableDeserializer, CallableSerializer
+from pyvl._typing import (
+    CallableDeserializer,
+    CallableSerializer,
+    FlowConditionSpecifications,
+)
 from pyvl.cvl import TransformationPlane
 from pyvl.fio.io_common import HirearchicalMap
-from pyvl.fio.type_resolution import flow_conditions_from_serial
-from pyvl.flow_conditions import FlowConditions
 from pyvl.geometry import SimulationGeometry
 
 
@@ -211,9 +212,16 @@ class SolverSettings:
         If not specified, no wake will be shed.
     """
 
-    flow_conditions: FlowConditions
     model_settings: ModelSettings
+    flow_velocity: FlowConditionSpecifications | None = None
     wake_settings: WakeSettings = WakeSettings()
+
+    def __post_init__(self) -> None:
+        """Check that the flow conditions are valid."""
+        if self.flow_velocity is not None:
+            if not callable(self.flow_velocity):
+                v = np.array(self.flow_velocity, dtype=np.float64).reshape(3)
+                object.__setattr__(self, "flow_velocity", v)
 
     def save(self, serializer: CallableSerializer) -> HirearchicalMap:
         """Serialize the object into a HirearchicalMap.
@@ -225,15 +233,12 @@ class SolverSettings:
         """
         hm = HirearchicalMap()
         # Flow conditiotns
-        fc = HirearchicalMap()
-        fc.insert_string(
-            "type",
-            type(self.flow_conditions).__module__
-            + "."
-            + type(self.flow_conditions).__name__,
-        )
-        fc.insert_hirearchical_map("data", self.flow_conditions.save())
-        hm.insert_hirearchical_map("flow_conditions", fc)
+        if self.flow_velocity is not None:
+            if callable(self.flow_velocity):
+                hm.insert_string("flow_velocity_callable", serializer(self.flow_velocity))
+            else:
+                hm.insert_array("flow_velocity_constant", self.flow_velocity)
+
         # Model settings
         hm.insert_hirearchical_map("model_settings", self.model_settings.save())
         # Wake settings
@@ -241,13 +246,7 @@ class SolverSettings:
         return hm
 
     @classmethod
-    def load(
-        cls,
-        hmap: HirearchicalMap,
-        deserializer: CallableDeserializer,
-        custom_types: Mapping[str, type] | None = None,
-        allow_override: bool = False,
-    ) -> Self:
+    def load(cls, hmap: HirearchicalMap, deserializer: CallableDeserializer) -> Self:
         """Deserialize the object from a HirearchicalMap.
 
         Parameters
@@ -255,27 +254,80 @@ class SolverSettings:
         hmap : HirearchicalMap
             Serialized state of the :class:`SolverSettings` object created by a call
             to :meth:`SolverSettings.save`.
-        custom_types : Mapping[str, type], optional
-            A mapping of type names to types for custom subclasses of FlowConditions.
-        allow_override : bool, default: False
-            If True, custom types can override built-in types.
 
         Returns
         -------
         Self
             Deserialized :class:`SolverSettings` object.
         """
-        fc = hmap.get_hirearchical_map("flow_conditions")
-        flow_conditions = flow_conditions_from_serial(fc, custom_types, allow_override)
-
         # Model settings
         model_settings = ModelSettings.load(hmap.get_hirearchical_map("model_settings"))
         # Wake settings
         wake_settings = WakeSettings.load(
             hmap.get_hirearchical_map("wake_settings"), deserializer
         )
+        flow_vel: None | FlowConditionSpecifications = None
+        if "flow_velocity_callable" in hmap:
+            flow_vel = deserializer(hmap.get_string("flow_velocity_callable"))
+
+        if "flow_velocity_constant" in hmap:
+            assert flow_vel is None, (
+                "Both flow_velocity_callable and flow_velocity_constant are specified."
+            )
+            flow_vel = hmap.get_array("flow_velocity_constant")
+
         return cls(
-            flow_conditions=flow_conditions,
+            flow_velocity=flow_vel,
             model_settings=model_settings,
             wake_settings=wake_settings,
         )
+
+    def get_flow_velocity(
+        self,
+        time: float,
+        positions: npt.ArrayLike,
+        out_array: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        """Get the flow velocity at a given time and position.
+
+        Parameters
+        ----------
+        time : float
+            The current simulation time.
+
+        positions : array_like
+            Positions in the global coordinate system.
+
+        out_array : array, optional
+            Array to write the flow velocity into. If None, should be created.
+
+        Returns
+        -------
+        array_like
+            The flow velocity at the given time and position.
+        """
+        pos = np.asarray(positions, dtype=np.double)
+        if pos.ndim <= 1 or pos.shape[-1] != 3:
+            raise ValueError(
+                "Position must be a 1D array of length 3 or a 2D array with shape (N, 3)."
+            )
+        if out_array is None:
+            if self.flow_velocity is None:
+                return np.zeros_like(pos, dtype=np.double)
+            out_array = np.empty_like(pos, dtype=np.double)
+
+        if self.flow_velocity is None:
+            out_array.fill(0.0)
+            return out_array
+
+        if callable(self.flow_velocity):
+            # Callable, so call it, then ensure the output has the correct type and shape
+            return np.asarray(
+                self.flow_velocity(time, pos, out_array), dtype=np.double
+            ).reshape(pos.shape)
+        else:
+            vx, vy, vz = self.flow_velocity  # type: ignore __post_init__ ensures this is a 3-element array
+            out_array[..., 0] = vx
+            out_array[..., 1] = vy
+            out_array[..., 2] = vz
+            return out_array

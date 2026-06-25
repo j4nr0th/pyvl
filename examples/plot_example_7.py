@@ -52,15 +52,16 @@ base_geo = blade_mesh.mesh_geometry(
 )
 blades = []
 
+RPS = 10  # 10 rev/s
+
 
 def blade_orientation_function(t: float) -> tuple[float, float, float]:
     """Return the orientation of the blade at time t."""
-    return (0.0, 0.0, OMEGA * np.mod(t, 1))
+    return (0.0, 0.0, 2 * np.pi * RPS * np.mod(t, 1))
 
 
-OMEGA = 3 * 2 * np.pi  # 3 rev/s
 base_rotating_rf = pyvl.ReferenceFrame(
-    theta=blade_orientation_function, rotation=(0, 0, OMEGA)
+    theta=blade_orientation_function, rotation=(0, 0, 2 * np.pi * RPS)
 )
 for i, theta in enumerate(np.linspace(0, 2 * np.pi, N_BLADES, endpoint=False)):
     # if i != 1:
@@ -93,7 +94,7 @@ plotter.show()
 #
 # With the geometry defined, we can set up the simulation settings.
 
-v_inf = 0.0
+v_inf = 0.5
 
 shedding_lines: list[int] = []
 line_offset = 0
@@ -121,32 +122,31 @@ plotter.show()
 
 
 # Custom flow conditions
-class FlowConditionsCustom(pyvl.FlowConditionsUniform):
-    """Custom flow conditions that stop the flow after a certain time."""
 
-    def __init__(self, vx: float, vy: float, vz: float, t_stop: float):
-        self.t_stop = t_stop
-        super().__init__(vx=vx, vy=vy, vz=vz)
+t_stop = 0.5  # Stop the flow after this time
 
-    def get_velocity(
-        self,
-        time: float,
-        positions: npt.NDArray[np.double],
-        out_array: npt.NDArray[np.double] | None = None,
-    ) -> npt.NDArray[np.double]:
-        """Override the get_velocity method to stop the flow after t_stop."""
-        if time < self.t_stop:
-            return super().get_velocity(time, positions, out_array)
 
+def flow_velocity(
+    time: float,
+    positions: npt.NDArray[np.double],
+    out_array: npt.NDArray[np.double] | None = None,
+) -> npt.NDArray[np.double]:
+    """Override the get_velocity method to stop the flow after t_stop."""
+    if time < t_stop:
         if out_array is None:
-            return np.zeros_like(positions)
-
-        out_array[...] = 0
+            return np.full_like(positions, fill_value=(0.0, 0.0, -v_inf))
+        out_array[...] = (0.0, 0.0, -v_inf)
         return out_array
+
+    if out_array is None:
+        return np.zeros_like(positions)
+
+    out_array[...] = 0
+    return out_array
 
 
 settings = pyvl.SolverSettings(
-    flow_conditions=FlowConditionsCustom(vx=0.0, vy=0.0, vz=-v_inf, t_stop=1.0),
+    flow_velocity=flow_velocity,
     model_settings=pyvl.ModelSettings(
         vortex_limit=1e-10,
         # pyvl.TransformationPlane(origin=(0, -0.5, 0), normal=(0, 0, 1)),
@@ -169,7 +169,9 @@ settings = pyvl.SolverSettings(
 # or deserialize it. For this example, we will use a predefined serializer that can
 # handle the callable we are using.
 
-serializer = pyvl.PredefinedSerializer(rotor_motion_fn=blade_orientation_function)
+serializer = pyvl.PredefinedSerializer(
+    rotor_motion_fn=blade_orientation_function, flow_velocity=flow_velocity
+)
 
 
 out_dir = Path("output", "example_7")
@@ -192,7 +194,7 @@ output_settings = pyvl.OutputSettings.new_simple(
 
 # Compute time steps based on angular velocity
 N_PER_REV = 96
-dt = OMEGA / (2 * np.pi * N_PER_REV)
+dt = 1 / (RPS * N_PER_REV)
 
 # Do not run more than this many steps
 MAX_STEPS = 100
@@ -200,17 +202,14 @@ MAX_STEPS = 100
 if not out_dir.exists():
     out_dir.mkdir(exist_ok=True, parents=True)
     # Run the actual solver to steady state
-    try:
-        pyvl.run_solver_steady_state(
-            geometry=sim_geo,
-            settings=settings,
-            dt=dt,
-            max_steps=MAX_STEPS,
-            output_settings=output_settings,
-            n_threads=4,
-        )
-    except Exception as e:
-        print(f"An error occurred during the simulation: {e}")
+    pyvl.run_solver_steady_state(
+        geometry=sim_geo,
+        settings=settings,
+        dt=dt,
+        max_steps=MAX_STEPS,
+        output_settings=output_settings,
+        n_threads=4,
+    )
 
 
 # %%
@@ -234,9 +233,16 @@ for res_file in out_dir.iterdir():
     result = pyvl.SolverState.load_from_file(
         res_file, deserializer=serializer.deserialize
     )
-    plotter.add_mesh(
-        result.geometry.polydata_at_time(result.time), color="lightblue", name="rotor"
-    )
+    point_circ = np.zeros(result.geometry.mesh_joined.n_points, dtype=np.double)
+    for i_line, line_circ in enumerate(result.circulation):
+        point_circ[np.array(result.geometry.mesh_joined.get_line_points(i_line))] += (
+            line_circ
+        )
+
+    rotor_pd = result.geometry.polydata_at_time(result.time)
+    rotor_pd.point_data["circulation"] = point_circ
+
+    plotter.add_mesh(rotor_pd, color="lightblue", name="rotor", scalars="circulation")
     if result.wake.quad_count > 0:
         plotter.add_mesh(
             result.wake.as_polydata().extract_all_edges(), color="orange", name="wake"
