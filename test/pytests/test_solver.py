@@ -152,14 +152,15 @@ def test_compute_induced_velocity_forwards_symmetry_plane(basic_setup):
     positions = geometry.positions
     target = np.array([[0.25, 0.25, 0.25]], dtype=np.double)
     line_circulation = geometry.msh.line_circulations(np.array([1.0, -0.5]))
-    wake = WakeState.empty(1).add_quads(
+    wake = WakeState.empty(1).add_lines(
         new_positions=np.array(
             [
-                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                [[1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
             ],
             dtype=np.double,
         ),
-        new_circulations=np.array([1.0], dtype=np.double),
+        new_circulations=np.array([1.0, -2.0], dtype=np.double),
     )
 
     result = _compute_induced_velocity(
@@ -381,19 +382,21 @@ def test_wake_induction_same_as_mesh():
     msh = Mesh(n_points=11, connectivity=quad_conn)
     positions = rng.random((msh.n_points, 3))
 
-    quad_pos = positions[quad_conn.reshape(-1), :].reshape(*quad_conn.shape, 3)
     circ = rng.random(msh.n_surfaces)
 
-    wake = WakeState.empty(4)
-    wake = wake.add_quads(quad_pos, circ)
-
-    line_circ = msh.line_circulations(circ)
+    wake = WakeState.empty(msh.n_surfaces * 4)
+    for c, quad in zip(circ, quad_conn, strict=True):
+        for i in range(4):
+            # Add the wake lines for each quad
+            line_pos = np.array((positions[quad[i], :], positions[quad[(i + 1) % 4], :]))
+            wake = wake.add_lines(line_pos.reshape(1, 2, 3), np.array((c,)))
 
     # Compute induced velocity with both the mesh and the wake
     tol = 1e-6
     tgt = rng.random((33, 3)) * 4 - 2  # Random numbers between -2 and +2
     wake_ind = wake.induced_velocity(tol=tol, positions=tgt)
 
+    line_circ = msh.line_circulations(circ)
     mesh_ind = msh.induction_velocity(
         tol=tol, positions=positions, control_points=tgt, line_circulation=line_circ
     )
