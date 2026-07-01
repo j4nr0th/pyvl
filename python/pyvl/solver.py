@@ -890,6 +890,63 @@ def _compute_induced_velocity(
     return out.reshape(out_shape, copy=False)
 
 
+def _stitch_repeated_shed_quads(
+    new_quads: npt.NDArray[np.double],
+    shedding_lines: npt.NDArray[np.intp],
+    wake: WakeState,
+    previous_shed_lines: npt.NDArray[np.intp],
+    updated_wake: WakeState,
+) -> None:
+    """Align new shed quads with wake quads that were already present.
+
+    When a line is shed again on the next iteration, the new quad should close on the
+    advected wake quad from the previous iteration instead of extending it from the
+    newly induced velocity again.
+    """
+    if (
+        wake.quad_count == 0
+        or shedding_lines.size == 0
+        or previous_shed_lines.size == 0
+        or previous_shed_lines.size > wake.capacity
+    ):
+        return
+
+    previous_start = (
+        wake.next_insertion_index - previous_shed_lines.size
+    ) % wake.capacity
+
+    previous_index = previous_start
+    previous_line_index = 0
+    current_line_index = 0
+    while (
+        previous_line_index < previous_shed_lines.size
+        and current_line_index < shedding_lines.size
+    ):
+        previous_line = int(previous_shed_lines[previous_line_index])
+        current_line = int(shedding_lines[current_line_index])
+
+        if previous_line < current_line:
+            previous_index = (previous_index + 1) % wake.capacity
+            previous_line_index += 1
+            continue
+
+        if current_line < previous_line:
+            current_line_index += 1
+            continue
+
+        # The trailing edge of the new quad should attach to the leading edge of the
+        # advected quad from the previous iteration.
+        new_quads[current_line_index, 2, :] = updated_wake.quad_positions[
+            previous_index, 1, :
+        ]
+        new_quads[current_line_index, 3, :] = updated_wake.quad_positions[
+            previous_index, 0, :
+        ]
+        previous_index = (previous_index + 1) % wake.capacity
+        previous_line_index += 1
+        current_line_index += 1
+
+
 def update_simulation_state(
     state: SolverState,
     target_time: float,
@@ -1062,7 +1119,7 @@ def update_simulation_state(
     induced_vel: npt.NDArray[np.double] | None = None
     match state.settings.wake_settings.wake_shedder:
         case WakeShedderUniform() as uniform_shedder:
-            shedding_lines = uniform_shedder.indices
+            shedding_lines = np.unique(uniform_shedder.indices)
 
         case WakeShedderCallback() as callback_shedder:
             # Compute the (relative) point velocities
@@ -1081,14 +1138,16 @@ def update_simulation_state(
             )
             relative_vel = np.subtract(induced_vel, vel, out=vel)
 
-            shedding_lines = np.asarray(
-                callback_shedder.shedder(
-                    geometry=state.geometry,
-                    positions=pos,
-                    velocities=relative_vel,
-                    time=target_time,
-                ),
-                np.intp,
+            shedding_lines = np.unique(
+                np.asarray(
+                    callback_shedder.shedder(
+                        geometry=state.geometry,
+                        positions=pos,
+                        velocities=relative_vel,
+                        time=target_time,
+                    ),
+                    np.intp,
+                )
             )
             if shedding_lines.ndim != 1:
                 raise ValueError(
@@ -1105,6 +1164,10 @@ def update_simulation_state(
         raise ValueError("Shed line index is out of bounds for the geometry.")
 
     if len(shedding_lines) and dt != 0:
+        # Make sure we are not shedding too many
+        if shedding_lines.size > wake.capacity:
+            shedding_lines = shedding_lines[-wake.capacity :]
+
         # Points each line should take its velocity from
         shedding_points = np.array(
             [geometry.mesh_joined.get_line_points(ln) for ln in shedding_lines], np.uint
@@ -1164,6 +1227,14 @@ def update_simulation_state(
             out_wake = wake = wake.update_wake(
                 dt=dt, velocities=wake_ind_vel, out_state=out_wake
             )
+
+        _stitch_repeated_shed_quads(
+            new_quads=new_quads,
+            shedding_lines=np.asarray(shedding_lines, np.intp),
+            wake=state.wake,
+            previous_shed_lines=state.shed_lines,
+            updated_wake=out_wake,
+        )
 
         # Add wake quads
         out_wake = wake.add_quads(

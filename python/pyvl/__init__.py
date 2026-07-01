@@ -39,6 +39,7 @@ from pyvl.solver import OutputSettings as OutputSettings
 from pyvl.solver import SolverState as SolverState
 from pyvl.solver import run_solver as run_solver
 from pyvl.solver import run_solver_steady_state as run_solver_steady_state
+from pyvl.solver import update_simulation_state as update_simulation_state
 
 # Wake
 from pyvl.wake import WakeState as WakeState

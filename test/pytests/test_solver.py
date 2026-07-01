@@ -24,6 +24,7 @@ from pyvl.solver import (
     SolverState,
     SolverSystem,
     _compute_induced_velocity,
+    _stitch_repeated_shed_quads,
     run_solver,
     update_simulation_state,
 )
@@ -244,6 +245,105 @@ def test_update_simulation_state_forwards_symmetry_plane():
 
     assert new_state.time == 1.0
     assert not np.array_equal(before, system._self_induction_diags[geometry.label])
+
+
+def test_stitch_repeated_shed_quads_uses_advected_previous_wake():
+    """Check repeated shed lines stitch to the advected wake quad from last step."""
+    wake = WakeState(
+        quad_positions=np.array(
+            [
+                [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [12.0, 0.0, 0.0], [13.0, 0.0, 0.0]],
+                [[20.0, 0.0, 0.0], [21.0, 0.0, 0.0], [22.0, 0.0, 0.0], [23.0, 0.0, 0.0]],
+                [[30.0, 0.0, 0.0], [31.0, 0.0, 0.0], [32.0, 0.0, 0.0], [33.0, 0.0, 0.0]],
+            ],
+            dtype=np.double,
+        ),
+        quad_circulations=np.array([1.0, 2.0, 3.0], dtype=np.double),
+        quad_count=3,
+        next_insertion_index=3,
+    )
+    previous_shed_lines = np.array([2, 5, 7], dtype=np.intp)
+    updated_wake = wake.update_wake(
+        dt=0.5,
+        velocities=np.array(
+            [
+                [[1.0, 0.0, 0.0]] * 4,
+                [[2.0, 0.0, 0.0]] * 4,
+                [[3.0, 0.0, 0.0]] * 4,
+            ],
+            dtype=np.double,
+        ),
+    )
+    new_quads = np.zeros((2, 4, 3), dtype=np.double)
+    shedding_lines = np.array([5, 8], dtype=np.intp)
+
+    _stitch_repeated_shed_quads(
+        new_quads=new_quads,
+        shedding_lines=shedding_lines,
+        wake=wake,
+        previous_shed_lines=previous_shed_lines,
+        updated_wake=updated_wake,
+    )
+
+    np.testing.assert_array_equal(
+        new_quads[0, 2:, :], updated_wake.quad_positions[1, 1::-1, :]
+    )
+    np.testing.assert_array_equal(new_quads[1], np.zeros((4, 3), dtype=np.double))
+
+
+def test_stitch_repeated_shed_quads_wraps_ring_buffer():
+    """Check repeated shed lines still stitch correctly after the wake wraps."""
+    first_batch = np.array(
+        [
+            [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [12.0, 0.0, 0.0], [13.0, 0.0, 0.0]],
+            [[20.0, 0.0, 0.0], [21.0, 0.0, 0.0], [22.0, 0.0, 0.0], [23.0, 0.0, 0.0]],
+        ],
+        dtype=np.double,
+    )
+    second_batch = np.array(
+        [
+            [[30.0, 0.0, 0.0], [31.0, 0.0, 0.0], [32.0, 0.0, 0.0], [33.0, 0.0, 0.0]],
+            [[40.0, 0.0, 0.0], [41.0, 0.0, 0.0], [42.0, 0.0, 0.0], [43.0, 0.0, 0.0]],
+        ],
+        dtype=np.double,
+    )
+
+    wake = WakeState.empty(3)
+    wake = wake.add_quads(first_batch, np.array([1.0, 2.0], dtype=np.double))
+    wake = wake.add_quads(second_batch, np.array([3.0, 4.0], dtype=np.double))
+    assert wake.quad_count == 3
+    assert wake.capacity == 3
+    assert wake.next_insertion_index == 1
+
+    updated_wake = wake.update_wake(
+        dt=0.5,
+        velocities=np.array(
+            [
+                [[1.0, 0.0, 0.0]] * 4,
+                [[2.0, 0.0, 0.0]] * 4,
+                [[3.0, 0.0, 0.0]] * 4,
+            ],
+            dtype=np.double,
+        ),
+    )
+
+    new_quads = np.zeros((2, 4, 3), dtype=np.double)
+    shedding_lines = np.array([4, 8], dtype=np.intp)
+
+    _stitch_repeated_shed_quads(
+        new_quads=new_quads,
+        shedding_lines=shedding_lines,
+        wake=wake,
+        previous_shed_lines=np.array([4, 8], dtype=np.intp),
+        updated_wake=updated_wake,
+    )
+
+    np.testing.assert_array_equal(
+        new_quads[0, 2:, :], updated_wake.quad_positions[2, 1::-1, :]
+    )
+    np.testing.assert_array_equal(
+        new_quads[1, 2:, :], updated_wake.quad_positions[0, 1::-1, :]
+    )
 
 
 def test_line_circulation():

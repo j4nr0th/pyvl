@@ -45,8 +45,8 @@ blade_mesh = meshing.VLBlade(
 )
 
 N_BLADES = 3
-N_SW = 20
-N_CW = 7
+N_SW = 40
+N_CW = 15
 base_geo = blade_mesh.mesh_geometry(
     spanwise_positions=N_SW, chordwise_positions=N_CW, label="blade1"
 )
@@ -123,7 +123,11 @@ plotter.show()
 
 # Custom flow conditions
 
-t_stop = 0.5  # Stop the flow after this time
+
+# Compute time steps based on angular velocity
+N_PER_REV = 72
+dt = 1 / (RPS * N_PER_REV)
+t_stop = 5 / RPS  # Stop the flow after this many rotations
 
 
 def flow_velocity(
@@ -192,12 +196,9 @@ output_settings = pyvl.OutputSettings.new_simple(
 # will be run for a number of time steps, and the results will be saved to the
 # output directory.
 
-# Compute time steps based on angular velocity
-N_PER_REV = 96
-dt = 1 / (RPS * N_PER_REV)
-
 # Do not run more than this many steps
-MAX_STEPS = 100
+MAX_STEPS = N_PER_REV * 5  # Run for 5 revolutions
+THREAD_CNT = 6  # Use 6 threads for the simulation
 
 if not out_dir.exists():
     out_dir.mkdir(exist_ok=True, parents=True)
@@ -208,7 +209,7 @@ if not out_dir.exists():
         dt=dt,
         max_steps=MAX_STEPS,
         output_settings=output_settings,
-        n_threads=4,
+        n_threads=THREAD_CNT,
     )
 
 
@@ -221,18 +222,19 @@ if not out_dir.exists():
 # results from the output directory, and then plot the results.
 
 plotter = pv.Plotter(off_screen=True, window_size=(800, 800))
-plotter.open_movie(out_dir / "rotor.mp4", framerate=10)
+plotter.open_movie(out_dir / "rotor-smoothed.mp4", framerate=60)
 
-plotter.set_position((3, 3, 2))
-plotter.set_focus((0, 0, -1))
+plotter.set_position((1, 1, 0.5))
+plotter.set_focus((0, 0, 0))
 
 for res_file in out_dir.iterdir():
     if res_file.suffix != ".json":
         continue
-    print(f"Loading results from {res_file}")
+    print(f"Loading results from {res_file}...", end="")
     result = pyvl.SolverState.load_from_file(
         res_file, deserializer=serializer.deserialize
     )
+    print(f" Results loaded. Time: {result.time:.4f}.")
     point_circ = np.zeros(result.geometry.mesh_joined.n_points, dtype=np.double)
     for i_line, line_circ in enumerate(result.circulation):
         point_circ[np.array(result.geometry.mesh_joined.get_line_points(i_line))] += (

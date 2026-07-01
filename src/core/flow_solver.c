@@ -1,7 +1,3 @@
-//
-// Created by jan on 19.11.2024.
-//
-
 #include "flow_solver.h"
 
 real3_t compute_mesh_line_induction(const real3_t *restrict positions, const real3_t control_point,

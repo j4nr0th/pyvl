@@ -37,3 +37,7 @@ target_link_libraries(test_to_points PRIVATE static_cvl ${TEST_MATH_LIB})
 add_test(NAME test_to_points COMMAND
         test_to_points "${CMAKE_SOURCE_DIR}/test/from_points/test_points.dat"
         "${CMAKE_SOURCE_DIR}/test/from_points/test_mesh.msh")
+
+add_executable(test_approx_atan math/test_approx_atan.c ${TEST_COMMON_FILES})
+target_link_libraries(test_approx_atan PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_approx_atan COMMAND test_approx_atan "1000")

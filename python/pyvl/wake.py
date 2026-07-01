@@ -170,21 +170,28 @@ class WakeState:
             out_positions = out_state.quad_positions
             out_circulations = out_state.quad_circulations
 
-        # Check how many we can add to the end of the array
-        append_count = min(new_quads, self.capacity - self.next_insertion_index)
-        out_positions[
-            self.next_insertion_index : self.next_insertion_index + append_count
-        ] = new_positions[:append_count]
-        out_circulations[
-            self.next_insertion_index : self.next_insertion_index + append_count
-        ] = new_circulations[:append_count]
-        out_insertion_index = self.next_insertion_index + append_count
-        if remainder := new_quads - append_count:
-            out_positions[:remainder] = new_positions[append_count:]
-            out_circulations[:remainder] = new_circulations[append_count:]
-            out_insertion_index = remainder
+        if new_quads >= self.capacity:
+            # If we have more new quads than capacity, we can only keep the last ones
+            out_positions[: self.capacity] = new_positions[-self.capacity :]
+            out_circulations[: self.capacity] = new_circulations[-self.capacity :]
+            out_insertion_index = 0
+            out_quad_count = self.capacity
+        else:
+            # Check how many we can add to the end of the array
+            append_count = min(new_quads, self.capacity - self.next_insertion_index)
+            out_positions[
+                self.next_insertion_index : self.next_insertion_index + append_count
+            ] = new_positions[:append_count]
+            out_circulations[
+                self.next_insertion_index : self.next_insertion_index + append_count
+            ] = new_circulations[:append_count]
+            out_insertion_index = self.next_insertion_index + append_count
+            if remainder := new_quads - append_count:
+                out_positions[:remainder] = new_positions[append_count:]
+                out_circulations[:remainder] = new_circulations[append_count:]
+                out_insertion_index = remainder
 
-        out_quad_count = min(self.quad_count + new_quads, self.capacity)
+            out_quad_count = min(self.quad_count + new_quads, self.capacity)
 
         return WakeState(
             quad_positions=out_positions,
