@@ -1104,9 +1104,47 @@ def update_simulation_state(
     if np.any(shedding_lines >= state.geometry.n_lines) or np.any(shedding_lines < 0):
         raise ValueError("Shed line index is out of bounds for the geometry.")
 
-    if dt != 0:
+    if len(shedding_lines) and dt != 0:
+        # Points each line should take its velocity from
+        shedding_points = np.array(
+            [geometry.mesh_joined.get_line_points(ln) for ln in shedding_lines], np.uint
+        )
+
+        shed_pos = pos[shedding_points.reshape(-1, copy=False), :].reshape(
+            -1, 2, 3, copy=False
+        )
+        new_quads = np.empty((shedding_lines.size, 4, 3), np.double)
+
+        if induced_vel is None:
+            # We do do not have computed point velocities, so compute it for only required
+            induced_vel = _compute_induced_velocity(
+                time=target_time,
+                tol=tol,
+                mesh=geometry.mesh_joined,
+                positions=pos,
+                line_circulation=out_circ,
+                wake=wake,
+                flow_velocity=settings.get_flow_velocity,
+                target=shed_pos,
+                symmetry_plane=symmetry_plane,
+                n_threads=n_threads,
+            )
+        else:
+            # Velocity is computed, we just need to select it
+            induced_vel = induced_vel[shedding_points.reshape(-1, copy=False), :].reshape(
+                -1, 2, 3, copy=False
+            )
+
+        # With line velocities, we can now shed elements in that direction from each line
+        # First two points for each quad can already be set based on shedding points
+        new_quads[:, 0, :] = pos[shedding_points[:, 0], :]
+        new_quads[:, 1, :] = pos[shedding_points[:, 1], :]
+        # Remaining two are computed by the velocity at the shedding points
+        new_quads[:, 2, :] = new_quads[:, 1, :] + dt * induced_vel[:, 1, :]
+        new_quads[:, 3, :] = new_quads[:, 0, :] + dt * induced_vel[:, 0, :]
+
         # Finally, update the wake if we can
-        if wake.line_count > 0 and dt != 0:
+        if wake.quad_count > 0:
             # Get wake induced velocity
             wake_ind_vel = _compute_induced_velocity(
                 time=target_time,
@@ -1118,78 +1156,41 @@ def update_simulation_state(
                 flow_velocity=settings.get_flow_velocity,
                 target=wake.positions,
                 symmetry_plane=symmetry_plane,
-                out=work_wake_1[: wake.line_count],
-                tmp=work_wake_2[: wake.line_count],
+                out=work_wake_1[: wake.quad_count],
+                tmp=work_wake_2[: wake.quad_count],
                 n_threads=n_threads,
             )
             # update the wake model
-            out_wake = wake.update_wake(
+            out_wake = wake = wake.update_wake(
                 dt=dt, velocities=wake_ind_vel, out_state=out_wake
             )
 
-        if len(shedding_lines) and dt != 0:
-            # Points each line should take its velocity from
-            shedding_point_circulations: dict[int, float] = dict()
-            shedding_line_endpoints: list[tuple[int, int]] = list()
-            for ln in shedding_lines:
-                points = geometry.mesh_joined.get_line_points(ln)
-                for pt in points:
-                    if pt not in shedding_point_circulations:
-                        shedding_point_circulations[pt] = out_circ[ln]
-                    else:
-                        shedding_point_circulations[pt] += out_circ[ln]
-                shedding_line_endpoints.append(points)
+        # Add wake quads
+        out_wake = wake.add_quads(
+            new_positions=new_quads,
+            # Circulation must have an opposite sign!
+            new_circulations=-out_circ[shedding_lines],
+            out_state=out_wake,
+        )
 
-            shedding_points = np.array(
-                shedding_line_endpoints,
-                np.uint,
-            )
-            del shedding_line_endpoints
-
-            h_shed_lines = np.empty((shedding_lines.size, 2, 3), np.double)
-
-            # Lines at the shedding lines currently
-            h_shed_lines[:, 0, :] = pos[shedding_points[:, 0], :]
-            h_shed_lines[:, 1, :] = pos[shedding_points[:, 1], :]
-
-            # Add wake trailing edge lines
-            out_wake = wake.add_lines(
-                new_positions=h_shed_lines,
-                # Circulation must have an opposite sign!
-                new_circulations=-out_circ[shedding_lines],
-                out_state=out_wake,
-            )
-
-            old_pos = geometry.positions_at_time(state.time, out_pos=work_position_p)
-            h_shed_lines[:, 0, :] = old_pos[shedding_points[:, 0], :]
-            h_shed_lines[:, 1, :] = old_pos[shedding_points[:, 1], :]
-
-            # Add wake moved lines
-            out_wake = out_wake.add_lines(
-                new_positions=h_shed_lines,
-                # Circulation must have an opposite sign!
-                new_circulations=-out_circ[shedding_lines],
-                out_state=out_wake,
-            )
-
-            # Add wake lines shed from points
-            shedding_point_circulations_array = np.array(
-                list(shedding_point_circulations.values()), np.double
-            )
-            shedding_point_indices = np.array(
-                list(shedding_point_circulations.keys()), np.intp
-            )
-            h_shed_lines = np.empty((shedding_point_indices.size, 2, 3), np.double)
-            h_shed_lines[:, 0, :] = pos[shedding_point_indices, :]
-            h_shed_lines[:, 1, :] = old_pos[shedding_point_indices, :]
-            out_wake = out_wake.add_lines(
-                new_positions=h_shed_lines,
-                new_circulations=-shedding_point_circulations_array,
-                out_state=out_wake,
-            )
-
-    else:
-        out_wake = wake
+    elif wake.quad_count > 0 and dt != 0:
+        # Get wake induced velocity
+        wake_ind_vel = _compute_induced_velocity(
+            time=target_time,
+            tol=tol,
+            mesh=geometry.mesh_joined,
+            positions=pos,
+            line_circulation=out_circ,
+            wake=wake,
+            flow_velocity=settings.get_flow_velocity,
+            target=wake.positions,
+            symmetry_plane=symmetry_plane,
+            out=work_wake_1[: wake.quad_count],
+            tmp=work_wake_2[: wake.quad_count],
+            n_threads=n_threads,
+        )
+        # update the wake model
+        out_wake = wake.update_wake(dt=dt, velocities=wake_ind_vel, out_state=out_wake)
 
     return SolverState(
         time=target_time,
@@ -1445,7 +1446,7 @@ def run_solver_steady_state(
             # End if max steps reached
             return None
 
-        if state.wake.line_count < state.wake.capacity:
+        if state.wake.quad_count < state.wake.capacity:
             # Keep going until wake is full
             return time + dt
 
