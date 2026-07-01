@@ -52,6 +52,7 @@ list(
         src/core/mesh_io.c
         src/core/flow_solver.c
         src/core/transformation.c
+        src/core/approx_atan.c
 )
 
 list(
@@ -62,6 +63,7 @@ list(
         src/core/mesh_io.h
         src/core/flow_solver.h
         src/core/transformation.h
+        src/core/approx_atan.h
 )
 
 add_library(static_cvl

@@ -45,6 +45,7 @@ dev = [
     "jupyter_sphinx",
     "pyvista[jupyter]",
     "ruff",
+    "scalene>=2.3.0",
 ]
 docs = [
     "sphinx",
