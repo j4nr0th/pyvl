@@ -482,11 +482,15 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
 
     PyArrayObject *pos_array, *norm_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
     PyVL_TransformationPlane *symmetry_plane = NULL;
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     Py_ssize_t thrd_cnt = 1;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_cutoff", .p_val = &vortex_cutoff},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_far_approximation", .p_val = &vortex_far_approximation},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_smallest_size", .p_val = &vortex_smallest_size},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "positions",
                  .type_check = &PyArray_Type,
@@ -604,13 +608,15 @@ static PyObject *pyvl_mesh_induction_matrix3(PyObject *self, PyTypeObject *defin
     {
         // No symmetry
         compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
-                               control_pts, line_buffer, tol, thrd_cnt);
+                               control_pts, line_buffer, vortex_cutoff, vortex_far_approximation, vortex_smallest_size,
+                               thrd_cnt);
     }
     else
     {
         // With symmetry
         compute_line_induction_symmetry(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
-                                        control_pts, line_buffer, tol, &sym_plane, thrd_cnt);
+                                        control_pts, line_buffer, vortex_cutoff, vortex_far_approximation,
+                                        vortex_smallest_size, &sym_plane, thrd_cnt);
     }
     line_induction_to_normal_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets,
                                                this->mesh.surface_lines, this->mesh.n_lines, n_cpts, normals,
@@ -632,11 +638,15 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
 
     PyArrayObject *pos_array, *in_array, *out_array = NULL, *line_buffer_opt = NULL;
     PyVL_TransformationPlane *symmetry_plane = NULL;
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     Py_ssize_t thrd_cnt = 1;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .kwname = "tol", .p_val = &tol},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_cutoff", .p_val = &vortex_cutoff},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_far_approximation", .p_val = &vortex_far_approximation},
+                {.type = CPYARG_TYPE_DOUBLE, .kwname = "vortex_smallest_size", .p_val = &vortex_smallest_size},
                 {.type = CPYARG_TYPE_PYTHON,
                  .kwname = "positions",
                  .type_check = &PyArray_Type,
@@ -742,13 +752,15 @@ static PyObject *pyvl_mesh_induction_matrix(PyObject *self, PyTypeObject *defini
     {
         // No symmetry
         compute_line_induction(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
-                               control_pts, line_buffer, tol, thrd_cnt);
+                               control_pts, line_buffer, vortex_cutoff, vortex_far_approximation, vortex_smallest_size,
+                               thrd_cnt);
     }
     else
     {
         // With symmetry
         compute_line_induction_symmetry(this->mesh.n_lines, this->mesh.lines, this->mesh.n_points, positions, n_cpts,
-                                        control_pts, line_buffer, tol, &sym_plane, thrd_cnt);
+                                        control_pts, line_buffer, vortex_cutoff, vortex_far_approximation,
+                                        vortex_smallest_size, &sym_plane, thrd_cnt);
     }
     line_induction_to_surface_induction(this->mesh.n_surfaces, this->mesh.surface_offsets, this->mesh.surface_lines,
                                         this->mesh.n_lines, n_cpts, line_buffer, out_ptr, thrd_cnt);
@@ -1485,7 +1497,9 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
     if (!ensure_mesh_and_state(defining_class, self, &this, &state))
         return NULL;
 
-    double vortex_tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     PyVL_TransformationPlane *symmetry_plane = NULL;
     PyArrayObject *pos_arr, *cp_arr, *circ_arr, *out_arr = NULL;
     Py_ssize_t n_threads = 1;
@@ -1494,8 +1508,18 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
             (cpyutl_argument_t[]){
                 {
                     .type = CPYARG_TYPE_DOUBLE,
-                    .p_val = &vortex_tol,
-                    .kwname = "tol",
+                    .p_val = &vortex_cutoff,
+                    .kwname = "vortex_cutoff",
+                },
+                {
+                    .type = CPYARG_TYPE_DOUBLE,
+                    .p_val = &vortex_far_approximation,
+                    .kwname = "vortex_far_approximation",
+                },
+                {
+                    .type = CPYARG_TYPE_DOUBLE,
+                    .p_val = &vortex_smallest_size,
+                    .kwname = "vortex_smallest_size",
                 },
                 {
                     .type = CPYARG_TYPE_PYTHON,
@@ -1556,9 +1580,9 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
     }
 
     // Check vortex tol is valid
-    if (vortex_tol < 0)
+    if (vortex_cutoff < 0)
     {
-        PyErr_SetString(PyExc_ValueError, "Vortex tolerance cannot be less than zero.");
+        PyErr_SetString(PyExc_ValueError, "Vortex cutoff cannot be less than zero.");
         return NULL;
     }
 
@@ -1646,7 +1670,7 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
         real3_t d = real3_sub(r2, r1);
         const real_t mag = real3_mag(d);
         // If the line is too short, skip it
-        if (mag < vortex_tol)
+        if (mag < vortex_smallest_size)
             continue;
 
         // Scale d by its magnitude
@@ -1656,13 +1680,15 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
 
         // For each of the target points
 #pragma omp parallel for default(none) num_threads(n_threads)                                                          \
-    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt, has_symmetry, sym_plane)
+    shared(r1, r2, d, control_points, circ, out, vortex_cutoff, vortex_far_approximation, cp_cnt, has_symmetry,        \
+               sym_plane)
         for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
         {
             const real3_t cp = control_points[i_cp];
 
             // Compute induction and scale it by circulation
-            const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
+            const real3_t ind =
+                real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, d, cp), circ);
 
             // Update the result
             out[i_cp] = real3_add(out[i_cp], ind);
@@ -1673,13 +1699,14 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
 
         // Now we deal with the symmetry points
 #pragma omp parallel for default(none) num_threads(n_threads)                                                          \
-    shared(r1, r2, d, control_points, circ, out, vortex_tol, cp_cnt, sym_plane)
+    shared(r1, r2, d, control_points, circ, out, vortex_cutoff, vortex_far_approximation, cp_cnt, sym_plane)
         for (unsigned i_cp = 0; i_cp < cp_cnt; ++i_cp)
         {
             const real3_t cp = transformation_plane_transform_position(&sym_plane, control_points[i_cp]);
 
             // Compute induction and scale it by circulation
-            const real3_t ind = real3_mul1(compute_filament_induction(vortex_tol, r1, r2, d, cp), circ);
+            const real3_t ind =
+                real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, d, cp), circ);
 
             // Update the result
             out[i_cp] = real3_add(out[i_cp], transformation_plane_transform_vector(&sym_plane, ind));
@@ -1947,7 +1974,8 @@ static PyMethodDef pyvl_mesh_methods[] = {
         .ml_meth = (void *)pyvl_mesh_induction_velocity,
         .ml_flags = METH_METHOD | METH_FASTCALL | METH_KEYWORDS,
         .ml_doc = "induction_velocity"
-                  "(tol: float, positions: numpy.typing.NDArray[numpy.double], control_points: "
+                  "(vortex_cutoff: float, vortex_far_approximation: float, vortex_smallest_size: float, positions: "
+                  "numpy.typing.NDArray[numpy.double], control_points: "
                   "numpy.typing.NDArray[numpy.double], "
                   "circulation: numpy.typing.NDArray[numpy.double], out: numpy.typing.NDArray[numpy.double] | None = "
                   "None, line_buffer: "
@@ -1957,8 +1985,14 @@ static PyMethodDef pyvl_mesh_methods[] = {
                   "\n"
                   "Parameters\n"
                   "----------\n"
-                  "tol : float\n"
-                  "    Minimum distance before the induced velocity is clamped to zero.\n"
+                  "vortex_cutoff : float\n"
+                  "    Minimum normal distance before clamping velocity to zero.\n"
+                  "\n"
+                  "vortex_far_approximation : float\n"
+                  "    Limit for applying arctan far field approximation.\n"
+                  "\n"
+                  "vortex_smallest_size : float\n"
+                  "    Minimum line length below which execution is skipped.\n"
                   "\n"
                   "positions : array\n"
                   "    Positions of the geometry points. Must be an aligned, continuous (N, 3) array,\n"

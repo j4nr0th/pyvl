@@ -13,7 +13,9 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     if (!state)
         return NULL;
 
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     PyObject *py_pos, *py_circ, *py_target;
     const PyVL_TransformationPlane *symmetry_plane = NULL;
     PyArrayObject *out_velocity = NULL;
@@ -22,7 +24,9 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     // Parse arguments
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_cutoff, .kwname = "vortex_cutoff"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_far_approximation, .kwname = "vortex_far_approximation"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_smallest_size, .kwname = "vortex_smallest_size"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "quad_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "quad_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
@@ -138,7 +142,7 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
 
             real3_t direction = real3_sub(pos_end, pos_start);
             const real_t mag = real3_mag(direction);
-            if (mag < tol)
+            if (mag < vortex_smallest_size)
             {
                 // Filament is too short
                 continue;
@@ -147,12 +151,14 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
             direction.y /= mag;
             direction.z /= mag;
 
-#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
-                                                  velocity) num_threads(n_threads) schedule(static)
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity)               \
+    num_threads(n_threads) schedule(guided)
             for (unsigned j = 0; j < n_targets; ++j)
             {
-                const real3_t ind =
-                    real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
+                const real3_t ind = real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation,
+                                                                          pos_start, pos_end, direction, target[j]),
+                                               circulation);
 
                 velocity[j] = real3_add(velocity[j], ind);
             }
@@ -160,14 +166,16 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
             if (has_symmetry)
             {
                 // We need to apply symmetry
-#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
-                                                  velocity, sym_plane) num_threads(n_threads) schedule(static)
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity, sym_plane)    \
+    num_threads(n_threads) schedule(guided)
                 for (unsigned j = 0; j < n_targets; ++j)
                 {
-                    const real3_t ind = real3_mul1(
-                        compute_filament_induction(tol, pos_start, pos_end, direction,
-                                                   transformation_plane_transform_position(&sym_plane, target[j])),
-                        circulation);
+                    const real3_t ind =
+                        real3_mul1(compute_filament_induction(
+                                       vortex_cutoff, vortex_far_approximation, pos_start, pos_end, direction,
+                                       transformation_plane_transform_position(&sym_plane, target[j])),
+                                   circulation);
 
                     velocity[j] = real3_add(velocity[j], transformation_plane_transform_vector(&sym_plane, ind));
                 }
@@ -184,45 +192,50 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     return (PyObject *)out_velocity;
 }
 
-PyDoc_STRVAR(
-    quad_induction_docstring,
-    "quad_induction(tol: float, quad_positions: numpy.typing.ArrayLike, quad_circulations: numpy.typing.ArrayLike, "
-    "target_positions: numpy.typing.ArrayLike, out_velocity: numpy.typing.NDArray[numpy.double] | None = "
-    "None, n_threads: int) -> numpy.typing.NDArray[numpy.double]:\n"
-    "Compute the influence of quadrilateral circulation filaments at input positions.\n"
-    "\n"
-    "This is mainly used for computing the influence of the wake, which contains quads,\n"
-    "which are considered separate (hence no mesh).\n"
-    "\n"
-    "Parameters\n"
-    "----------\n"
-    "tol : float\n"
-    "    Distance at which the induced velocity is set to zero due to being too\n"
-    "    close to the vortex line.\n"
-    "\n"
-    "quad_positions : (M, 4, 3) array\n"
-    "    Array of positions of the corners of the quadrilateral filaments. The first\n"
-    "    dimension corresponds to the filaments, while the second dimension corresponds to\n"
-    "    the corners of each filament.\n"
-    "\n"
-    "quad_circulations : (M,) array\n"
-    "    Array of circulations for each quadrilateral filament.\n"
-    "\n"
-    "target_positions : (K, 3) array\n"
-    "    Array of positions at which to compute the velocity influence.\n"
-    "\n"
-    "out_velocity : (K, 3) array, optional\n"
-    "    Output array to write the computed velocities to. If not given, a new one is\n"
-    "    created.\n"
-    "\n"
-    "n_threads : int, default: 1\n"
-    "    Number of threads to use for computing the velocities.\n"
-    "\n"
-    "Returns\n"
-    "-------\n"
-    "(K, 3) array\n"
-    "    Array of velocity vectors at the target positions induced by the quadrilateral\n"
-    "    filaments. If ``out_velocity`` was given, then the reference to it is returned.\n");
+PyDoc_STRVAR(quad_induction_docstring,
+             "quad_induction(vortex_cutoff: float, vortex_far_approximation: float, vortex_smallest_size: float, "
+             "quad_positions: numpy.typing.ArrayLike, quad_circulations: numpy.typing.ArrayLike, "
+             "target_positions: numpy.typing.ArrayLike, out_velocity: numpy.typing.NDArray[numpy.double] | None = "
+             "None, n_threads: int) -> numpy.typing.NDArray[numpy.double]:\n"
+             "Compute the influence of quadrilateral circulation filaments at input positions.\n"
+             "\n"
+             "This is mainly used for computing the influence of the wake, which contains quads,\n"
+             "which are considered separate (hence no mesh).\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "vortex_cutoff : float\n"
+             "    Minimum normal distance before clamping velocity to zero.\n"
+             "\n"
+             "vortex_far_approximation : float\n"
+             "    Limit for applying arctan far field approximation.\n"
+             "\n"
+             "vortex_smallest_size : float\n"
+             "    Minimum line length below which execution is skipped.\n"
+             "\n"
+             "quad_positions : (M, 4, 3) array\n"
+             "    Array of positions of the corners of the quadrilateral filaments. The first\n"
+             "    dimension corresponds to the filaments, while the second dimension corresponds to\n"
+             "    the corners of each filament.\n"
+             "\n"
+             "quad_circulations : (M,) array\n"
+             "    Array of circulations for each quadrilateral filament.\n"
+             "\n"
+             "target_positions : (K, 3) array\n"
+             "    Array of positions at which to compute the velocity influence.\n"
+             "\n"
+             "out_velocity : (K, 3) array, optional\n"
+             "    Output array to write the computed velocities to. If not given, a new one is\n"
+             "    created.\n"
+             "\n"
+             "n_threads : int, default: 1\n"
+             "    Number of threads to use for computing the velocities.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "(K, 3) array\n"
+             "    Array of velocity vectors at the target positions induced by the quadrilateral\n"
+             "    filaments. If ``out_velocity`` was given, then the reference to it is returned.\n");
 
 static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, const Py_ssize_t nargs,
                                        const PyObject *kwnames)
@@ -231,7 +244,9 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     if (!state)
         return NULL;
 
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     PyObject *py_pos, *py_circ, *py_target, *py_normals;
     PyArrayObject *out_velocity = NULL;
     Py_ssize_t n_threads = 1;
@@ -240,7 +255,9 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     // Parse arguments
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_cutoff, .kwname = "vortex_cutoff"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_far_approximation, .kwname = "vortex_far_approximation"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_smallest_size, .kwname = "vortex_smallest_size"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "quad_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "quad_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
@@ -367,7 +384,7 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
 
             real3_t direction = real3_sub(pos_end, pos_start);
             const real_t mag = real3_mag(direction);
-            if (mag < tol)
+            if (mag < vortex_smallest_size)
             {
                 // Filament is too short
                 continue;
@@ -376,12 +393,14 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
             direction.y /= mag;
             direction.z /= mag;
 
-#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
-                                                  velocity, normals) num_threads(n_threads)
+#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity, normals)      \
+    num_threads(n_threads)
             for (unsigned j = 0; j < n_targets; ++j)
             {
-                const real3_t ind =
-                    real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
+                const real3_t ind = real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation,
+                                                                          pos_start, pos_end, direction, target[j]),
+                                               circulation);
                 const real_t normal_induction = real3_dot(ind, normals[j]);
 
                 velocity[j] += normal_induction;
@@ -390,14 +409,16 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
             if (has_symmetry)
             {
                 // We need to apply symmetry
-#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
-                                                  velocity, normals, sym_plane) num_threads(n_threads)
+#pragma omp parallel for default(none)                                                                                 \
+    shared(direction, circulation, pos_start, pos_end, vortex_cutoff, vortex_far_approximation, n_targets, target,     \
+               velocity, normals, sym_plane) num_threads(n_threads)
                 for (unsigned j = 0; j < n_targets; ++j)
                 {
-                    const real3_t ind = real3_mul1(
-                        compute_filament_induction(tol, pos_start, pos_end, direction,
-                                                   transformation_plane_transform_position(&sym_plane, target[j])),
-                        circulation);
+                    const real3_t ind =
+                        real3_mul1(compute_filament_induction(
+                                       vortex_cutoff, vortex_far_approximation, pos_start, pos_end, direction,
+                                       transformation_plane_transform_position(&sym_plane, target[j])),
+                                   circulation);
                     const real_t normal_induction =
                         real3_dot(transformation_plane_transform_vector(&sym_plane, ind), normals[j]);
 
@@ -419,7 +440,8 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
 }
 
 PyDoc_STRVAR(quad_normal_induction_docstring,
-             "def quad_normal_induction(tol: float, quad_positions: numpy.typing.ArrayLike, quad_circulations: "
+             "def quad_normal_induction(vortex_cutoff: float, vortex_far_approximation: float, vortex_smallest_size: "
+             "float, quad_positions: numpy.typing.ArrayLike, quad_circulations: "
              "numpy.typing.ArrayLike, "
              "target_positions: numpy.typingArrayLike, target_normals: numpy.typing.ArrayLike, out_velocity: "
              "numpy.typing.NDArray[numpy.double] | "
@@ -431,9 +453,14 @@ PyDoc_STRVAR(quad_normal_induction_docstring,
              "\n"
              "Parameters\n"
              "----------\n"
-             "tol : float\n"
-             "    Distance at which the induced velocity is set to zero due to being too\n"
-             "    close to the vortex line.\n"
+             "vortex_cutoff : float\n"
+             "    Minimum normal distance before clamping velocity to zero.\n"
+             "\n"
+             "vortex_far_approximation : float\n"
+             "    Limit for applying arctan far field approximation.\n"
+             "\n"
+             "vortex_smallest_size : float\n"
+             "    Minimum line length below which execution is skipped.\n"
              "\n"
              "quad_positions : (M, 4, 3) array\n"
              "    Array of positions of the corners of the quadrilateral filaments. The first\n"
@@ -470,7 +497,9 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
     if (!state)
         return NULL;
 
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     PyObject *py_pos, *py_circ, *py_target;
     const PyVL_TransformationPlane *symmetry_plane = NULL;
     PyArrayObject *out_velocity = NULL;
@@ -479,7 +508,9 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
     // Parse arguments
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_cutoff, .kwname = "vortex_cutoff"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_far_approximation, .kwname = "vortex_far_approximation"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_smallest_size, .kwname = "vortex_smallest_size"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "line_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "line_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
@@ -593,7 +624,7 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
 
         real3_t direction = real3_sub(pos_end, pos_start);
         const real_t mag = real3_mag(direction);
-        if (mag < tol)
+        if (mag < vortex_smallest_size)
         {
             // Filament is too short
             continue;
@@ -602,12 +633,14 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
         direction.y /= mag;
         direction.z /= mag;
 
-#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
-                                                  velocity) num_threads(n_threads) schedule(static)
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity)               \
+    num_threads(n_threads) schedule(guided)
         for (unsigned j = 0; j < n_targets; ++j)
         {
-            const real3_t ind =
-                real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
+            const real3_t ind = real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation,
+                                                                      pos_start, pos_end, direction, target[j]),
+                                           circulation);
 
             velocity[j] = real3_add(velocity[j], ind);
         }
@@ -615,12 +648,13 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
         if (has_symmetry)
         {
             // We need to apply symmetry
-#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, tol, n_targets, target,      \
-                                                  velocity, sym_plane) num_threads(n_threads) schedule(static)
+#pragma omp parallel for default(none) shared(circulation, pos_start, pos_end, direction, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity, sym_plane)    \
+    num_threads(n_threads) schedule(guided)
             for (unsigned j = 0; j < n_targets; ++j)
             {
                 const real3_t ind = real3_mul1(
-                    compute_filament_induction(tol, pos_start, pos_end, direction,
+                    compute_filament_induction(vortex_cutoff, vortex_far_approximation, pos_start, pos_end, direction,
                                                transformation_plane_transform_position(&sym_plane, target[j])),
                     circulation);
 
@@ -636,57 +670,62 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
     return (PyObject *)out_velocity;
 }
 
-PyDoc_STRVAR(
-    line_induction_docstring,
-    "line_induction(tol: float, line_positions: numpy.typing.ArrayLike, line_circulations: numpy.typing.ArrayLike, "
-    "target_positions: numpy.typing.ArrayLike, out_velocity: numpy.typing.NDArray[numpy.double] | None = "
-    "None, n_threads: int) -> numpy.typing.NDArray[numpy.double]:\n"
-    "Compute the influence of line circulation filaments at input positions.\n"
-    "\n"
-    "This is mainly used for computing the influence of the wake, which contains lines,\n"
-    "which are considered separate (hence no mesh).\n"
-    "\n"
-    "\n"
-    "Parameters\n"
-    "----------\n"
-    "tol : float\n"
-    "    Distance at which the induced velocity is set to zero due to being too\n"
-    "    close to the vortex line.\n"
-    "\n"
-    "\n"
-    "line_positions : (M, 2, 3) array\n"
-    "    Array of positions of the endpoints of the line filaments. The first\n"
-    "    dimension corresponds to the filaments, while the second dimension corresponds to\n"
-    "    the endpoints of each filament.\n"
-    "\n"
-    "\n"
-    "line_circulations : (M,) array\n"
-    "    Array of circulations for each line filament.\n"
-    "\n"
-    "\n"
-    "target_positions : (K, 3) array\n"
-    "    Array of positions at which to compute the velocity influence.\n"
-    "\n"
-    "\n"
-    "symmetry_plane : TransformationPlane, optional\n"
-    "    If given, the influence of the line filaments is computed as if they were\n"
-    "    mirrored across the given plane.\n"
-    "\n"
-    "\n"
-    "out_velocity : (K, 3) array, optional\n"
-    "    Output array to write the computed velocities to. If not given, a new one is\n"
-    "    created.\n"
-    "\n"
-    "\n"
-    "n_threads : int, default: 1\n"
-    "    Number of threads to use for computing the velocities.\n"
-    "\n"
-    "\n"
-    "Returns\n"
-    "-------\n"
-    "(K, 3) array\n"
-    "    Array of velocity vectors at the target positions induced by the line\n"
-    "    filaments. If ``out_velocity`` was given, then the reference to it is returned.\n");
+PyDoc_STRVAR(line_induction_docstring,
+             "line_induction(vortex_cutoff: float, vortex_far_approximation: float, vortex_smallest_size: float, "
+             "line_positions: numpy.typing.ArrayLike, line_circulations: numpy.typing.ArrayLike, "
+             "target_positions: numpy.typing.ArrayLike, out_velocity: numpy.typing.NDArray[numpy.double] | None = "
+             "None, n_threads: int) -> numpy.typing.NDArray[numpy.double]:\n"
+             "Compute the influence of line circulation filaments at input positions.\n"
+             "\n"
+             "This is mainly used for computing the influence of the wake, which contains lines,\n"
+             "which are considered separate (hence no mesh).\n"
+             "\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "vortex_cutoff : float\n"
+             "    Minimum normal distance before clamping velocity to zero.\n"
+             "\n"
+             "vortex_far_approximation : float\n"
+             "    Limit for applying arctan far field approximation.\n"
+             "\n"
+             "vortex_smallest_size : float\n"
+             "    Minimum line length below which execution is skipped.\n"
+             "\n"
+             "\n"
+             "line_positions : (M, 2, 3) array\n"
+             "    Array of positions of the endpoints of the line filaments. The first\n"
+             "    dimension corresponds to the filaments, while the second dimension corresponds to\n"
+             "    the endpoints of each filament.\n"
+             "\n"
+             "\n"
+             "line_circulations : (M,) array\n"
+             "    Array of circulations for each line filament.\n"
+             "\n"
+             "\n"
+             "target_positions : (K, 3) array\n"
+             "    Array of positions at which to compute the velocity influence.\n"
+             "\n"
+             "\n"
+             "symmetry_plane : TransformationPlane, optional\n"
+             "    If given, the influence of the line filaments is computed as if they were\n"
+             "    mirrored across the given plane.\n"
+             "\n"
+             "\n"
+             "out_velocity : (K, 3) array, optional\n"
+             "    Output array to write the computed velocities to. If not given, a new one is\n"
+             "    created.\n"
+             "\n"
+             "\n"
+             "n_threads : int, default: 1\n"
+             "    Number of threads to use for computing the velocities.\n"
+             "\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "(K, 3) array\n"
+             "    Array of velocity vectors at the target positions induced by the line\n"
+             "    filaments. If ``out_velocity`` was given, then the reference to it is returned.\n");
 
 static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, const Py_ssize_t nargs,
                                        const PyObject *kwnames)
@@ -695,7 +734,9 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
     if (!state)
         return NULL;
 
-    double tol;
+    double vortex_cutoff;
+    double vortex_far_approximation;
+    double vortex_smallest_size;
     PyObject *py_pos, *py_circ, *py_target, *py_normals;
     PyArrayObject *out_velocity = NULL;
     Py_ssize_t n_threads = 1;
@@ -704,7 +745,9 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
     // Parse arguments
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
-                {.type = CPYARG_TYPE_DOUBLE, .p_val = &tol, .kwname = "tol"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_cutoff, .kwname = "vortex_cutoff"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_far_approximation, .kwname = "vortex_far_approximation"},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &vortex_smallest_size, .kwname = "vortex_smallest_size"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_pos, .kwname = "line_positions"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_circ, .kwname = "line_circulations"},
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&py_target, .kwname = "target_positions"},
@@ -829,7 +872,7 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
 
         real3_t direction = real3_sub(pos_end, pos_start);
         const real_t mag = real3_mag(direction);
-        if (mag < tol)
+        if (mag < vortex_smallest_size)
         {
             // Filament is too short
             continue;
@@ -838,12 +881,14 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
         direction.y /= mag;
         direction.z /= mag;
 
-#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
-                                                  velocity, normals) num_threads(n_threads)
+#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, vortex_cutoff,               \
+                                                  vortex_far_approximation, n_targets, target, velocity, normals)      \
+    num_threads(n_threads)
         for (unsigned j = 0; j < n_targets; ++j)
         {
-            const real3_t ind =
-                real3_mul1(compute_filament_induction(tol, pos_start, pos_end, direction, target[j]), circulation);
+            const real3_t ind = real3_mul1(compute_filament_induction(vortex_cutoff, vortex_far_approximation,
+                                                                      pos_start, pos_end, direction, target[j]),
+                                           circulation);
             const real_t normal_induction = real3_dot(ind, normals[j]);
 
             velocity[j] += normal_induction;
@@ -852,12 +897,13 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
         if (has_symmetry)
         {
             // We need to apply symmetry
-#pragma omp parallel for default(none) shared(direction, circulation, pos_start, pos_end, tol, n_targets, target,      \
-                                                  velocity, normals, sym_plane) num_threads(n_threads)
+#pragma omp parallel for default(none)                                                                                 \
+    shared(direction, circulation, pos_start, pos_end, vortex_cutoff, vortex_far_approximation, n_targets, target,     \
+               velocity, normals, sym_plane) num_threads(n_threads)
             for (unsigned j = 0; j < n_targets; ++j)
             {
                 const real3_t ind = real3_mul1(
-                    compute_filament_induction(tol, pos_start, pos_end, direction,
+                    compute_filament_induction(vortex_cutoff, vortex_far_approximation, pos_start, pos_end, direction,
                                                transformation_plane_transform_position(&sym_plane, target[j])),
                     circulation);
                 const real_t normal_induction =
@@ -878,7 +924,8 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
 }
 
 PyDoc_STRVAR(line_normal_induction_docstring,
-             "def line_normal_induction(tol: float, line_positions: numpy.typing.ArrayLike, line_circulations: "
+             "def line_normal_induction(vortex_cutoff: float, vortex_far_approximation: float, vortex_smallest_size: "
+             "float, line_positions: numpy.typing.ArrayLike, line_circulations: "
              "numpy.typing.ArrayLike, "
              "target_positions: numpy.typingArrayLike, target_normals: numpy.typing.ArrayLike, out_velocity: "
              "numpy.typing.NDArray[numpy.double] | "
@@ -890,9 +937,14 @@ PyDoc_STRVAR(line_normal_induction_docstring,
              "\n"
              "Parameters\n"
              "----------\n"
-             "tol : float\n"
-             "    Distance at which the induced velocity is set to zero due to being too\n"
-             "    close to the vortex line.\n"
+             "vortex_cutoff : float\n"
+             "    Minimum normal distance before clamping velocity to zero.\n"
+             "\n"
+             "vortex_far_approximation : float\n"
+             "    Limit for applying arctan far field approximation.\n"
+             "\n"
+             "vortex_smallest_size : float\n"
+             "    Minimum line length below which execution is skipped.\n"
              "\n"
              "line_positions : (M, 2, 3) array\n"
              "    Array of positions of the endpoints of the line filaments. The first\n"

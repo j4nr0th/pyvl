@@ -1,7 +1,8 @@
 #include "flow_solver.h"
 
 real3_t compute_mesh_line_induction(const real3_t *restrict positions, const real3_t control_point,
-                                    const geo_id_t i_line, const mesh_t *mesh, const real_t tol)
+                                    const geo_id_t i_line, const mesh_t *mesh, const real_t vortex_cutoff,
+                                    const real_t vortex_smallest_size)
 {
     const unsigned pt1 = mesh->lines[i_line.value].p1.value, pt2 = mesh->lines[i_line.value].p2.value;
     const real3_t r1 = positions[pt1];
@@ -14,7 +15,7 @@ real3_t compute_mesh_line_induction(const real3_t *restrict positions, const rea
     direction.v1 /= len;
     direction.v2 /= len;
 
-    if (len < tol)
+    if (len < vortex_smallest_size)
     {
         //  Filament is too short
         return (real3_t){0};
@@ -27,7 +28,7 @@ real3_t compute_mesh_line_induction(const real3_t *restrict positions, const rea
     real_t norm_dist2 = sqrt(real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2));
 
     real_t norm_dist = (norm_dist1 + norm_dist2) / 2.0;
-    if (norm_dist < tol)
+    if (norm_dist < vortex_cutoff)
     {
         //  Normal distance is too small
         return (real3_t){0};
@@ -46,13 +47,15 @@ real3_t compute_mesh_line_induction(const real3_t *restrict positions, const rea
 }
 
 real3_t compute_mesh_surface_induction(const real3_t *restrict positions, const real3_t control_point,
-                                       const geo_id_t i_surf, const mesh_t *mesh, const real_t tol)
+                                       const geo_id_t i_surf, const mesh_t *mesh, const real_t vortex_cutoff,
+                                       const real_t vortex_smallest_size)
 {
     real3_t total = {0};
     for (unsigned i_ln = mesh->surface_offsets[i_surf.value]; i_ln < mesh->surface_offsets[i_surf.value + 1]; ++i_ln)
     {
         const geo_id_t line = mesh->surface_lines[i_ln];
-        const real3_t v_line = compute_mesh_line_induction(positions, control_point, line, mesh, tol);
+        const real3_t v_line =
+            compute_mesh_line_induction(positions, control_point, line, mesh, vortex_cutoff, vortex_smallest_size);
         total = real3_add(total, v_line);
     }
     if (i_surf.orientation)
@@ -62,8 +65,8 @@ real3_t compute_mesh_surface_induction(const real3_t *restrict positions, const 
     return total;
 }
 
-void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *mesh, const real_t tol,
-                              real_t *const mtx)
+void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *mesh, const real_t vortex_cutoff,
+                              const real_t vortex_smallest_size, real_t *const mtx)
 {
     const unsigned n = mesh->n_surfaces;
     for (unsigned i = 0; i < n; ++i)
@@ -73,14 +76,15 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
 
         for (unsigned j = 0; j < n; ++j)
         {
-            const real3_t v_ind = compute_mesh_surface_induction(positions, cp, (geo_id_t){.value = j}, mesh, tol);
+            const real3_t v_ind = compute_mesh_surface_induction(positions, cp, (geo_id_t){.value = j}, mesh,
+                                                                 vortex_cutoff, vortex_smallest_size);
             mtx[i * n + j] = real3_dot(v_ind, norm);
         }
     }
 }
 
-real3_t compute_filament_induction(const real_t tol, const real3_t r1, const real3_t r2, const real3_t direction,
-                                   const real3_t control_point)
+real3_t compute_filament_induction(const real_t vortex_cutoff, const real_t vortex_far_approximation, const real3_t r1,
+                                   const real3_t r2, const real3_t direction, const real3_t control_point)
 {
     const real3_t dr1 = real3_sub(control_point, r1);
     const real3_t dr2 = real3_sub(control_point, r2);
@@ -88,19 +92,34 @@ real3_t compute_filament_induction(const real_t tol, const real3_t r1, const rea
     const real_t tan_dist1 = real3_dot(direction, dr1);
     const real_t tan_dist2 = real3_dot(direction, dr2);
 
-    const real_t norm_dist1 = real3_dot(dr1, dr1) - (tan_dist1 * tan_dist1);
-    const real_t norm_dist2 = real3_dot(dr2, dr2) - (tan_dist2 * tan_dist2);
+    real_t tan_dist1_sq = tan_dist1 * tan_dist1;
+    real_t tan_dist2_sq = tan_dist2 * tan_dist2;
+    const real_t norm_dist1 = real3_dot(dr1, dr1) - tan_dist1_sq;
+    const real_t norm_dist2 = real3_dot(dr2, dr2) - tan_dist2_sq;
 
     const real_t norm_dist_squared = (norm_dist1 + norm_dist2) / 2.0;
 
-    if (norm_dist_squared < tol * tol)
+    if (norm_dist_squared < vortex_cutoff * vortex_cutoff)
     {
-        //  Filament is too short
+        //  Filament is too close to control point / cutoff
         return (real3_t){0};
     }
 
-    const real_t norm_dist = sqrt(norm_dist_squared);
-    const real_t vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
+    // First compute the approximation to integrand
+    real_t vel_mag_half = (tan_dist2 - tan_dist1) / norm_dist_squared;
+    if ((vel_mag_half * vel_mag_half) < vortex_far_approximation * vortex_far_approximation)
+    {
+        // We can use the approximation after we improve it with another term
+        vel_mag_half +=
+            (tan_dist1 * tan_dist1_sq - tan_dist2 * tan_dist2_sq) / (3.0 * norm_dist_squared * norm_dist_squared);
+    }
+    else
+    {
+        // We have to do it the right way
+        const real_t norm_dist = sqrt(norm_dist_squared);
+        vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
+    }
+
     const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
     return vel_dir;
 }
@@ -108,47 +127,13 @@ void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(l
                             const unsigned n_positions,
                             const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions), const unsigned n_cpts,
                             const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
-                            real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t tol,
+                            real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t vortex_cutoff,
+                            const real_t vortex_far_approximation, const real_t vortex_smallest_size,
                             const unsigned n_threads)
 {
     unsigned iln;
-#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol) num_threads(n_threads)
-    for (iln = 0; iln < n_lines; ++iln)
-    {
-        const line_t line = lines[iln];
-        const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
-        const real3_t r1 = positions[pt1];
-        const real3_t r2 = positions[pt2];
-        real3_t direction = real3_sub(r2, r1);
-        const real_t len = real3_mag(direction);
-        if (len < tol)
-        {
-            //  Filament is too short, all control points get zero influence
-            for (unsigned icp = 0; icp < n_cpts; ++icp)
-                out[icp * n_lines + iln] = (real3_t){0};
-
-            continue;
-        }
-
-        direction.v0 /= len;
-        direction.v1 /= len;
-        direction.v2 /= len;
-
-        for (unsigned icp = 0; icp < n_cpts; ++icp)
-        {
-            out[icp * n_lines + iln] = compute_filament_induction(tol, r1, r2, direction, cpts[icp]);
-        }
-    }
-}
-void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
-                                     const unsigned n_positions,
-                                     const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
-                                     const unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
-                                     real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t tol,
-                                     const transformation_plane_t *symmetry_plane, const unsigned n_threads)
-{
-    unsigned iln;
-#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, tol, symmetry_plane)       \
+#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, vortex_cutoff,             \
+                                                  vortex_far_approximation, vortex_smallest_size)                      \
     num_threads(n_threads)
     for (iln = 0; iln < n_lines; ++iln)
     {
@@ -158,7 +143,7 @@ void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_AR
         const real3_t r2 = positions[pt2];
         real3_t direction = real3_sub(r2, r1);
         const real_t len = real3_mag(direction);
-        if (len < tol)
+        if (len < vortex_smallest_size)
         {
             //  Filament is too short, all control points get zero influence
             for (unsigned icp = 0; icp < n_cpts; ++icp)
@@ -173,9 +158,51 @@ void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_AR
 
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
-            const real3_t induction_regular = compute_filament_induction(tol, r1, r2, direction, cpts[icp]);
-            const real3_t induction_symmetry = compute_filament_induction(
-                tol, r1, r2, direction, transformation_plane_transform_position(symmetry_plane, cpts[icp]));
+            out[icp * n_lines + iln] =
+                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction, cpts[icp]);
+        }
+    }
+}
+void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_ARRAY_ARG(lines, static restrict n_lines),
+                                     const unsigned n_positions,
+                                     const real3_t CVL_ARRAY_ARG(positions, static restrict n_positions),
+                                     const unsigned n_cpts, const real3_t CVL_ARRAY_ARG(cpts, static restrict n_cpts),
+                                     real3_t CVL_ARRAY_ARG(out, restrict n_lines *n_cpts), const real_t vortex_cutoff,
+                                     const real_t vortex_far_approximation, const real_t vortex_smallest_size,
+                                     const transformation_plane_t *symmetry_plane, const unsigned n_threads)
+{
+    unsigned iln;
+#pragma omp parallel for default(none) shared(n_lines, n_cpts, lines, positions, cpts, out, vortex_cutoff,             \
+                                                  vortex_far_approximation, vortex_smallest_size, symmetry_plane)      \
+    num_threads(n_threads)
+    for (iln = 0; iln < n_lines; ++iln)
+    {
+        const line_t line = lines[iln];
+        const unsigned pt1 = line.p1.value, pt2 = line.p2.value;
+        const real3_t r1 = positions[pt1];
+        const real3_t r2 = positions[pt2];
+        real3_t direction = real3_sub(r2, r1);
+        const real_t len = real3_mag(direction);
+        if (len < vortex_smallest_size)
+        {
+            //  Filament is too short, all control points get zero influence
+            for (unsigned icp = 0; icp < n_cpts; ++icp)
+                out[icp * n_lines + iln] = (real3_t){0};
+
+            continue;
+        }
+
+        direction.v0 /= len;
+        direction.v1 /= len;
+        direction.v2 /= len;
+
+        for (unsigned icp = 0; icp < n_cpts; ++icp)
+        {
+            const real3_t induction_regular =
+                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction, cpts[icp]);
+            const real3_t induction_symmetry =
+                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction,
+                                           transformation_plane_transform_position(symmetry_plane, cpts[icp]));
             out[icp * n_lines + iln] =
                 real3_add(induction_regular, transformation_plane_transform_vector(symmetry_plane, induction_symmetry));
         }

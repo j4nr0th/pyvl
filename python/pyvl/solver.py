@@ -40,13 +40,17 @@ class SolverSystem:
     _diag_decomposes: dict[str, Any]
     # Time at which we have the state
     time: float
-    # Distance below which the induction of a horse shoe vortex is set to zero.
-    vortex_tol: float
     # Symmetry plane used for induction calculations, if any.
     symmetry_plane: TransformationPlane | None
 
     def _compute_induction_matrix(
-        self, source: str, target: str, t: float, tol: float
+        self,
+        source: str,
+        target: str,
+        t: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
     ) -> npt.NDArray[np.double]:
         """Compute the induction matrix of the source on the target.
 
@@ -60,9 +64,6 @@ class SolverSystem:
 
         t : float
             Time at which to compute the induction matrices.
-
-        tol : float
-            Tolerance used when computing the induction matrices.
 
         Returns
         -------
@@ -83,7 +84,9 @@ class SolverSystem:
             target_geo.normals, time=t
         )
         ind_mat = source_geo.msh.induction_matrix3(
-            tol=tol,
+            vortex_cutoff=vortex_cutoff,
+            vortex_far_approximation=vortex_far_approximation,
+            vortex_smallest_size=vortex_smallest_size,
             positions=source_pos,
             control_points=target_cpts,
             normals=target_normals,
@@ -94,7 +97,12 @@ class SolverSystem:
         return ind_mat
 
     def _compute_self_induction_matrix(
-        self, part_name: str, t: float, tol: float
+        self,
+        part_name: str,
+        t: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
     ) -> npt.NDArray[np.double]:
         """Compute the self-induction matrix of a part at a given time."""
         part = self._geometry[part_name]
@@ -102,7 +110,9 @@ class SolverSystem:
         part_centers = part.reference_frame.to_global_position(part.centers, time=t)
         part_normals = part.reference_frame.to_global_vector(part.normals, time=t)
         ind_mat = part.msh.induction_matrix3(
-            tol=tol,
+            vortex_cutoff=vortex_cutoff,
+            vortex_far_approximation=vortex_far_approximation,
+            vortex_smallest_size=vortex_smallest_size,
             positions=part_pos,
             control_points=part_centers,
             normals=part_normals,
@@ -112,7 +122,13 @@ class SolverSystem:
 
         return ind_mat
 
-    def update(self, t_new: float) -> None:
+    def update(
+        self,
+        t_new: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
+    ) -> None:
         """Check if induction matrices must be updated and compute them if needed.
 
         Parameters
@@ -137,13 +153,17 @@ class SolverSystem:
             for i, part_name in enumerate(self._part_order):
                 part = self._geometry[part_name]
                 if not part.reference_frame.moved_relative_to(
-                    None, t_start=self.time, t_end=t_new, tol=self.vortex_tol
+                    None, t_start=self.time, t_end=t_new, tol=vortex_cutoff
                 ):
                     continue
 
                 # Moved, so recompute the self-induction part
                 self._compute_self_induction_matrix(
-                    part_name=part_name, t=t_new, tol=self.vortex_tol
+                    part_name=part_name,
+                    t=t_new,
+                    vortex_cutoff=vortex_cutoff,
+                    vortex_far_approximation=vortex_far_approximation,
+                    vortex_smallest_size=vortex_smallest_size,
                 )
 
                 # Also need to update all other induction matrices
@@ -151,10 +171,20 @@ class SolverSystem:
                     if other_name == part_name:
                         continue
                     self._compute_induction_matrix(
-                        source=part_name, target=other_name, t=t_new, tol=self.vortex_tol
+                        source=part_name,
+                        target=other_name,
+                        t=t_new,
+                        vortex_cutoff=vortex_cutoff,
+                        vortex_far_approximation=vortex_far_approximation,
+                        vortex_smallest_size=vortex_smallest_size,
                     )
                     self._compute_induction_matrix(
-                        source=other_name, target=part_name, t=t_new, tol=self.vortex_tol
+                        source=other_name,
+                        target=part_name,
+                        t=t_new,
+                        vortex_cutoff=vortex_cutoff,
+                        vortex_far_approximation=vortex_far_approximation,
+                        vortex_smallest_size=vortex_smallest_size,
                     )
 
                 global_motions.append(part_name)
@@ -176,7 +206,7 @@ class SolverSystem:
                     part_2.reference_frame,
                     t_start=self.time,
                     t_end=t_new,
-                    tol=self.vortex_tol,
+                    tol=vortex_cutoff,
                 )
                 if not moved:
                     # The reference frames did not move relative to one another.
@@ -209,10 +239,20 @@ class SolverSystem:
 
                 # They did move, recompute the induction matrices
                 self._compute_induction_matrix(
-                    source=part_1_name, target=part_2_name, t=t_new, tol=self.vortex_tol
+                    source=part_1_name,
+                    target=part_2_name,
+                    t=t_new,
+                    vortex_cutoff=vortex_cutoff,
+                    vortex_far_approximation=vortex_far_approximation,
+                    vortex_smallest_size=vortex_smallest_size,
                 )
                 self._compute_induction_matrix(
-                    source=part_2_name, target=part_1_name, t=t_new, tol=self.vortex_tol
+                    source=part_2_name,
+                    target=part_1_name,
+                    t=t_new,
+                    vortex_cutoff=vortex_cutoff,
+                    vortex_far_approximation=vortex_far_approximation,
+                    vortex_smallest_size=vortex_smallest_size,
                 )
 
         new_order = self._part_order
@@ -320,7 +360,9 @@ class SolverSystem:
     def __init__(
         self,
         time: float,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         geo: Iterable[Geometry],
         symmetry_plane: TransformationPlane | None = None,
     ) -> None:
@@ -339,7 +381,13 @@ class SolverSystem:
             for g in geo
         }
         for g in geo:
-            self._compute_self_induction_matrix(g.label, time, tol)
+            self._compute_self_induction_matrix(
+                g.label,
+                time,
+                vortex_cutoff=vortex_cutoff,
+                vortex_far_approximation=vortex_far_approximation,
+                vortex_smallest_size=vortex_smallest_size,
+            )
 
         # Allocate the memory and compute the induction matrices
         self._normal_induction_matrices = dict()
@@ -347,12 +395,18 @@ class SolverSystem:
             for g2 in geo:
                 mat = np.empty((g2.msh.n_surfaces, g1.msh.n_surfaces), np.double)
                 self._normal_induction_matrices[(g1.label, g2.label)] = mat
-                self._compute_induction_matrix(g1.label, g2.label, t=time, tol=tol)
+                self._compute_induction_matrix(
+                    g1.label,
+                    g2.label,
+                    t=time,
+                    vortex_cutoff=vortex_cutoff,
+                    vortex_far_approximation=vortex_far_approximation,
+                    vortex_smallest_size=vortex_smallest_size,
+                )
 
         # Now we can compute the whole inverse
         self._update_inverse(new_order=self._part_order, max_preserved=0)
         self.time = time
-        self.vortex_tol = tol
 
     def solve_inverse(self, x: dict[str, npt.NDArray[np.double]]) -> None:
         """Solve compute the system inverse with the current state.
@@ -602,7 +656,9 @@ class SolverState:
         """Compute velocity for this solver state."""
         return _compute_induced_velocity(
             time=self.time,
-            tol=self.settings.model_settings.vortex_limit,
+            vortex_cutoff=self.settings.model_settings.vortex_cutoff,
+            vortex_far_approximation=self.settings.model_settings.vortex_far_approximation,
+            vortex_smallest_size=self.settings.model_settings.vortex_smallest_size,
             line_circulation=self.circulation,
             mesh=self.geometry.mesh_joined,
             positions=self.geometry.positions_at_time(self.time),
@@ -791,7 +847,9 @@ def _save_output_if_needed(
 
 def _compute_induced_velocity(
     time: float,
-    tol: float,
+    vortex_cutoff: float,
+    vortex_far_approximation: float,
+    vortex_smallest_size: float,
     mesh: Mesh,
     positions: npt.NDArray[np.double],
     line_circulation: npt.NDArray[np.double],
@@ -810,8 +868,14 @@ def _compute_induced_velocity(
     time : float
         Time at which we are computing this.
 
-    tol : float
+    vortex_cutoff : float
         Minimum distance before the induced velocity is clamped to zero.
+
+    vortex_far_approximation : float
+        Threshold used to decide when the arctangent approximation is appropriate.
+
+    vortex_smallest_size : float
+        Minimum line length below which filaments are ignored.
 
     mesh : Mesh
         Connectivity information of the mesh.
@@ -862,7 +926,9 @@ def _compute_induced_velocity(
     target = target.reshape(-1, 3, copy=False)
     # Compute induction of the mesh
     mesh.induction_velocity(
-        tol=tol,
+        vortex_cutoff=vortex_cutoff,
+        vortex_far_approximation=vortex_far_approximation,
+        vortex_smallest_size=vortex_smallest_size,
         positions=positions,
         control_points=target,
         line_circulation=line_circulation,
@@ -872,7 +938,9 @@ def _compute_induced_velocity(
     )
     # Compute wake induction
     wake.induced_velocity(
-        tol=tol,
+        vortex_cutoff=vortex_cutoff,
+        vortex_far_approximation=vortex_far_approximation,
+        vortex_smallest_size=vortex_smallest_size,
         positions=target,
         symmetry_plane=symmetry_plane,
         out_velocity=tmp,
@@ -994,7 +1062,7 @@ def update_simulation_state(
 
     geometry = state.geometry
     settings = state.settings
-    tol = settings.model_settings.vortex_limit
+    model_settings = settings.model_settings
     symmetry_plane = settings.model_settings.symmetry_plane
     wake = state.wake
 
@@ -1054,7 +1122,9 @@ def update_simulation_state(
 
     # Compute the wake model's effect
     cp_flux = wake.induced_normal_velocity(
-        tol=tol,
+        vortex_cutoff=model_settings.vortex_cutoff,
+        vortex_far_approximation=model_settings.vortex_far_approximation,
+        vortex_smallest_size=model_settings.vortex_smallest_size,
         control_pts=cp_pos,
         normals=norm,
         symmetry_plane=symmetry_plane,
@@ -1082,7 +1152,9 @@ def update_simulation_state(
     if system is None:
         # Compute normal induction matrix
         system_matrix = geometry.mesh_joined.induction_matrix3(
-            tol=tol,
+            vortex_cutoff=model_settings.vortex_cutoff,
+            vortex_far_approximation=model_settings.vortex_far_approximation,
+            vortex_smallest_size=model_settings.vortex_smallest_size,
             positions=pos,
             control_points=cp_pos,
             normals=norm,
@@ -1104,7 +1176,12 @@ def update_simulation_state(
 
     else:
         # Reuse as much as possible here
-        system.update(t_new=target_time)
+        system.update(
+            t_new=target_time,
+            vortex_cutoff=model_settings.vortex_cutoff,
+            vortex_far_approximation=model_settings.vortex_far_approximation,
+            vortex_smallest_size=model_settings.vortex_smallest_size,
+        )
         part_circ = {
             part_name: cp_flux[geometry[part_name].surfaces] for part_name in geometry
         }
@@ -1125,7 +1202,9 @@ def update_simulation_state(
             # Compute the (relative) point velocities
             induced_vel = _compute_induced_velocity(
                 time=target_time,
-                tol=tol,
+                vortex_cutoff=model_settings.vortex_cutoff,
+                vortex_far_approximation=model_settings.vortex_far_approximation,
+                vortex_smallest_size=model_settings.vortex_smallest_size,
                 mesh=geometry.mesh_joined,
                 positions=pos,
                 line_circulation=out_circ,
@@ -1182,7 +1261,9 @@ def update_simulation_state(
             # We do do not have computed point velocities, so compute it for only required
             induced_vel = _compute_induced_velocity(
                 time=target_time,
-                tol=tol,
+                vortex_cutoff=model_settings.vortex_cutoff,
+                vortex_far_approximation=model_settings.vortex_far_approximation,
+                vortex_smallest_size=model_settings.vortex_smallest_size,
                 mesh=geometry.mesh_joined,
                 positions=pos,
                 line_circulation=out_circ,
@@ -1211,7 +1292,9 @@ def update_simulation_state(
             # Get wake induced velocity
             wake_ind_vel = _compute_induced_velocity(
                 time=target_time,
-                tol=tol,
+                vortex_cutoff=model_settings.vortex_cutoff,
+                vortex_far_approximation=model_settings.vortex_far_approximation,
+                vortex_smallest_size=model_settings.vortex_smallest_size,
                 mesh=geometry.mesh_joined,
                 positions=pos,
                 line_circulation=out_circ,
@@ -1248,7 +1331,9 @@ def update_simulation_state(
         # Get wake induced velocity
         wake_ind_vel = _compute_induced_velocity(
             time=target_time,
-            tol=tol,
+            vortex_cutoff=model_settings.vortex_cutoff,
+            vortex_far_approximation=model_settings.vortex_far_approximation,
+            vortex_smallest_size=model_settings.vortex_smallest_size,
             mesh=geometry.mesh_joined,
             positions=pos,
             line_circulation=out_circ,
@@ -1405,7 +1490,9 @@ def run_solver(
     compute_mem = PyVLComputeMemory.from_solver_settings(geometry, settings)
     system = SolverSystem(
         time=initial_time,
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         geo=[geometry.geometries[name] for name in geometry.geometries],
         symmetry_plane=settings.model_settings.symmetry_plane,
     )

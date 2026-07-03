@@ -112,22 +112,28 @@ def test_mesh_accepts_symmetry_plane() -> None:
     control_points = rng.random((5, 3))
 
     base = msh.induction_velocity(
-        1e-8,
-        positions,
-        control_points,
-        line_circulation,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
+        positions=positions,
+        control_points=control_points,
+        line_circulation=line_circulation,
     )
     mirrored = msh.induction_velocity(
-        1e-8,
-        mirrored_positions,
-        control_points,
-        -line_circulation,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
+        positions=mirrored_positions,
+        control_points=control_points,
+        line_circulation=-line_circulation,
     )
     with_symmetry = msh.induction_velocity(
-        1e-8,
-        positions,
-        control_points,
-        line_circulation,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
+        positions=positions,
+        control_points=control_points,
+        line_circulation=line_circulation,
         symmetry_plane=plane,
     )
 
@@ -139,10 +145,12 @@ def test_mesh_accepts_symmetry_plane() -> None:
     # no normal induction
     control_points_on_plane = (plane.reflect(control_points) + control_points) / 2
     with_symmetry = msh.induction_velocity(
-        1e-8,
-        positions,
-        control_points_on_plane,
-        line_circulation,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
+        positions=positions,
+        control_points=control_points_on_plane,
+        line_circulation=line_circulation,
         symmetry_plane=plane,
     )
     np.testing.assert_allclose(
@@ -172,17 +180,21 @@ def test_induction_matrix3_matches_velocity_projection() -> None:
 
     for symmetry_plane in (None, plane):
         matrix3 = msh.induction_matrix3(
-            1e-8,
-            positions,
-            control_points,
-            target_normals,
+            vortex_cutoff=1e-8,
+            vortex_far_approximation=1e-8,
+            vortex_smallest_size=1e-8,
+            positions=positions,
+            control_points=control_points,
+            normals=target_normals,
             symmetry_plane=symmetry_plane,
         )
         velocity = msh.induction_velocity(
-            1e-8,
-            positions,
-            control_points,
-            line_circulations,
+            vortex_cutoff=1e-8,
+            vortex_far_approximation=1e-8,
+            vortex_smallest_size=1e-8,
+            positions=positions,
+            control_points=control_points,
+            line_circulation=line_circulations,
             symmetry_plane=symmetry_plane,
         )
 

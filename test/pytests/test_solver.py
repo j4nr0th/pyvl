@@ -65,7 +65,11 @@ def basic_setup():
     sim_geo = SimulationGeometry.from_geometries(geo)
 
     wake_settings = WakeSettings(WakeShedderUniform(np.array([0], dtype=np.uint)))
-    model_settings = ModelSettings(vortex_limit=1e-6)
+    model_settings = ModelSettings(
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-6,
+        vortex_smallest_size=1e-6,
+    )
     settings = SolverSettings(
         model_settings=model_settings,
         flow_velocity=(1.0, 0.0, 0.0),
@@ -91,13 +95,17 @@ def test_solver_system_forwards_symmetry_plane():
 
     system_with_plane = SolverSystem(
         time=0.0,
-        tol=1e-6,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-6,
+        vortex_smallest_size=1e-6,
         geo=[geometry],
         symmetry_plane=plane,
     )
     system_without_plane = SolverSystem(
         time=0.0,
-        tol=1e-6,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-6,
+        vortex_smallest_size=1e-6,
         geo=[geometry],
         symmetry_plane=None,
     )
@@ -117,7 +125,9 @@ def test_solver_system_updates_self_diagonal_on_global_motion():
 
     system_with_plane = SolverSystem(
         time=0.0,
-        tol=1e-6,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-6,
+        vortex_smallest_size=1e-6,
         geo=[geometry],
         symmetry_plane=plane,
     )
@@ -126,7 +136,9 @@ def test_solver_system_updates_self_diagonal_on_global_motion():
 
     system_without_plane = SolverSystem(
         time=0.0,
-        tol=1e-6,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-6,
+        vortex_smallest_size=1e-6,
         geo=[geometry],
         symmetry_plane=None,
     )
@@ -165,7 +177,9 @@ def test_compute_induced_velocity_forwards_symmetry_plane(basic_setup):
 
     result = _compute_induced_velocity(
         time=0.0,
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         mesh=geometry.msh,
         positions=positions,
         line_circulation=line_circulation,
@@ -176,14 +190,18 @@ def test_compute_induced_velocity_forwards_symmetry_plane(basic_setup):
     )
 
     mesh_induced = geometry.msh.induction_velocity(
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         positions=positions,
         control_points=target,
         line_circulation=line_circulation,
         symmetry_plane=plane,
     )
     wake_induced = wake.induced_velocity(
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         positions=target,
         symmetry_plane=plane,
     )
@@ -227,7 +245,9 @@ def test_update_simulation_state_forwards_symmetry_plane():
     settings = SolverSettings(
         flow_velocity=(0.0, 0.0, 1.0),
         model_settings=ModelSettings(
-            vortex_limit=1e-6,
+            vortex_cutoff=1e-6,
+            vortex_far_approximation=1e-6,
+            vortex_smallest_size=1e-6,
             symmetry_plane=plane,
         ),
         wake_settings=WakeSettings(None, 1),
@@ -235,7 +255,9 @@ def test_update_simulation_state_forwards_symmetry_plane():
     state = SolverState.create_new(0.0, sim_geo, settings)
     system = SolverSystem(
         time=0.0,
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         geo=[geometry],
         symmetry_plane=plane,
     )
@@ -436,7 +458,9 @@ def test_induction_two_triangles_equal_to_quad():
 
     velocity_q = _compute_induced_velocity(
         time=0,
-        tol=tol,
+        vortex_cutoff=tol,
+        vortex_far_approximation=tol,
+        vortex_smallest_size=tol,
         mesh=qmsh,
         positions=positions,
         line_circulation=cv,
@@ -448,7 +472,9 @@ def test_induction_two_triangles_equal_to_quad():
 
     velocity_t = _compute_induced_velocity(
         time=0,
-        tol=tol,
+        vortex_cutoff=tol,
+        vortex_far_approximation=tol,
+        vortex_smallest_size=tol,
         mesh=tmsh,
         positions=positions,
         # The center line would be zero
@@ -492,10 +518,20 @@ def test_wake_induction_same_as_mesh():
     # Compute induced velocity with both the mesh and the wake
     tol = 1e-6
     tgt = rng.random((33, 3)) * 4 - 2  # Random numbers between -2 and +2
-    wake_ind = wake.induced_velocity(tol=tol, positions=tgt)
+    wake_ind = wake.induced_velocity(
+        vortex_cutoff=tol,
+        vortex_far_approximation=tol,
+        vortex_smallest_size=tol,
+        positions=tgt,
+    )
 
     mesh_ind = msh.induction_velocity(
-        tol=tol, positions=positions, control_points=tgt, line_circulation=line_circ
+        vortex_cutoff=tol,
+        vortex_far_approximation=tol,
+        vortex_smallest_size=tol,
+        positions=positions,
+        control_points=tgt,
+        line_circulation=line_circ,
     )
 
     assert pytest.approx(wake_ind) == mesh_ind
@@ -510,20 +546,26 @@ def test_quad_induction_symmetry_plane_matches_mirrored_copy() -> None:
     target_positions = rng.random((5, 3)) * 4 - 2  # Random numbers between -2 and +2
 
     base = quad_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=quad_positions,
         quad_circulations=quad_circulation,
         target_positions=target_positions,
     )
     mirrored = quad_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=plane.reflect(quad_positions),
         quad_circulations=-quad_circulation,
         target_positions=target_positions,
     )
 
     with_symmetry = quad_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=quad_positions,
         quad_circulations=quad_circulation,
         target_positions=target_positions,
@@ -548,14 +590,18 @@ def test_quad_normal_induction_symmetry_plane_matches_mirrored_copy() -> None:
     target_normals = rng.random((N_TARGET, 3)) * 2 - 1  # Random numbers between -1 and +1
 
     base = quad_normal_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=quad_positions,
         quad_circulations=quad_circulation,
         target_positions=target_positions,
         target_normals=target_normals,
     )
     mirrored_target_only = quad_normal_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=plane.reflect(quad_positions),
         quad_circulations=-quad_circulation,
         target_positions=target_positions,
@@ -563,7 +609,9 @@ def test_quad_normal_induction_symmetry_plane_matches_mirrored_copy() -> None:
     )
 
     with_symmetry = quad_normal_induction(
-        tol=1e-8,
+        vortex_cutoff=1e-8,
+        vortex_far_approximation=1e-8,
+        vortex_smallest_size=1e-8,
         quad_positions=quad_positions,
         quad_circulations=quad_circulation,
         target_positions=target_positions,
@@ -588,14 +636,18 @@ def test_quad_normal_induction_matches_velocity_projection() -> None:
 
     for symmetry_plane in (None, plane):
         velocity = quad_induction(
-            tol=1e-8,
+            vortex_cutoff=1e-8,
+            vortex_far_approximation=1e-8,
+            vortex_smallest_size=1e-8,
             quad_positions=quad_positions,
             quad_circulations=quad_circulation,
             target_positions=target_positions,
             symmetry_plane=symmetry_plane,
         )
         normal_velocity = quad_normal_induction(
-            tol=1e-8,
+            vortex_cutoff=1e-8,
+            vortex_far_approximation=1e-8,
+            vortex_smallest_size=1e-8,
             quad_positions=quad_positions,
             quad_circulations=quad_circulation,
             target_positions=target_positions,
@@ -642,7 +694,12 @@ def test_state_update():
     flow_conditions = _random_flow_velocity
     # Settings have nothing interesting besides the flow conditions
     settings = SolverSettings(
-        flow_velocity=flow_conditions, model_settings=ModelSettings(vortex_limit=1e-6)
+        flow_velocity=flow_conditions,
+        model_settings=ModelSettings(
+            vortex_cutoff=1e-6,
+            vortex_far_approximation=1e-6,
+            vortex_smallest_size=1e-6,
+        ),
     )
     # Create new empty state
     state = SolverState.create_new(time=0, geometry=sim_geo, settings=settings)
@@ -655,7 +712,9 @@ def test_state_update():
     # Get induction directly from the QUAD
     tgt = np.mean(pos, axis=0)
     ind_vel = quad_induction(
-        tol=settings.model_settings.vortex_limit,
+        vortex_cutoff=settings.model_settings.vortex_cutoff,
+        vortex_far_approximation=settings.model_settings.vortex_far_approximation,
+        vortex_smallest_size=settings.model_settings.vortex_smallest_size,
         quad_positions=pos.reshape(1, 4, 3),
         quad_circulations=state.circulation.mean(axis=0).reshape(-1),
         target_positions=tgt.reshape(1, 3),
@@ -706,7 +765,9 @@ def test_line_induction_matches_quad_induction() -> None:
     for symmetry_plane in (None, plane):
         for n_threads in (1, 2):
             q_ind = quad_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 quad_positions=quad_positions,
                 quad_circulations=quad_circulations,
                 target_positions=target_positions,
@@ -715,7 +776,9 @@ def test_line_induction_matches_quad_induction() -> None:
             )
 
             l_ind = line_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 line_positions=line_positions,
                 line_circulations=line_circulations,
                 target_positions=target_positions,
@@ -728,7 +791,9 @@ def test_line_induction_matches_quad_induction() -> None:
             # Test using a pre-allocated out buffer
             out_buf = np.empty((K, 3), dtype=np.double)
             returned_buf = line_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 line_positions=line_positions,
                 line_circulations=line_circulations,
                 target_positions=target_positions,
@@ -781,7 +846,9 @@ def test_line_normal_induction_matches_quad_normal_induction() -> None:
     for symmetry_plane in (None, plane):
         for n_threads in (1, 2):
             q_norm_ind = quad_normal_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 quad_positions=quad_positions,
                 quad_circulations=quad_circulations,
                 target_positions=target_positions,
@@ -791,7 +858,9 @@ def test_line_normal_induction_matches_quad_normal_induction() -> None:
             )
 
             l_norm_ind = line_normal_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 line_positions=line_positions,
                 line_circulations=line_circulations,
                 target_positions=target_positions,
@@ -805,7 +874,9 @@ def test_line_normal_induction_matches_quad_normal_induction() -> None:
             # Test using a pre-allocated out buffer
             out_buf = np.empty((K,), dtype=np.double)
             returned_buf = line_normal_induction(
-                tol=tol,
+                vortex_cutoff=tol,
+                vortex_far_approximation=tol,
+                vortex_smallest_size=tol,
                 line_positions=line_positions,
                 line_circulations=line_circulations,
                 target_positions=target_positions,

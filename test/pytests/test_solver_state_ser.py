@@ -48,7 +48,9 @@ def test_solver_state_serialization():
     s_settings = SolverSettings(
         flow_velocity=(10.0, 0, 0),
         model_settings=ModelSettings(
-            vortex_limit=1e-6,
+            vortex_cutoff=1e-6,
+            vortex_far_approximation=1e-6,
+            vortex_smallest_size=1e-6,
             symmetry_plane=TransformationPlane((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
         ),
         wake_settings=WakeSettings(WakeShedderUniform([3, 2, 1]), 31),

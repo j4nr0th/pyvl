@@ -78,7 +78,9 @@ class WakeState:
 
     def induced_velocity(
         self,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         positions: npt.NDArray[np.double],
         symmetry_plane: TransformationPlane | None = None,
         out_velocity: npt.NDArray[np.double] | None = None,
@@ -91,7 +93,9 @@ class WakeState:
                 return out_velocity
             return np.zeros_like(positions, dtype=np.double)
         return quad_induction(
-            tol=tol,
+            vortex_cutoff=vortex_cutoff,
+            vortex_far_approximation=vortex_far_approximation,
+            vortex_smallest_size=vortex_smallest_size,
             quad_positions=self.quad_positions[: self.quad_count],
             quad_circulations=self.quad_circulations[: self.quad_count],
             target_positions=positions,
@@ -102,7 +106,9 @@ class WakeState:
 
     def induced_normal_velocity(
         self,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         control_pts: npt.NDArray[np.double],
         normals: npt.NDArray[np.double],
         symmetry_plane: TransformationPlane | None = None,
@@ -116,7 +122,9 @@ class WakeState:
                 return out_velocity
             return np.zeros(control_pts.shape[0], dtype=np.double)
         return quad_normal_induction(
-            tol=tol,
+            vortex_cutoff=vortex_cutoff,
+            vortex_far_approximation=vortex_far_approximation,
+            vortex_smallest_size=vortex_smallest_size,
             quad_positions=self.quad_positions[: self.quad_count],
             quad_circulations=self.quad_circulations[: self.quad_count],
             target_positions=control_pts,

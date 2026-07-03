@@ -127,40 +127,27 @@ class ModelSettings:
 
     Parameters
     ----------
-    vortex_limit : float
-        Minimum distance at which the vortex line induces and velocity.
+    vortex_cutoff : float
+        Minimum normal distance before clamping velocity to zero.
+
+    vortex_far_approximation : float
+        Limit for applying arctan far field approximation.
+
+    vortex_smallest_size : float
+        Minimum line length below which execution is skipped.
 
     wake_element_capacity : int, default: 1000
         The maximum number of wake elements to store in the wake model.
     """
 
-    vortex_limit: float
-    """This sets the minimum distance at which any velocity is still induced.
+    vortex_cutoff: float
+    """This sets the minimum normal distance at which any velocity is still induced."""
 
-    Examples
-    --------
-    The effect of this value can be best shown using the following snippet:
+    vortex_far_approximation: float
+    """This sets the limit/threshold for using the arctangent approximation."""
 
-    .. jupyter-execute::
-
-        >>> import numpy as np
-        >>> from matplotlib import pyplot as plt
-        >>>
-        >>> vortex_limit = 2e-1
-        >>> x = np.linspace(0.1, 2, 1001)
-        >>> y = 1 / x
-        >>>
-        >>> plt.plot(x, y, label="no limit", linestyle="dashed")
-        >>> plt.plot(x, y * (x >= vortex_limit), label="limit = $0.2$")
-        >>> plt.legend()
-        >>> plt.grid()
-        >>> plt.xlim(0.1, 1)
-        >>> plt.ylim(0, 10)
-        >>> plt.show()
-
-    This becomes important if the two panels of either geometry or wake approach each
-    other, as the induction might become too large and make the results unstable.
-    """
+    vortex_smallest_size: float
+    """This sets the minimum line length/filament size."""
 
     symmetry_plane: TransformationPlane | None = None
     """Optional symmetry plane used when computing induced velocities."""
@@ -174,7 +161,9 @@ class ModelSettings:
             Serialized state of the :class:`ModelSettings` object.
         """
         hm = HirearchicalMap()
-        hm.insert_scalar("vortex_limit", self.vortex_limit)
+        hm.insert_scalar("vortex_cutoff", self.vortex_cutoff)
+        hm.insert_scalar("vortex_far_approximation", self.vortex_far_approximation)
+        hm.insert_scalar("vortex_smallest_size", self.vortex_smallest_size)
         return hm
 
     @classmethod
@@ -192,7 +181,11 @@ class ModelSettings:
         Self
             Deserialized :class:`ModelSettings` object.
         """
-        return cls(vortex_limit=hmap.get_scalar("vortex_limit"))
+        return cls(
+            vortex_cutoff=hmap.get_scalar("vortex_cutoff"),
+            vortex_far_approximation=hmap.get_scalar("vortex_far_approximation"),
+            vortex_smallest_size=hmap.get_scalar("vortex_smallest_size"),
+        )
 
 
 @dataclass(frozen=True)

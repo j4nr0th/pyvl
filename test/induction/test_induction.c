@@ -26,7 +26,7 @@ int main(int argc, char *CVL_ARRAY_ARG(argv, static restrict argc))
     const real3_t positions[2] = {(real3_t){{-0.1, 0, 0.3}}, (real3_t){{1, 0, 0}}};
     const real3_t dir = line_direction(positions, &TEST_MESH1, (geo_id_t){0, 0});
     const real3_t v = {{0.2, 0.4, -0.3}};
-    const real3_t induced = compute_mesh_line_induction(positions, v, (geo_id_t){0, 0}, &TEST_MESH1, 1e-6);
+    const real3_t induced = compute_mesh_line_induction(positions, v, (geo_id_t){0, 0}, &TEST_MESH1, 1e-6, 1e-6);
 
     //  Make sure that the induced velocity's direction is perpendicular to the d1 vector
     const real_t x = real3_dot(induced, dir);

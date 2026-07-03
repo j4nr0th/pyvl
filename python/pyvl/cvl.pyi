@@ -232,7 +232,9 @@ class Mesh:
 
     def induction_matrix(
         self,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
         symmetry_plane: TransformationPlane | None = None,
@@ -245,7 +247,9 @@ class Mesh:
 
     def induction_matrix3(
         self,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
         normals: npt.NDArray[np.double],
@@ -288,7 +292,9 @@ class Mesh:
 
     def induction_velocity(
         self,
-        tol: float,
+        vortex_cutoff: float,
+        vortex_far_approximation: float,
+        vortex_smallest_size: float,
         positions: npt.NDArray[np.double],
         control_points: npt.NDArray[np.double],
         line_circulation: npt.NDArray[np.double],
@@ -300,8 +306,14 @@ class Mesh:
 
         Parameters
         ----------
-        tol : float
-            Minimum distance before the induced velocity is clamped to zero.
+        vortex_cutoff : float
+            Minimum normal distance before clamping velocity to zero.
+
+        vortex_far_approximation : float
+            Limit for applying arctan far field approximation.
+
+        vortex_smallest_size : float
+            Minimum line length below which execution is skipped.
 
         positions : array
             Positions of the geometry points. Must be an aligned, continuous (N, 3) array,
@@ -1313,7 +1325,9 @@ class ReferenceFrame:
         ...
 
 def quad_induction(
-    tol: float,
+    vortex_cutoff: float,
+    vortex_far_approximation: float,
+    vortex_smallest_size: float,
     quad_positions: npt.ArrayLike,
     quad_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
@@ -1328,9 +1342,14 @@ def quad_induction(
 
     Parameters
     ----------
-    tol : float
-        Distance at which the induced velocity is set to zero due to being too
-        close to the vortex line.
+    vortex_cutoff : float
+        Minimum normal distance before clamping velocity to zero.
+
+    vortex_far_approximation : float
+        Limit for applying arctan far field approximation.
+
+    vortex_smallest_size : float
+        Minimum line length below which execution is skipped.
 
     quad_positions : (M, 4, 3) array
         Array of positions of the corners of the quadrilateral filaments. The first
@@ -1363,7 +1382,9 @@ def quad_induction(
     ...
 
 def quad_normal_induction(
-    tol: float,
+    vortex_cutoff: float,
+    vortex_far_approximation: float,
+    vortex_smallest_size: float,
     quad_positions: npt.ArrayLike,
     quad_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
@@ -1379,9 +1400,14 @@ def quad_normal_induction(
 
     Parameters
     ----------
-    tol : float
-        Distance at which the induced velocity is set to zero due to being too
-        close to the vortex line.
+    vortex_cutoff : float
+        Minimum normal distance before clamping velocity to zero.
+
+    vortex_far_approximation : float
+        Limit for applying arctan far field approximation.
+
+    vortex_smallest_size : float
+        Minimum line length below which execution is skipped.
 
     quad_positions : (M, 4, 3) array
         Array of positions of the corners of the quadrilateral filaments. The first
@@ -1419,7 +1445,9 @@ def quad_normal_induction(
     ...
 
 def line_induction(
-    tol: float,
+    vortex_cutoff: float,
+    vortex_far_approximation: float,
+    vortex_smallest_size: float,
     line_positions: npt.ArrayLike,
     line_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
@@ -1434,9 +1462,14 @@ def line_induction(
 
     Parameters
     ----------
-    tol : float
-        Distance at which the induced velocity is set to zero due to being too
-        close to the vortex line.
+    vortex_cutoff : float
+        Minimum normal distance before clamping velocity to zero.
+
+    vortex_far_approximation : float
+        Limit for applying arctan far field approximation.
+
+    vortex_smallest_size : float
+        Minimum line length below which execution is skipped.
 
     line_positions : (M, 2, 3) array
         Array of positions of the endpoints of the line filaments. The first
@@ -1469,7 +1502,9 @@ def line_induction(
     ...
 
 def line_normal_induction(
-    tol: float,
+    vortex_cutoff: float,
+    vortex_far_approximation: float,
+    vortex_smallest_size: float,
     line_positions: npt.ArrayLike,
     line_circulations: npt.ArrayLike,
     target_positions: npt.ArrayLike,
@@ -1485,9 +1520,14 @@ def line_normal_induction(
 
     Parameters
     ----------
-    tol : float
-        Distance at which the induced velocity is set to zero due to being too
-        close to the vortex line.
+    vortex_cutoff : float
+        Minimum normal distance before clamping velocity to zero.
+
+    vortex_far_approximation : float
+        Limit for applying arctan far field approximation.
+
+    vortex_smallest_size : float
+        Minimum line length below which execution is skipped.
 
     line_positions : (M, 2, 3) array
         Array of positions of the endpoints of the line filaments. The first
