@@ -127,7 +127,8 @@ plotter.show()
 # Compute time steps based on angular velocity
 N_PER_REV = 72
 dt = 1 / (RPS * N_PER_REV)
-t_stop = 5 / RPS  # Stop the flow after this many rotations
+N_PUSH_REV = 3  # Push the flow for this many revolutions
+t_stop = N_PUSH_REV / RPS  # Stop the flow after this many revolutions
 
 
 def flow_velocity(
@@ -152,7 +153,9 @@ def flow_velocity(
 settings = pyvl.SolverSettings(
     flow_velocity=flow_velocity,
     model_settings=pyvl.ModelSettings(
-        vortex_limit=1e-10,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-3,
+        vortex_smallest_size=1e-6,
         # pyvl.TransformationPlane(origin=(0, -0.5, 0), normal=(0, 0, 1)),
         symmetry_plane=None,
     ),
@@ -197,7 +200,8 @@ output_settings = pyvl.OutputSettings.new_simple(
 # output directory.
 
 # Do not run more than this many steps
-MAX_STEPS = N_PER_REV * 5  # Run for 5 revolutions
+N_REVS = 5  # Run for 5 revolutions
+MAX_STEPS = N_PER_REV * N_REVS
 THREAD_CNT = 6  # Use 6 threads for the simulation
 
 if not out_dir.exists():

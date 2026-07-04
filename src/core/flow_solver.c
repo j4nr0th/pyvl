@@ -83,8 +83,9 @@ void compute_mesh_self_matrix(const real3_t *restrict positions, const mesh_t *m
     }
 }
 
-real3_t compute_filament_induction(const real_t vortex_cutoff, const real_t vortex_far_approximation, const real3_t r1,
-                                   const real3_t r2, const real3_t direction, const real3_t control_point)
+real3_t compute_filament_induction(const real_t vortex_cutoff2, const real_t vortex_far_approximation2,
+                                   const real3_t r1, const real3_t r2, const real3_t direction,
+                                   const real3_t control_point)
 {
     const real3_t dr1 = real3_sub(control_point, r1);
     const real3_t dr2 = real3_sub(control_point, r2);
@@ -99,7 +100,7 @@ real3_t compute_filament_induction(const real_t vortex_cutoff, const real_t vort
 
     const real_t norm_dist_squared = (norm_dist1 + norm_dist2) / 2.0;
 
-    if (norm_dist_squared < vortex_cutoff * vortex_cutoff)
+    if (norm_dist_squared < vortex_cutoff2)
     {
         //  Filament is too close to control point / cutoff
         return (real3_t){0};
@@ -107,7 +108,7 @@ real3_t compute_filament_induction(const real_t vortex_cutoff, const real_t vort
 
     // First compute the approximation to integrand
     real_t vel_mag_half = (tan_dist2 - tan_dist1) / norm_dist_squared;
-    if ((vel_mag_half * vel_mag_half) < vortex_far_approximation * vortex_far_approximation)
+    if (fabs(vel_mag_half) < vortex_far_approximation2)
     {
         // We can use the approximation after we improve it with another term
         vel_mag_half +=
@@ -117,7 +118,7 @@ real3_t compute_filament_induction(const real_t vortex_cutoff, const real_t vort
     {
         // We have to do it the right way
         const real_t norm_dist = sqrt(norm_dist_squared);
-        vel_mag_half = (atan2(tan_dist2, norm_dist) - atan2(tan_dist1, norm_dist)) / norm_dist;
+        vel_mag_half = (atan(tan_dist2 / norm_dist) - atan(tan_dist1 / norm_dist)) / norm_dist;
     }
 
     const real3_t vel_dir = real3_mul1(real3_cross(dr1, direction), vel_mag_half);
@@ -158,8 +159,9 @@ void compute_line_induction(const unsigned n_lines, const line_t CVL_ARRAY_ARG(l
 
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
-            out[icp * n_lines + iln] =
-                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction, cpts[icp]);
+            out[icp * n_lines + iln] = compute_filament_induction(vortex_cutoff * vortex_cutoff,
+                                                                  vortex_far_approximation * vortex_far_approximation,
+                                                                  r1, r2, direction, cpts[icp]);
         }
     }
 }
@@ -198,11 +200,12 @@ void compute_line_induction_symmetry(const unsigned n_lines, const line_t CVL_AR
 
         for (unsigned icp = 0; icp < n_cpts; ++icp)
         {
-            const real3_t induction_regular =
-                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction, cpts[icp]);
-            const real3_t induction_symmetry =
-                compute_filament_induction(vortex_cutoff, vortex_far_approximation, r1, r2, direction,
-                                           transformation_plane_transform_position(symmetry_plane, cpts[icp]));
+            const real3_t induction_regular = compute_filament_induction(
+                vortex_cutoff * vortex_cutoff, vortex_far_approximation * vortex_far_approximation, r1, r2, direction,
+                cpts[icp]);
+            const real3_t induction_symmetry = compute_filament_induction(
+                vortex_cutoff * vortex_cutoff, vortex_far_approximation * vortex_far_approximation, r1, r2, direction,
+                transformation_plane_transform_position(symmetry_plane, cpts[icp]));
             out[icp * n_lines + iln] =
                 real3_add(induction_regular, transformation_plane_transform_vector(symmetry_plane, induction_symmetry));
         }

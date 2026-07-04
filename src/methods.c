@@ -130,6 +130,8 @@ static PyObject *quad_induction(PyObject *mod, PyObject *const *args, const Py_s
     real3_t *const velocity = PyArray_DATA(out_velocity);
     // Clear the output
     Py_BEGIN_ALLOW_THREADS;
+    vortex_cutoff *= vortex_cutoff;
+    vortex_far_approximation *= vortex_far_approximation;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
     for (size_t i = 0; i < n_elements; ++i)
     {
@@ -372,6 +374,8 @@ static PyObject *quad_normal_induction(PyObject *mod, PyObject *const *args, con
     real_t *const velocity = PyArray_DATA(out_velocity);
     // Clear the output
     Py_BEGIN_ALLOW_THREADS;
+    vortex_cutoff *= vortex_cutoff;
+    vortex_far_approximation *= vortex_far_approximation;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
     for (size_t i = 0; i < n_elements; ++i)
     {
@@ -614,6 +618,8 @@ static PyObject *line_induction(PyObject *mod, PyObject *const *args, const Py_s
     real3_t *const velocity = PyArray_DATA(out_velocity);
     // Clear the output
     Py_BEGIN_ALLOW_THREADS;
+    vortex_cutoff *= vortex_cutoff;
+    vortex_far_approximation *= vortex_far_approximation;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
     for (size_t i = 0; i < n_elements; ++i)
     {
@@ -863,6 +869,8 @@ static PyObject *line_normal_induction(PyObject *mod, PyObject *const *args, con
     // Clear the output
     Py_BEGIN_ALLOW_THREADS;
     memset(velocity, 0, sizeof(*velocity) * n_targets);
+    vortex_cutoff *= vortex_cutoff;
+    vortex_far_approximation *= vortex_far_approximation;
     for (size_t i = 0; i < n_elements; ++i)
     {
         const real_t circulation = circulations[i];

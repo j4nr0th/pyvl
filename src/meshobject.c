@@ -1654,6 +1654,8 @@ static PyObject *pyvl_mesh_induction_velocity(PyObject *self, PyTypeObject *defi
 
     memset(out, 0, sizeof(*out) * cp_cnt);
 
+    vortex_cutoff *= vortex_cutoff;
+    vortex_far_approximation *= vortex_far_approximation;
     // For each line
     for (unsigned i_line = 0; i_line < this->mesh.n_lines; ++i_line)
     {
