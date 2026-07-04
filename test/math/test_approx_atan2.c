@@ -1,5 +1,5 @@
-/** Purpose of this test is to verify that error for approx_atan is below 1e-8 when compared to glibc implementation of
- * atan and to time its performance.
+/** Purpose of this test is to verify that error for approx_atan2 is below 1e-8 when compared to glibc implementation of
+ * atan2 and to time its performance.
  *
  */
 #include "../../src/core/approx_atan.h"
@@ -87,8 +87,8 @@ int main(const int argc, const char *argv[static argc])
                     if (negate_y)
                         y_signed = -y_signed; // Quadrants III and IV
 
-                    const double result_glibc = atan(y_signed / x_signed);
-                    const double result_approx = atan_approx(y_signed / x_signed);
+                    const double result_glibc = atan2(y_signed, x_signed);
+                    const double result_approx = atan2_approx(y_signed, x_signed);
 
                     const double error = fabs(result_glibc - result_approx);
                     TEST_ASSERT(error < TEST_TOLERANCE,
@@ -174,7 +174,7 @@ int main(const int argc, const char *argv[static argc])
                     if (negate_y)
                         y_signed = -y_signed; // Quadrants III and IV
 
-                    const double v = atan_approx(y_signed / x_signed);
+                    const double v = atan2_approx(y_signed, x_signed);
                     // Something to do
                     if (r < v)
                         r = v;
@@ -182,7 +182,7 @@ int main(const int argc, const char *argv[static argc])
         }
     }
     const double t_approx = end_timer(time_approx) - t_baseline;
-    printf("Time taken for approx_atan: %f seconds for %lu iterations\n", t_approx, n_tests * 4 * N_INTERVALS);
+    printf("Time taken for approx_atan2: %f seconds for %lu iterations\n", t_approx, n_tests * 4 * N_INTERVALS);
     const struct timespec time_glibc = start_timer();
     r = 0;
     for (unsigned quadrant_sign = 0; quadrant_sign < 4; ++quadrant_sign)
@@ -190,7 +190,6 @@ int main(const int argc, const char *argv[static argc])
         const bool negate_x = quadrant_sign & 1; // Quadrants II and III
         const bool negate_y = quadrant_sign & 2; // Quadrants III and IV
         srand(quadrant_sign);                    // Seed the random number generator for reproducibility
-#pragma omp simd for firstprivate(r) collapse(2)
         for (unsigned interval_idx = 0; interval_idx < N_INTERVALS; ++interval_idx)
         {
             const double min_val = TEST_INTERVALS[interval_idx][0];
@@ -210,7 +209,7 @@ int main(const int argc, const char *argv[static argc])
                     if (negate_y)
                         y_signed = -y_signed; // Quadrants III and IV
 
-                    const double v = atan(y_signed / x_signed);
+                    const double v = atan2(y_signed, x_signed);
                     // Something to do
                     if (r < v)
                         r = v;
@@ -218,7 +217,7 @@ int main(const int argc, const char *argv[static argc])
         }
     }
     const double t_glibc = end_timer(time_glibc) - t_baseline;
-    printf("Time taken for glibc atan: %f seconds for %lu iterations\n", t_glibc, n_tests * 4 * N_INTERVALS);
+    printf("Time taken for glibc atan2: %f seconds for %lu iterations\n", t_glibc, n_tests * 4 * N_INTERVALS);
 
     return 0;
 }

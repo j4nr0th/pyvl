@@ -22,3 +22,17 @@
  */
 #pragma omp declare simd
 double atan2_approx(double y, double x);
+
+/**
+ * Compute an approximation of atan(x) using a polynomial approximation.
+ *
+ * Tests on my own machine shows the following results for random inputs:
+ * - glibc atan: TBD
+ * - approx_atan: TBD
+ *
+ * @param x The input value.
+ *
+ * @return The approximate value of atan(x) in radians.
+ */
+#pragma omp declare simd
+double atan_approx(double x);

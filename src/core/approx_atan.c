@@ -191,3 +191,37 @@ double atan2_approx(const double y, const double x)
 
     return v;
 }
+
+double atan_approx(const double x)
+{
+    // Quick path
+    if (x == 0)
+        return 0;
+
+    bool is_negative = signbit(x);
+    const double abs_x = fabs(x);
+
+    double v;
+    if (abs_x < 1)
+    {
+        // Use the approximation for atan(y / x)
+        v = atan2_approx_eval(abs_x);
+    }
+    else if (abs_x == 1)
+    {
+        v = M_PI / 4;
+    }
+    else
+    {
+        // Use the approximation for atan(y / x) = pi/2 - atan(x / y)
+        v = M_PI / 2 - atan2_approx_eval(1 / abs_x);
+    }
+
+    // Adjust the result based on the quadrant
+    if (is_negative)
+    {
+        v = -v;
+    }
+
+    return v;
+}
