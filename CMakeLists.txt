@@ -69,6 +69,7 @@ list(
 add_library(static_cvl
         ${CVL_CORE_SOURCE_FILES}
         ${CVL_CORE_HEADER_FILES}
+        src/core/multipole.c
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 

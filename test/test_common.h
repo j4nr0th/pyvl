@@ -6,6 +6,7 @@
 #define TEST_COMMON_H
 
 #include "../src/core/common.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -28,5 +29,26 @@
 extern const allocator_t TEST_ALLOCATOR;
 
 char *read_file_to_string(const char *path, size_t chunk_size);
+
+static inline uint64_t xorshift64(uint64_t *state)
+{
+    uint64_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    return x;
+}
+
+static inline real_t xorshift_uniform01(uint64_t *state)
+{
+    // 53-bit precision uniform [0, 1)
+    return (real_t)(xorshift64(state) >> 11) / (real_t)((uint64_t)1 << 53);
+}
+
+static inline real_t xorshift_uniform_range(uint64_t *state, real_t lo, real_t hi)
+{
+    return lo + xorshift_uniform01(state) * (hi - lo);
+}
 
 #endif // TEST_COMMON_H
