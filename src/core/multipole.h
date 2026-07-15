@@ -22,9 +22,10 @@ typedef struct
 {
     // Order of the multipole expansion
     unsigned order;
-    real_t *coeffs_x; // Coefficients of the multipole expansion for x-component
-    real_t *coeffs_y; // Coefficients of the multipole expansion for y-component
-    real_t *coeffs_z; // Coefficients of the multipole expansion for z-component
+    real3_t center;            // Center of the multipole expansion
+    real_t *restrict coeffs_x; // Coefficients of the multipole expansion for x-component
+    real_t *restrict coeffs_y; // Coefficients of the multipole expansion for y-component
+    real_t *restrict coeffs_z; // Coefficients of the multipole expansion for z-component
 } multipole_t;
 
 /**
@@ -43,6 +44,23 @@ size_t multipole_num_coeffs(unsigned order);
 size_t multipole_scratch_size(unsigned order);
 
 /**
+ * @brief Updates a multipole expansion with a new source point.
+ *
+ * This function adds contributions of a new source point to an existing multipole expansion.
+ *
+ * @param multipole The multipole expansion to update.
+ * @param num_coeffs The number of coefficients in the multipole expansion (used only for checking input).
+ * @param center The center of the multipole expansion.
+ * @param source_pos The position of the new source point.
+ * @param source_value The value of the new source point.
+ * @param cur Zeroed work buffer of at least multipole_scratch_size(order) elements.
+ * @param nxt Zeroed work buffer of at least multipole_scratch_size(order) elements.
+ */
+void multipole_update(const multipole_t *multipole, const real3_t center, const real3_t source_pos,
+                      const real3_t source_value, real_t CVL_ARRAY_ARG(cur, restrict),
+                      real_t CVL_ARRAY_ARG(nxt, restrict));
+
+/**
  * @brief Creates a multipole expansion.
  *
  * The required coefficient buffer size is
@@ -58,6 +76,8 @@ size_t multipole_scratch_size(unsigned order);
  * @param sources_values The values of the source points.
  * @param cur Scratch buffer of at least multipole_scratch_size(order) elements.
  * @param nxt Scratch buffer of at least multipole_scratch_size(order) elements.
+ * @param out Pointer to the multipole expansion structure to fill.
+ * @return True if the multipole expansion was created successfully, false otherwise.
  */
 bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(coeffs, restrict num_coeffs),
                       const real3_t center, unsigned sources,

@@ -16,6 +16,76 @@ size_t multipole_scratch_size(unsigned order)
     return dim * dim * dim;
 }
 
+void multipole_update(const multipole_t *multipole, const real3_t center, const real3_t source_pos,
+                      const real3_t source_value, real_t CVL_ARRAY_ARG(cur, restrict),
+                      real_t CVL_ARRAY_ARG(nxt, restrict))
+{
+    const size_t order = multipole->order;
+    const size_t scratch = multipole_scratch_size(order);
+    const unsigned dim = order + 1;
+    const size_t dim2 = (size_t)dim * dim;
+
+    const real3_t rel_pos = real3_sub(source_pos, center);
+    const real_t s2 = real3_dot(rel_pos, rel_pos);
+
+    real_t *restrict const coeffs_x = multipole->coeffs_x;
+    real_t *restrict const coeffs_y = multipole->coeffs_y;
+    real_t *restrict const coeffs_z = multipole->coeffs_z;
+
+    // Initialize cur to represent the polynomial (2 r·pos - pos·pos)^0 = 1
+    cur[0] = 1.0;
+    size_t idx = 0;
+    for (unsigned m = 0; m <= order; ++m)
+    {
+        // Accumulate the full polynomial for order m into the coefficient buffer.
+        for (unsigned p = 0; p <= m; ++p)
+        {
+            for (unsigned q = 0; q <= m - p; ++q)
+            {
+                const unsigned r_max = m - p - q;
+#pragma omp simd
+                for (unsigned r = 0; r <= r_max; ++r)
+                {
+                    const real_t c = cur[p * dim2 + q * dim + r];
+                    coeffs_x[idx + r] += source_value.x * c;
+                    coeffs_y[idx + r] += source_value.y * c;
+                    coeffs_z[idx + r] += source_value.z * c;
+                }
+                idx += (size_t)(r_max + 1);
+            }
+        }
+
+        if (m == order)
+            break;
+
+        // nxt = (2 r·pos - pos·pos) * cur
+        memset(nxt, 0, scratch * sizeof(real_t));
+        for (unsigned p = 0; p <= m; ++p)
+        {
+            for (unsigned q = 0; q <= m - p; ++q)
+            {
+                for (unsigned r = 0; r <= m - p - q; ++r)
+                {
+                    const size_t cur_idx = p * dim2 + q * dim + r;
+                    const real_t c = cur[cur_idx];
+                    if (c == 0.0)
+                        continue;
+
+                    nxt[cur_idx] -= s2 * c;
+                    nxt[(p + 1) * dim2 + q * dim + r] += 2.0 * rel_pos.x * c;
+                    nxt[p * dim2 + (q + 1) * dim + r] += 2.0 * rel_pos.y * c;
+                    nxt[p * dim2 + q * dim + (r + 1)] += 2.0 * rel_pos.z * c;
+                }
+            }
+        }
+        {
+            real_t *tmp = cur;
+            cur = nxt;
+            nxt = tmp;
+        }
+    }
+}
+
 bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(coeffs, restrict num_coeffs),
                       const real3_t center, unsigned sources,
                       const real3_t CVL_ARRAY_ARG(sources_coords, restrict sources),
@@ -40,84 +110,37 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
     real_t *restrict const coeffs_y = coeffs + needed_coeffs;
     real_t *restrict const coeffs_z = coeffs + 2 * needed_coeffs;
 
+    const multipole_t this = {
+        .order = order,
+        .center = center,
+        .coeffs_x = coeffs_x,
+        .coeffs_y = coeffs_y,
+        .coeffs_z = coeffs_z,
+    };
+
     const unsigned dim = order + 1;
     const size_t dim2 = (size_t)dim * dim;
 
     for (size_t i = 0; i < sources; ++i)
     {
-        const real3_t pos = real3_sub(sources_coords[i], center);
-        const real3_t val = sources_values[i];
-        const real_t s2 = real3_dot(pos, pos);
-
         // cur holds the coefficients of (2 r·pos - pos·pos)^m as a polynomial in r.
         // nxt is used to step from m to m+1.
         memset(cur, 0, scratch * sizeof(real_t));
         memset(nxt, 0, scratch * sizeof(real_t));
-        cur[0] = 1.0;
 
-        size_t idx = 0;
-        for (unsigned m = 0; m <= order; ++m)
-        {
-            // Accumulate the full polynomial for order m into the coefficient buffer.
-            for (unsigned p = 0; p <= m; ++p)
-            {
-                for (unsigned q = 0; q <= m - p; ++q)
-                {
-                    const unsigned r_max = m - p - q;
-#pragma omp simd
-                    for (unsigned r = 0; r <= r_max; ++r)
-                    {
-                        const real_t c = cur[p * dim2 + q * dim + r];
-                        coeffs_x[idx + r] += val.x * c;
-                        coeffs_y[idx + r] += val.y * c;
-                        coeffs_z[idx + r] += val.z * c;
-                    }
-                    idx += (size_t)(r_max + 1);
-                }
-            }
-
-            if (m == order)
-                break;
-
-            // nxt = (2 r·pos - pos·pos) * cur
-            memset(nxt, 0, scratch * sizeof(real_t));
-            for (unsigned p = 0; p <= m; ++p)
-            {
-                for (unsigned q = 0; q <= m - p; ++q)
-                {
-                    for (unsigned r = 0; r <= m - p - q; ++r)
-                    {
-                        const size_t cur_idx = p * dim2 + q * dim + r;
-                        const real_t c = cur[cur_idx];
-                        if (c == 0.0)
-                            continue;
-
-                        nxt[cur_idx] -= s2 * c;
-                        nxt[(p + 1) * dim2 + q * dim + r] += 2.0 * pos.x * c;
-                        nxt[p * dim2 + (q + 1) * dim + r] += 2.0 * pos.y * c;
-                        nxt[p * dim2 + q * dim + (r + 1)] += 2.0 * pos.z * c;
-                    }
-                }
-            }
-            {
-                real_t *tmp = cur;
-                cur = nxt;
-                nxt = tmp;
-            }
-        }
+        multipole_update(&this, center, sources_coords[i], sources_values[i], cur, nxt);
     }
 
     // Fill output
-    out->order = order;
-    out->coeffs_x = coeffs_x;
-    out->coeffs_y = coeffs_y;
-    out->coeffs_z = coeffs_z;
+    *out = this;
+
     return true;
 }
 
 real3_t multipole_eval(const multipole_t *multipole, const real3_t point)
 {
-    const real_t inv_r = 1.0 / sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+    const real3_t rel_point = real3_sub(point, multipole->center);
+    const real_t inv_r = 1.0 / sqrt(rel_point.x * rel_point.x + rel_point.y * rel_point.y + rel_point.z * rel_point.z);
     real_t scale = inv_r * inv_r;
     real3_t res = {.x = 0, .y = 0, .z = 0};
     size_t idx = 0;
@@ -139,12 +162,12 @@ real3_t multipole_eval(const multipole_t *multipole, const real3_t point)
                     term.y += multipole->coeffs_y[idx] * pz;
                     term.z += multipole->coeffs_z[idx] * pz;
 
-                    pz *= point.z;
+                    pz *= rel_point.z;
                     idx += 1;
                 }
-                py *= point.y;
+                py *= rel_point.y;
             }
-            px *= point.x;
+            px *= rel_point.x;
         }
         res = real3_add(res, real3_mul1(term, scale));
         scale *= inv_r * inv_r;

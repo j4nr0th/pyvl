@@ -12,13 +12,14 @@
 
 enum
 {
-    N_SOURCES = 10,
+    N_SOURCES = 30,
     N_EVAL = 100,
     N_SEEDS = 50,
+    TEST_ORDERS = 11,
 };
 
 static const real_t R_SOURCES = 0.1;
-static const real_t DISTANCE_FACTOR = 50.0;
+static const real_t DISTANCE_FACTOR = 10.0;
 static const real_t PI = (real_t)M_PI;
 
 static real3_t exact_field(const real3_t point, const real3_t sources_coords[static N_SOURCES],
@@ -34,10 +35,11 @@ static real3_t exact_field(const real3_t point, const real3_t sources_coords[sta
     return res;
 }
 
-static real_t abs_error(const real3_t a, const real3_t b)
+static real_t rel_error(const real3_t a, const real3_t b)
 {
     const real3_t d = real3_sub(a, b);
-    return real3_mag(d);
+    const real_t mag_b = (real3_mag(b) + real3_mag(a)) / 2; // Average magnitude of a and b
+    return real3_mag(d) / mag_b;
 }
 
 static void generate_sources(uint64_t seed, real3_t coords[static N_SOURCES], real3_t values[static N_SOURCES])
@@ -66,7 +68,20 @@ static void evaluate_errors(uint64_t seed, unsigned order, real_t *max_err, real
     real_t coeffs[3 * n_coeffs];
     real_t cur[scratch];
     real_t nxt[scratch];
-    const real3_t center = {.x = 0.0, .y = 0.0, .z = 0.0};
+    real3_t center = {.x = 0.0, .y = 0.0, .z = 0.0};
+    // Compute the center based on the average of source coordinates (weighted by source strength magnitude)
+    real_t total_weight = 0.0;
+    for (size_t i = 0; i < N_SOURCES; ++i)
+    {
+        const real_t weight = real3_mag(values[i]);
+        center.x += coords[i].x * weight;
+        center.y += coords[i].y * weight;
+        center.z += coords[i].z * weight;
+        total_weight += weight;
+    }
+    center.x /= total_weight;
+    center.y /= total_weight;
+    center.z /= total_weight;
     multipole_t multipole;
     const bool ok =
         multipole_create(order, 3 * n_coeffs, coeffs, center, N_SOURCES, coords, values, cur, nxt, &multipole);
@@ -91,7 +106,7 @@ static void evaluate_errors(uint64_t seed, unsigned order, real_t *max_err, real
 
         const real3_t exact = exact_field(point, coords, values);
         const real3_t approx = multipole_eval(&multipole, point);
-        const real_t err = abs_error(exact, approx);
+        const real_t err = rel_error(exact, approx);
 
         if (err > *max_err)
             *max_err = err;
@@ -106,11 +121,13 @@ int main(const int argc, const char *argv[static argc])
     (void)argc;
     (void)argv;
 
-    const unsigned orders[] = {0, 1, 2, 3, 4, 5};
-    const size_t n_orders = sizeof(orders) / sizeof(orders[0]);
-    real_t sum_avg[n_orders];
-    for (size_t i = 0; i < n_orders; ++i)
+    real_t sum_avg[TEST_ORDERS];
+    real_t sum_max[TEST_ORDERS];
+    for (size_t i = 0; i < TEST_ORDERS; ++i)
+    {
         sum_avg[i] = 0.0;
+        sum_max[i] = 0.0;
+    }
 
     const uint64_t base_seed = 0x123456789ABCDEF0ULL;
     const uint64_t seed_stride = 0x9E3779B97F4A7C15ULL;
@@ -119,28 +136,30 @@ int main(const int argc, const char *argv[static argc])
     {
         const uint64_t seed = base_seed + seed_idx * seed_stride;
 
-        real_t max_errors[n_orders];
-        real_t avg_errors[n_orders];
-        for (size_t i = 0; i < n_orders; ++i)
+        real_t max_errors[TEST_ORDERS];
+        real_t avg_errors[TEST_ORDERS];
+        for (size_t i = 0; i < TEST_ORDERS; ++i)
         {
-            evaluate_errors(seed, orders[i], &max_errors[i], &avg_errors[i]);
+            evaluate_errors(seed, i, max_errors + i, avg_errors + i);
             sum_avg[i] += avg_errors[i];
+            sum_max[i] += max_errors[i];
         }
     }
 
     printf("Averaged over %zu seeds, distance factor %.1f\n", N_SEEDS, DISTANCE_FACTOR);
-    for (size_t i = 0; i < n_orders; ++i)
+    for (size_t i = 0; i < TEST_ORDERS; ++i)
     {
         const real_t mean_avg = sum_avg[i] / (real_t)N_SEEDS;
-        printf("Order %u: mean avg absolute error = %.6e\n", orders[i], mean_avg);
+        const real_t mean_max = sum_max[i] / (real_t)N_SEEDS;
+        printf("Order %zu: mean avg relative error = %.6e, mean max relative error = %.6e\n", i, mean_avg, mean_max);
     }
 
-    for (size_t i = 1; i < n_orders; ++i)
+    for (size_t i = 1; i < TEST_ORDERS; ++i)
     {
         const real_t prev = sum_avg[i - 1] / (real_t)N_SEEDS;
         const real_t cur = sum_avg[i] / (real_t)N_SEEDS;
-        TEST_ASSERT(cur < prev, "Mean avg error did not decrease from order %u (%.6e) to order %u (%.6e)",
-                    orders[i - 1], prev, orders[i], cur);
+        TEST_ASSERT(cur < prev, "Mean avg error did not decrease from order %zu (%.6e) to order %zu (%.6e)", i - 1,
+                    prev, i, cur);
     }
 
     return EXIT_SUCCESS;
