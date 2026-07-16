@@ -49,3 +49,7 @@ add_test(NAME test_approx_atan2 COMMAND test_approx_atan2 "1000")
 add_executable(test_multipole math/test_multipole.c ${TEST_COMMON_FILES})
 target_link_libraries(test_multipole PRIVATE static_cvl ${TEST_MATH_LIB})
 add_test(NAME test_multipole COMMAND test_multipole)
+
+add_executable(test_multipole_shift math/test_multipole_shift.c ${TEST_COMMON_FILES})
+target_link_libraries(test_multipole_shift PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_multipole_shift COMMAND test_multipole_shift)

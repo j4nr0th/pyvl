@@ -61,6 +61,28 @@ void multipole_update(const multipole_t *multipole, const real3_t center, const 
                       real_t CVL_ARRAY_ARG(nxt, restrict));
 
 /**
+ * @brief Adds a shifted multipole expansion to a new multipole expansion.
+ *
+ * This is used to combine multipole expansions from child nodes into a parent node in the Barnes-Hut tree.
+ * The input and output orders need not be equal. The internal series expansion is
+ * carried out to `work_order` (which must be >= both `in->order` and `out->order`),
+ * improving the accuracy of the denominator binomial-series truncation.
+ *
+ * The function does not allocate any variable-length work memory; the caller must provide the
+ * work buffers described below.
+ *   - shift_exp: at least 3 * (work_order + 1) * (work_order + 1) elements. It is overwritten.
+ *   - pse:       at least 2 * multipole_num_coeffs(work_order) elements. It is overwritten.
+ *
+ * @param in The multipole expansion which is shifted.
+ * @param out The multipole expansion to which the shifted result is added to.
+ * @param work_order Internal expansion order for the series (>= in->order and >= out->order).
+ * @param shift_exp Work buffer of at least 3 * (work_order + 1) * (work_order + 1) elements.
+ * @param pse Work buffer of at least 2 * multipole_num_coeffs(work_order) elements.
+ */
+void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned work_order,
+                         real_t CVL_ARRAY_ARG(shift_exp, restrict), real_t CVL_ARRAY_ARG(pse, restrict));
+
+/**
  * @brief Creates a multipole expansion.
  *
  * The required coefficient buffer size is

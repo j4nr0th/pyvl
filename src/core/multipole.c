@@ -43,7 +43,6 @@ void multipole_update(const multipole_t *multipole, const real3_t center, const 
             for (unsigned q = 0; q <= m - p; ++q)
             {
                 const unsigned r_max = m - p - q;
-#pragma omp simd
                 for (unsigned r = 0; r <= r_max; ++r)
                 {
                     const real_t c = cur[p * dim2 + q * dim + r];
@@ -82,6 +81,190 @@ void multipole_update(const multipole_t *multipole, const real3_t center, const 
             real_t *tmp = cur;
             cur = nxt;
             nxt = tmp;
+        }
+    }
+}
+static size_t multipole_coeff_index(unsigned order, unsigned m, unsigned p, unsigned q, unsigned r)
+{
+    // Coefficients are stored in tetrahedral blocks: block k contains all monomials
+    // x^p y^q z^r with p + q + r <= k, ordered by the same nested loops used in
+    // multipole_update and multipole_eval. This helper returns the linear index of
+    // monomial (p,q,r) inside block m, ignoring the vector-component offset.
+    (void)order;
+
+    // Offset of block m: sum_{k=0}^{m-1} C(k+3,3) = C(m+3,4).
+    size_t idx = (size_t)m * (m + 1) * (m + 2) * (m + 3) / 24;
+
+    // Monomials with x-degree less than p.
+    for (unsigned pp = 0; pp < p; ++pp)
+    {
+        idx += (size_t)(m - pp + 2) * (m - pp + 1) / 2;
+    }
+
+    // Monomials with x-degree p and y-degree less than q.
+    idx += (size_t)q * (m - p + 1) - (size_t)q * (q - 1) / 2;
+
+    // Remaining r offset.
+    idx += r;
+    return idx;
+}
+
+static void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
+                                        const real_t cy, const real_t cz, const multipole_t *out, unsigned max_order)
+{
+    for (unsigned deg = 0; deg <= out_order; ++deg)
+    {
+        for (unsigned p = 0; p <= deg; ++p)
+        {
+            for (unsigned q = 0; q <= deg - p; ++q)
+            {
+                const unsigned r = deg - p - q;
+                const size_t poly_idx = multipole_coeff_index(max_order, deg, p, q, r);
+                const real_t c = poly[poly_idx];
+                if (c == 0.0)
+                    continue;
+                const size_t out_idx = multipole_coeff_index(max_order, out_order, p, q, r);
+                out->coeffs_x[out_idx] += scale * cx * c;
+                out->coeffs_y[out_idx] += scale * cy * c;
+                out->coeffs_z[out_idx] += scale * cz * c;
+            }
+        }
+    }
+}
+
+static void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, real_t ly, real_t lz, real_t lc,
+                                      unsigned max_order)
+{
+    const size_t n_coeffs = multipole_num_coeffs(max_order);
+    for (size_t i = 0; i < n_coeffs; ++i)
+    {
+        b[i] = 0.0;
+    }
+
+    for (unsigned deg = 0; deg <= max_order; ++deg)
+    {
+        for (unsigned p = 0; p <= deg; ++p)
+        {
+            for (unsigned q = 0; q <= deg - p; ++q)
+            {
+                const unsigned r = deg - p - q;
+                const size_t idx = multipole_coeff_index(max_order, deg, p, q, r);
+                const real_t c = a[idx];
+                if (c == 0.0)
+                    continue;
+
+                b[idx] += lc * c;
+                if (deg < max_order)
+                {
+                    b[multipole_coeff_index(max_order, deg + 1, p + 1, q, r)] += lx * c;
+                    b[multipole_coeff_index(max_order, deg + 1, p, q + 1, r)] += ly * c;
+                    b[multipole_coeff_index(max_order, deg + 1, p, q, r + 1)] += lz * c;
+                }
+            }
+        }
+    }
+}
+
+void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned work_order,
+                         real_t CVL_ARRAY_ARG(shift_exp, restrict), real_t CVL_ARRAY_ARG(pse, restrict))
+{
+    const unsigned in_order = in->order;
+    const unsigned out_order = out->order;
+
+    const real3_t shift = real3_sub(in->center, out->center);
+    const real_t s2 = real3_dot(shift, shift);
+
+    const real_t lx = 2.0 * shift.x;
+    const real_t ly = 2.0 * shift.y;
+    const real_t lz = 2.0 * shift.z;
+    const real_t lc = -s2;
+
+    // Build binomial expansions of (x - shift_x)^e etc up to work_order.
+    const size_t shift_dim = (size_t)work_order + 1;
+    const size_t shift_plane = shift_dim * shift_dim;
+    for (unsigned d = 0; d < 3; ++d)
+    {
+        const real_t s = (d == 0) ? shift.x : (d == 1) ? shift.y : shift.z;
+        shift_exp[d * shift_plane] = 1.0;
+        for (unsigned e = 1; e <= work_order; ++e)
+        {
+            shift_exp[d * shift_plane + e * shift_dim] = -s * shift_exp[d * shift_plane + (e - 1) * shift_dim];
+            for (unsigned i = 1; i <= e; ++i)
+            {
+                shift_exp[d * shift_plane + e * shift_dim + i] =
+                    shift_exp[d * shift_plane + (e - 1) * shift_dim + (i - 1)] -
+                    s * shift_exp[d * shift_plane + (e - 1) * shift_dim + i];
+            }
+            for (unsigned i = e + 1; i <= work_order; ++i)
+            {
+                shift_exp[d * shift_plane + e * shift_dim + i] = 0.0;
+            }
+        }
+    }
+
+    const size_t n_coeffs = multipole_num_coeffs(work_order);
+
+    for (unsigned m = 0; m <= in_order; ++m)
+    {
+        for (unsigned p = 0; p <= m; ++p)
+        {
+            for (unsigned q = 0; q <= m - p; ++q)
+            {
+                for (unsigned r = 0; r <= m - p - q; ++r)
+                {
+                    const size_t in_idx = multipole_coeff_index(in_order, m, p, q, r);
+                    const real_t cx = in->coeffs_x[in_idx];
+                    const real_t cy = in->coeffs_y[in_idx];
+                    const real_t cz = in->coeffs_z[in_idx];
+                    if (cx == 0.0 && cy == 0.0 && cz == 0.0)
+                        continue;
+
+                    // Numerator shift polynomial: (x - sx)^p (y - sy)^q (z - sz)^r
+                    for (size_t i = 0; i < n_coeffs; ++i)
+                    {
+                        pse[i] = 0.0;
+                    }
+                    for (unsigned i = 0; i <= p; ++i)
+                    {
+                        for (unsigned j = 0; j <= q; ++j)
+                        {
+                            for (unsigned k = 0; k <= r; ++k)
+                            {
+                                const real_t factor = shift_exp[0 * shift_plane + p * shift_dim + i] *
+                                                      shift_exp[1 * shift_plane + q * shift_dim + j] *
+                                                      shift_exp[2 * shift_plane + r * shift_dim + k];
+                                const size_t idx = multipole_coeff_index(work_order, i + j + k, i, j, k);
+                                pse[idx] = factor;
+                            }
+                        }
+                    }
+
+                    // l = 0: denominator factor = 1
+                    if (m <= out_order)
+                    {
+                        multipole_add_poly_to_order(pse, m, 1.0, cx, cy, cz, out, out_order);
+                    }
+
+                    // l >= 1: denominator binomial series (2 r_B·shift - |shift|^2)^l
+                    unsigned cur = 0;
+                    unsigned nxt = 1;
+                    real_t binom = 1.0;
+                    const unsigned max_l = (work_order > m) ? work_order - m : 0;
+                    for (unsigned l = 1; l <= max_l; ++l)
+                    {
+                        multipole_poly_mul_linear(pse + cur * n_coeffs, pse + nxt * n_coeffs, lx, ly, lz, lc,
+                                                  work_order);
+                        binom = binom * (m + l) / (real_t)l;
+                        if (m + l <= out_order)
+                        {
+                            multipole_add_poly_to_order(pse + nxt * n_coeffs, m + l, binom, cx, cy, cz, out, out_order);
+                        }
+                        const unsigned tmp = cur;
+                        cur = nxt;
+                        nxt = tmp;
+                    }
+                }
+            }
         }
     }
 }
