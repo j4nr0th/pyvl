@@ -180,44 +180,32 @@ class Multipole:
         >>> pts = rng.uniform(-0.1, 0.1, size=(8, 3))
         >>> vals = rng.uniform(-1, 1, size=(8, 3))
         >>> mp = Multipole.from_sources(2, (0., 0., 0.), pts, vals)
-
-    With the multipole expansion built, we can evaluate it on a grid of points and compare
-    with the original distribution.
-
-    .. jupyter-execute::
-
+        >>>
         >>> x = y = np.linspace(-5, 5, 100)
         >>> xs, ys = np.meshgrid(x, y)
         >>> points = np.stack([xs.ravel(), ys.ravel(),
         ...                    np.zeros_like(xs.ravel())], axis=-1)
         >>> v_app = mp.eval(points)
         >>> v_ex = np.sum(vals[:, None] / np.maximum(
-        ...     np.sum((points[None] - pts[:, None]) ** 2, axis=-1, keepdims=True),
-        ...     1e-300), axis=0)
+        ...     np.sum((points[None] - pts[:, None]) ** 2,
+        ...            axis=-1, keepdims=True), 1e-300), axis=0)
         >>>
-        >>> err = (
-        ...     np.linalg.norm(v_app - v_ex, axis=-1) /
-        ...     np.maximum(np.linalg.norm(v_ex, axis=-1), 1e-300
-        ... )
-
-    With this error computed, we can plot the magnitude of the field and the relative
-    error.
-
-    .. jupyter-execute::
-
+        >>> err = (np.linalg.norm(v_app - v_ex, axis=-1)
+        ...        / np.maximum(np.linalg.norm(v_ex, axis=-1), 1e-300))
+        >>>
         >>> fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
         >>> mag = np.log10(np.maximum(
-        >>>     np.linalg.norm(v_app, axis=-1), 1e-30))
-        >>> c1 = ax1.contourf(
-        ...     xs, ys, mag.reshape(xs.shape), levels=20, cmap="viridis"
-        ... )
+        ...     np.linalg.norm(v_app, axis=-1), 1e-30))
+        >>> c1 = ax1.contourf(xs, ys, mag.reshape(xs.shape),
+        ...                    levels=20, cmap="viridis")
         >>> ax1.set(title="$|\\mathbf{v}|$ (order 2)",
         ...         xlabel="$x$", ylabel="$y$")
         >>> fig.colorbar(c1, ax=ax1)
-        >>> c2 = ax2.contourf(
-        ...     xs, ys, np.log10(err.reshape(xs.shape)), levels=20, cmap="viridis"
-        ... )
-        >>> ax2.set(title="relative error", xlabel="$x$", ylabel="$y$")
+        >>> c2 = ax2.contourf(xs, ys,
+        ...     np.log10(err.reshape(xs.shape)),
+        ...     levels=20, cmap="viridis")
+        >>> ax2.set(title="relative error",
+        ...         xlabel="$x$", ylabel="$y$")
         >>> fig.colorbar(c2, ax=ax2)
         >>> plt.show()
     """
@@ -338,41 +326,41 @@ class Multipole:
 
         .. jupyter-execute::
 
-            import matplotlib.pyplot as plt
-            import numpy as np
-            from pyvl.cvl import Multipole
-
-            rng = np.random.default_rng(1)
-            pts = rng.uniform(-0.1, 0.1, size=(10, 3))
-            vals = rng.uniform(-1, 1, size=(10, 3))
-            mp = Multipole.from_sources(2, (0., 0., 0.), pts, vals)
-
-            x = y = np.linspace(-5, 5, 100)
-            xs, ys = np.meshgrid(x, y)
-            pts_eval = np.stack([xs.ravel(), ys.ravel(),
-                                 np.zeros_like(xs.ravel())], axis=-1)
-            v_before = mp.eval(pts_eval)
-
-            target = Multipole(2, (2., 0., 0.))
-            mp_shifted = mp.shift_to(target)
-            v_after = mp_shifted.eval(pts_eval)
-
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-            mag_before = np.log10(np.maximum(
-                np.linalg.norm(v_before, axis=-1), 1e-30))
-            c1 = ax1.contourf(xs, ys, mag_before.reshape(xs.shape),
-                               levels=20, cmap="viridis")
-            ax1.set(title="Before shift (centre at origin)",
-                    xlabel="$x$", ylabel="$y$")
-            fig.colorbar(c1, ax=ax1)
-            mag_after = np.log10(np.maximum(
-                np.linalg.norm(v_after, axis=-1), 1e-30))
-            c2 = ax2.contourf(xs, ys, mag_after.reshape(xs.shape),
-                               levels=c1.levels, cmap="viridis")
-            ax2.set(title="After shift_to((2,0,0))",
-                    xlabel="$x$", ylabel="$y$")
-            fig.colorbar(c2, ax=ax2)
-            plt.show()
+            >>> import matplotlib.pyplot as plt
+            >>> import numpy as np
+            >>> from pyvl.cvl import Multipole
+            >>>
+            >>> rng = np.random.default_rng(1)
+            >>> pts = rng.uniform(-0.1, 0.1, size=(10, 3))
+            >>> vals = rng.uniform(-1, 1, size=(10, 3))
+            >>> mp = Multipole.from_sources(2, (0., 0., 0.), pts, vals)
+            >>>
+            >>> x = y = np.linspace(-5, 5, 100)
+            >>> xs, ys = np.meshgrid(x, y)
+            >>> pts_eval = np.stack([xs.ravel(), ys.ravel(),
+            ...                      np.zeros_like(xs.ravel())], axis=-1)
+            >>> v_before = mp.eval(pts_eval)
+            >>>
+            >>> target = Multipole(2, (2., 0., 0.))
+            >>> mp_shifted = mp.shift_to(target)
+            >>> v_after = mp_shifted.eval(pts_eval)
+            >>>
+            >>> fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+            >>> mag_before = np.log10(np.maximum(
+            ...     np.linalg.norm(v_before, axis=-1), 1e-30))
+            >>> c1 = ax1.contourf(xs, ys, mag_before.reshape(xs.shape),
+            ...                    levels=20, cmap="viridis")
+            >>> ax1.set(title="Before shift (centre at origin)",
+            ...         xlabel="$x$", ylabel="$y$")
+            >>> fig.colorbar(c1, ax=ax1)
+            >>> mag_after = np.log10(np.maximum(
+            ...     np.linalg.norm(v_after, axis=-1), 1e-30))
+            >>> c2 = ax2.contourf(xs, ys, mag_after.reshape(xs.shape),
+            ...                    levels=c1.levels, cmap="viridis")
+            >>> ax2.set(title="After shift_to((2,0,0))",
+            ...         xlabel="$x$", ylabel="$y$")
+            >>> fig.colorbar(c2, ax=ax2)
+            >>> plt.show()
         """
         ...
 

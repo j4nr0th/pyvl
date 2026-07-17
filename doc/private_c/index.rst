@@ -42,6 +42,7 @@ Algorithms for computing vortex-induced velocities.
     :maxdepth: 1
 
     induction
+    multipole
 
 
 Coordinate Transforms

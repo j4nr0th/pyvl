@@ -10,10 +10,10 @@
  *
  * .. math::
  *
- *      \vec{v}(\vec{x}) = \sum_{i=1}^{n} \frac{\vec{x}_i \times \vec{\Gamma}_i}{|\vec{r}_i - \vec{x}|^2}
+ *      \vec{v}(\vec{x}) = \sum_{i=1}^{n} \frac{\vec{\Gamma}_i}{|\vec{r}_i - \vec{x}|^2}
  *
- * The induction :math:`\vec{\Gamma}` is an approximation of the vortex line and is actually the
- * product of circulation with the line length. The multipole expansion approximates the induction
+ * The vector source strength :math:`\vec{\Gamma}_i` encompasses the cross product of the
+ * line segment with the scalar circulation. The multipole expansion approximates the induction
  * of several particles on a point further away, as if it was a single multipole.
  *
  *

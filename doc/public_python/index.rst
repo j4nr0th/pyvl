@@ -38,6 +38,13 @@ One or more :class:`Geometry` objects constitute a :class:`SimulationGeometry`. 
 is an object, which can be passed to the solver and computes additional information about
 the individual geometrical objects, such as the dual mesh.
 
+Far-Field Approximation
+-----------------------
+
+To accelerate wake induction computations, the :class:`Multipole` type provides a
+low-order series expansion that approximates the Biot-Savart field of a group of
+vortex particles. This is described in more detail :ref:`here <pyvl.multipole>`.
+
 Solver Configuration
 --------------------
 
@@ -99,6 +106,7 @@ which allow for these values to be computed.
 
     reference_frame
     geometry
+    multipole
     model_settings
     solver_settings
     output_settings
