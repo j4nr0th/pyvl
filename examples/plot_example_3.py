@@ -64,7 +64,11 @@ for i_line, ln in enumerate(sim_geo.mesh_joined.line_data):
         shedding_lines.append(i_line)
 
 shedder = pyvl.WakeShedderUniform(shedding_lines)
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+model_settings = pyvl.ModelSettings(
+    vortex_cutoff=1e-6,
+    vortex_far_approximation=1e-3,
+    vortex_smallest_size=1e-6,
+)
 
 wake_settings = pyvl.WakeSettings(
     wake_shedder=shedder, wake_element_capacity=NT * len(shedding_lines)

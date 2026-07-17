@@ -57,7 +57,9 @@ times = np.cumsum(np.full(NT, dt))
 te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 
 model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6,
+    vortex_cutoff=1e-6,
+    vortex_far_approximation=1e-3,
+    vortex_smallest_size=1e-6,
 )
 wake_settings = pyvl.WakeSettings(
     wake_shedder=pyvl.WakeShedderUniform(te_lines),

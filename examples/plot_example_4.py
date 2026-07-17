@@ -37,7 +37,11 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 alpha = np.radians(10)  # 10 degrees
 v_inf = 10  # 10 m/s
 flow_velocity = (v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha))
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+model_settings = pyvl.ModelSettings(
+    vortex_cutoff=1e-6,
+    vortex_far_approximation=1e-3,
+    vortex_smallest_size=1e-6,
+)
 
 # Plot it just to show what it looks like
 sim_geo.polydata_at_time(0.0).plot(interactive=False)
@@ -185,7 +189,9 @@ ands, asur = sim_geo.line_adjecency_information(te_lines)
 settings = pyvl.SolverSettings(
     flow_velocity=flow_velocity,
     model_settings=pyvl.ModelSettings(
-        vortex_limit=1e-6,
+        vortex_cutoff=1e-6,
+        vortex_far_approximation=1e-3,
+        vortex_smallest_size=1e-6,
     ),
     wake_settings=pyvl.WakeSettings(
         wake_shedder=pyvl.WakeShedderUniform(te_lines),

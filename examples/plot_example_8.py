@@ -203,7 +203,9 @@ def flow_velocity(
 settings = pyvl.SolverSettings(
     flow_velocity=flow_velocity,  # Override the flow velocity function
     model_settings=pyvl.ModelSettings(
-        vortex_limit=1e-10,
+        vortex_cutoff=1e-10,
+        vortex_far_approximation=1e-3,
+        vortex_smallest_size=1e-10,
         # Symmetry across the yz-plane
         symmetry_plane=pyvl.TransformationPlane(origin=(0, 0, 0), normal=(1, 0, 0)),
     ),

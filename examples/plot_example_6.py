@@ -60,7 +60,9 @@ te_lines = sim_geo.te_normal_criterion(-0.5)  # -0.5 feels nice in my bones
 PLANE_Y = 0.5  # y location of symmetry plane
 
 model_settings = pyvl.ModelSettings(
-    vortex_limit=1e-6,
+    vortex_cutoff=1e-6,
+    vortex_far_approximation=1e-3,
+    vortex_smallest_size=1e-6,
     symmetry_plane=pyvl.TransformationPlane(
         origin=(0, PLANE_Y, 0),
         normal=(0, 1, 0),
@@ -105,14 +107,18 @@ def plot_symmetry_plane_velocities(have_symmetry: bool, out_name: str):
     """Plot the example either with or without symmetry active."""
     if have_symmetry:
         model_settings = pyvl.ModelSettings(
-            vortex_limit=1e-6,
+            vortex_cutoff=1e-6,
+            vortex_far_approximation=1e-3,
+            vortex_smallest_size=1e-6,
             symmetry_plane=pyvl.TransformationPlane(
                 origin=(0, PLANE_Y, 0),
                 normal=(0, 1, 0),
             ),
         )
     else:
-        model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+        model_settings = pyvl.ModelSettings(
+            vortex_cutoff=1e-6, vortex_far_approximation=1e-3, vortex_smallest_size=1e-6
+        )
     settings = pyvl.SolverSettings(
         flow_velocity=flow_velocity,
         model_settings=model_settings,

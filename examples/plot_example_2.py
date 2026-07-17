@@ -68,16 +68,12 @@ sim_geo = pyvl.SimulationGeometry.from_geometries(geo)
 
 # %%
 #
-# First, there's the :class:`FlowConditions`. This is an :class:`abc.ABC` intended to be
-# subclassed in case anything more specific is required. If a constant free-stream
-# velocity is good enough, the module provides :class:`FlowConditionsUniform`, which can
-# be used for constant free-stream.
+# First, the flow velocity needs to be set. If a constant free-stream
+# velocity is good enough, a simple tuple of three components can be used.
 
 alpha = np.radians(15)  # 5 degrees
 v_inf = 10  # 10 m/s
-flow_velocity = pyvl.FlowConditionsUniform(
-    v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha)
-)
+flow_velocity = (v_inf * np.cos(alpha), 0, v_inf * np.sin(alpha))
 
 
 # %%
@@ -86,8 +82,13 @@ flow_velocity = pyvl.FlowConditionsUniform(
 # settings related to the settings made by the solver when it comes to the models of the
 # flow and phyisics.
 
-# Specify the minimum distance before vortex has no more effect.
-model_settings = pyvl.ModelSettings(vortex_limit=1e-6)
+# Specify the model parameters: cutoff distance, far-field approximation threshold,
+# and minimum vortex size.
+model_settings = pyvl.ModelSettings(
+    vortex_cutoff=1e-6,
+    vortex_far_approximation=1e-3,
+    vortex_smallest_size=1e-6,
+)
 
 # %%
 #
