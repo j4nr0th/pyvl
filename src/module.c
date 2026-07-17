@@ -2,6 +2,7 @@
 #include "module.h"
 #include "geoidobject.h"
 #include "meshobject.h"
+#include "multipoleobject.h"
 #include "referenceframeobject.h"
 #include "transformationplaneobject.h"
 
@@ -52,6 +53,7 @@ static int cvl_module_add_types(PyObject *mod)
         {&pyvl_reference_frame_typespec, &state->rf_type},
         {&pyvl_transformation_plane_typespec, &state->transformation_plane_type},
         {&pyvl_mesh_typespec, &state->mesh_type},
+        {&pyvl_multipole_typespec, &state->multipole_type},
         {0},
     };
     for (unsigned i = 0; types_to_add[i].spec != NULL; ++i)

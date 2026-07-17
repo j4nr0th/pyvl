@@ -301,9 +301,6 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
         .coeffs_z = coeffs_z,
     };
 
-    const unsigned dim = order + 1;
-    const size_t dim2 = (size_t)dim * dim;
-
     for (size_t i = 0; i < sources; ++i)
     {
         // cur holds the coefficients of (2 r·pos - pos·pos)^m as a polynomial in r.

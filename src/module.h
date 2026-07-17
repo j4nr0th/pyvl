@@ -24,6 +24,7 @@ typedef struct
 {
     PyTypeObject *geoid_type;
     PyTypeObject *mesh_type;
+    PyTypeObject *multipole_type;
     PyTypeObject *rf_type;
     PyTypeObject *transformation_plane_type;
 } module_state_t;

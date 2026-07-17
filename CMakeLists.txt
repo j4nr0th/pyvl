@@ -26,6 +26,7 @@ list(
         src/allocator.c
         src/geoidobject.c
         src/meshobject.c
+        src/multipoleobject.c
         src/time_dependent_vector.c
         src/referenceframeobject.c
         src/transformationplaneobject.c
@@ -38,6 +39,7 @@ list(
         src/allocator.h
         src/geoidobject.h
         src/meshobject.h
+        src/multipoleobject.h
         src/time_dependent_vector.h
         src/referenceframeobject.h
         src/transformationplaneobject.h
@@ -53,6 +55,7 @@ list(
         src/core/flow_solver.c
         src/core/transformation.c
         src/core/approx_atan.c
+        src/core/multipole.c
 )
 
 list(
