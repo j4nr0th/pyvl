@@ -24,7 +24,7 @@ enum
     N_EVAL = 50,
     N_SEEDS = 5,
     TEST_ORDER = 4,
-    TEST_N_THREADS = 1,
+    TEST_N_THREADS = 4,
 };
 
 static void generate_sources(uint64_t seed, unsigned n, real3_t coords[static n], real3_t values[static n])
@@ -62,6 +62,37 @@ static real_t rel_error(const real3_t a, const real3_t b)
     if (denom == 0.0)
         return 0.0;
     return real3_mag(d) / denom;
+}
+
+typedef struct
+{
+    size_t total_alloc_bytes;
+    size_t total_alloc_count;
+    size_t total_free_bytes;
+    size_t total_free_count;
+    size_t total_realloc_count;
+} myalloc_state_t;
+
+void *my_alloc(void *s, size_t size)
+{
+    myalloc_state_t *st = (void *)s;
+    st->total_alloc_bytes += size;
+    st->total_alloc_count += 1;
+    return malloc(size);
+}
+void my_free(void *s, void *p)
+{
+    if (p == NULL)
+        return;
+    myalloc_state_t *st = (void *)s;
+    st->total_free_count += 1;
+    free(p);
+}
+void *my_realloc(void *s, void *p, size_t new_size)
+{
+    myalloc_state_t *st = (void *)s;
+    st->total_realloc_count += 1;
+    return realloc(p, new_size);
 }
 
 int main(const int argc, const char *argv[static argc])
@@ -122,7 +153,8 @@ int main(const int argc, const char *argv[static argc])
         printf("scratch_size(n=100, order=4, n_threads=%u) = %zu bytes\n", TEST_N_THREADS, scratch_sz);
 
         real3_t coords[N_SOURCES];
-        generate_sources(0x12345ULL, N_SOURCES, coords, (real3_t[1]){{0}});
+        real3_t values[N_SOURCES];
+        generate_sources(0x12345ULL, N_SOURCES, coords, values);
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
         size_t required = 0;
@@ -307,15 +339,6 @@ int main(const int argc, const char *argv[static argc])
                                                 leaf_values_static, direct_cur, direct_nxt, &direct_mp);
         TEST_ASSERT(direct_ok, "direct multipole_create failed");
 
-        /* DEBUG */
-        fprintf(stderr, "DEBUG-FIDELITY mult_leaf=%u count=%u mp_center=(%g,%g,%g) mp_coeffs_x[0..5]=%g %g %g %g %g %g",
-                (unsigned)multipole_leaf, (unsigned)tree.nodes[multipole_leaf].particle_count, mp->center.x,
-                mp->center.y, mp->center.z, mp->coeffs_x[0], mp->coeffs_x[1], mp->coeffs_x[2], mp->coeffs_x[3],
-                mp->coeffs_x[4], mp->coeffs_x[5]);
-        fprintf(stderr, " direct_coeffs_x[0..5]=%g %g %g %g %g %g\n", direct_mp.coeffs_x[0], direct_mp.coeffs_x[1],
-                direct_mp.coeffs_x[2], direct_mp.coeffs_x[3], direct_mp.coeffs_x[4], direct_mp.coeffs_x[5]);
-        fflush(stderr);
-
         /* Far-field fidelity: evaluate the multipole at 10x the source radius. */
         const real_t DISTANCE_FACTOR = 10.0;
         const real_t r = 0.1 * DISTANCE_FACTOR;
@@ -397,57 +420,7 @@ int main(const int argc, const char *argv[static argc])
      * residual allocations (topo_to_real, mp_slices — sized from the count
      * pass output rather than from inputs alone). */
     {
-        struct
-        {
-            size_t total_alloc_bytes;
-            size_t total_alloc_count;
-            size_t total_free_bytes;
-            size_t total_free_count;
-            size_t total_realloc_count;
-        } state = {0, 0, 0, 0, 0};
-
-        void *my_alloc(void *s, size_t size)
-        {
-            struct
-            {
-                size_t total_alloc_bytes;
-                size_t total_alloc_count;
-                size_t total_free_bytes;
-                size_t total_free_count;
-                size_t total_realloc_count;
-            } *st = (void *)s;
-            st->total_alloc_bytes += size;
-            st->total_alloc_count += 1;
-            return malloc(size);
-        }
-        void my_free(void *s, void *p)
-        {
-            if (p == NULL)
-                return;
-            struct
-            {
-                size_t total_alloc_bytes;
-                size_t total_alloc_count;
-                size_t total_free_bytes;
-                size_t total_free_count;
-                size_t total_realloc_count;
-            } *st = (void *)s;
-            st->total_free_count += 1;
-            free(p);
-        }
-        void *my_realloc(void *s, void *p, size_t new_size)
-        {
-            struct
-            {
-                size_t total_alloc_bytes;
-                size_t total_alloc_count;
-                size_t total_free_bytes;
-                size_t total_free_count;
-                size_t total_realloc_count;
-            } *st = (void *)s;
-            st->total_realloc_count += 1;
-            return realloc(p, new_size);
-        }
+        myalloc_state_t state = {0, 0, 0, 0, 0};
 
         const allocator_t my_allocator = {
             .allocate = my_alloc,

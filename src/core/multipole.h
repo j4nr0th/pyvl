@@ -116,5 +116,5 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
  * expansion.
  * @return The vector value of the multipole expansion at the given point.
  */
-#pragma omp declare simd
+// #pragma omp declare simd
 real3_t multipole_eval(const multipole_t *multipole, const real3_t point);

@@ -109,12 +109,7 @@ extern "C"
      */
     typedef struct bh_node
     {
-        /* `volatile` keeps gcc/LTO from reusing the kind slot as a
-         * scratch register while a different union member is active.
-         * Without it, writes through `data.mp` (e.g. via memcpy of a
-         * multipole_t) can clobber kind, producing misclassification
-         * in subsequent reads. */
-        volatile bh_node_kind_t kind;
+        bh_node_kind_t kind;
         unsigned depth;
         real3_t center;
         real_t half_size;

@@ -1,8 +1,9 @@
 #include "barnes_hut_tree.h"
 
+#include <omp.h>
+
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -128,8 +129,8 @@ static inline unsigned resolve_work_order(const barnes_hut_settings_t *settings)
  * and subdividing is worth it only when the multipole would represent a
  * large cluster (n >> (P+1)^3).
  *
- * @f$ \mathrm{mp\_threshold} = \max(1, \mathrm{critical\_particle\_count}) @f$
- * @f$ \mathrm{subdivide\_threshold} = \mathrm{critical\_particle\_count} \cdot (P + 1)^3 @f$
+ * :math:`\mathrm{mp\_threshold} = \max(1, \mathrm{critical\_particle\_count})`
+ * :math:`\mathrm{subdivide\_threshold} = \mathrm{critical\_particle\_count} \cdot (P + 1)^3`
  */
 static unsigned multipole_threshold(const barnes_hut_settings_t *settings)
 {
@@ -621,10 +622,6 @@ bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sourc
 }
 
 /* ------------------------------------------------------------------ */
-/* Public API stubs for now — fleshed out in step 5                   */
-/* ------------------------------------------------------------------ */
-
-/* ------------------------------------------------------------------ */
 /* Public API — insert pass                                          */
 /* ------------------------------------------------------------------ */
 
@@ -645,7 +642,7 @@ bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sourc
  */
 static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict), uint32_t n_topo_nodes,
                                  const barnes_hut_settings_t *settings,
-                                 uint32_t CVL_ARRAY_ARG(topo_to_real, restrict n_topo_nodes), unsigned work_order,
+                                 uint32_t CVL_ARRAY_ARG(topo_to_real, restrict n_topo_nodes),
                                  bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes), real_t *multipole_coeffs,
                                  real_t *CVL_ARRAY_ARG(mp_slices_out, restrict n_topo_nodes),
                                  unsigned *out_n_multipole_slices)
@@ -722,11 +719,6 @@ static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict)
             node->data.mp.coeffs_z = cursor;
             cursor += multipole_num_coeffs(settings->order);
             mp_slices_out[next_real - 1] = node->data.mp.coeffs_x;
-            fprintf(stderr, "PROBE-MATMP ti=%u real=%u slice=%p cursor_off=%ld\n", (unsigned)ti,
-                    (unsigned)(next_real - 1), (void *)node->data.mp.coeffs_x,
-                    (long)((char *)node->data.mp.coeffs_x - (char *)multipole_coeffs));
-            fflush(stderr);
-            (void)work_order;
             n_multipole_slices += 1;
         }
         else
@@ -779,7 +771,7 @@ static void descend_for_each_source(unsigned n_sources, const real3_t CVL_ARRAY_
             const real3_t c = nodes[idx].center;
             const unsigned oct =
                 (unsigned)(p.x >= c.x) * 1u + (unsigned)(p.y >= c.y) * 2u + (unsigned)(p.z >= c.z) * 4u;
-            bh_node_t *child = nodes[idx].data.internal.children[oct];
+            const bh_node_t *child = nodes[idx].data.internal.children[oct];
             if (child == NULL)
             {
                 /* Topo/bh-node inconsistency: an octant that count_pass
@@ -906,8 +898,8 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
     real_t *pse = (real_t *)bp;
 
     /* --- Materialize the bh_node_t tree from the topo array. --- */
-    const uint32_t n_real = materialize_tree(scratch.topo, n_topo_nodes, settings, topo_to_real, work_order, nodes,
-                                             multipole_coeffs, mp_slices, NULL);
+    const uint32_t n_real =
+        materialize_tree(scratch.topo, n_topo_nodes, settings, topo_to_real, nodes, multipole_coeffs, mp_slices, NULL);
     (void)n_real;
 
     /* --- Descend each source through the bh_node_t tree to count per-leaf. --- */
@@ -962,52 +954,39 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
                 }
             }
         }
-        fprintf(stderr, "DEBUG-PRE-OMP n=%u counts:", (unsigned)n_topo_nodes);
-        for (uint32_t i = 0; i < n_topo_nodes; ++i)
-            fprintf(stderr, " %u:%u", (unsigned)i, (unsigned)nodes[i].particle_count);
-        fprintf(stderr, "\n");
-        fflush(stderr);
-        /* Print which node kinds are right before OMP, in serial. */
-        fprintf(stderr, "DEBUG-KIND-PRE2:");
-        for (uint32_t i = 0; i < n_topo_nodes; ++i)
-            fprintf(stderr, " %u:%d", (unsigned)i, (int)nodes[i].kind);
-        fprintf(stderr, "\n");
-        fflush(stderr);
-        fprintf(stderr, "DEBUG-NODES-PTR nodes=%p allocator=%p\n", (void *)nodes, (void *)(allocator));
-        fflush(stderr);
 
-        /* OMP disabled for serial debug. */
+#pragma omp parallel default(none)                                                                                     \
+    shared(n_mp_leaves, mp_leaf_indices, nodes, particle_order, sources_coords, sources_values, settings, scratch,     \
+               leaf_buf_size, n_sources, leaf_ok, mp_slices) num_threads(n_threads)
         {
-            /* DEBUG */
-            fprintf(stderr, "DEBUG-INNER-KINDS:");
-            for (uint32_t i = 0; i < n_topo_nodes; ++i)
-                fprintf(stderr, " %u:%d", (unsigned)i, (int)nodes[i].kind);
-            fprintf(stderr, "\n");
-            fflush(stderr);
-            /* SERIAL: skip OMP and run inline. */
-            const int tid = 0;
+            const int tid = omp_get_thread_num();
             const barnes_hut_leaf_scratch_t leaf =
                 barnes_hut_leaf_scratch_for(&scratch, (unsigned)tid, n_sources, settings->order);
+#pragma omp for reduction(&& : leaf_ok) schedule(static)
             for (unsigned ml = 0; ml < n_mp_leaves; ++ml)
             {
                 const uint32_t i = mp_leaf_indices[ml];
-                fprintf(stderr, "DEBUG-MLB ml=%u i=%u kind=%d count=%u\n", ml, (unsigned)i, (int)nodes[i].kind,
-                        (unsigned)nodes[i].particle_count);
-                fflush(stderr);
                 const size_t n_particles = nodes[i].particle_count;
 
                 /* Compute |Γ|-weighted centroid. */
                 real3_t center = {.x = 0, .y = 0, .z = 0};
+                real_t cx = 0, cy = 0, cz = 0;
                 real_t total_weight = 0.0;
+#pragma omp simd reduction(+ : cx, cy, cz, total_weight)
                 for (unsigned k = 0; k < n_particles; ++k)
                 {
                     const unsigned src = particle_order[nodes[i].particle_begin + k];
                     const real_t w = real3_mag(sources_values[src]);
-                    center.x += sources_coords[src].x * w;
-                    center.y += sources_coords[src].y * w;
-                    center.z += sources_coords[src].z * w;
+                    cx += sources_coords[src].x * w;
+                    cy += sources_coords[src].y * w;
+                    cz += sources_coords[src].z * w;
                     total_weight += w;
                 }
+
+                center.x = cx;
+                center.y = cy;
+                center.z = cz;
+
                 if (total_weight > 0.0)
                 {
                     center.x /= total_weight;
@@ -1018,22 +997,10 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
                 {
                     center = nodes[i].center;
                 }
-                fprintf(stderr, "PROBE-BEFORE-MPC i=%u kind=%d depth=%u px=%u\n", (unsigned)i, (int)nodes[i].kind,
-                        (unsigned)nodes[i].depth, 0xabcdef);
-                fflush(stderr);
                 nodes[i].data.mp.center = center;
-                fprintf(stderr, "PROBE-AFTER-MPC= i=%u kind=%d depth=%u\n", (unsigned)i, (int)nodes[i].kind,
-                        (unsigned)nodes[i].depth);
-                fflush(stderr);
 
-                fprintf(stderr,
-                        "PROBE-PTRS i=%u nodes=%p leaf.coords=%p leaf.values=%p leaf.cur=%p leaf.nxt=%p nodes_i=%p "
-                        "ni_off=%ld\n",
-                        (unsigned)i, (void *)nodes, (void *)leaf.leaf_coords, (void *)leaf.leaf_values,
-                        (void *)leaf.leaf_cur, (void *)leaf.leaf_nxt, (void *)&nodes[i],
-                        (long)((char *)&nodes[i] - (char *)nodes));
-                fflush(stderr);
                 /* Pack sources into the leaf buffer. */
+#pragma omp simd
                 for (unsigned k = 0; k < n_particles; ++k)
                 {
                     const unsigned src = particle_order[nodes[i].particle_begin + k];
@@ -1045,32 +1012,17 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
                     leaf.leaf_values[3u * k + 2] = sources_values[src].z;
                 }
 
-                fprintf(stderr, "PROBE-BEFORE-MPC2 i=%u kind=%d depth=%u slice=%p\n", (unsigned)i, (int)nodes[i].kind,
-                        (unsigned)nodes[i].depth, (void *)mp_slices[i]);
-                fflush(stderr);
                 const bool mp_ok = multipole_create(settings->order, (unsigned)leaf_buf_size, mp_slices[i], center,
                                                     (unsigned)n_particles, (const real3_t *)leaf.leaf_coords,
                                                     (const real3_t *)leaf.leaf_values, leaf.leaf_cur, leaf.leaf_nxt,
                                                     &nodes[i].data.mp);
-                fprintf(stderr, "PROBE-AFTER-MPC2 i=%u kind=%d depth=%u\n", (unsigned)i, (int)nodes[i].kind,
-                        (unsigned)nodes[i].depth);
-                fflush(stderr);
                 /* Force gcc to keep nodes[i].kind live across the call —
                  * the strict-aliasing rules can otherwise let it spill a
                  * temporary into the kind slot via the inactive-union
                  * access patterns. */
                 if (nodes[i].kind != BH_NODE_MULTIPOLE)
                     leaf_ok = false;
-                if (ml == 0)
-                {
-                    fprintf(stderr, "POSTCREATE i=%u kind=%d depth=%u half_size=%g\n", (unsigned)i, (int)nodes[i].kind,
-                            (unsigned)nodes[i].depth, nodes[i].half_size);
-                    fflush(stderr);
-                    for (int j = 0; j < 16; ++j)
-                        fprintf(stderr, " %02x", (unsigned)((const unsigned char *)&nodes[i])[j]);
-                    fprintf(stderr, "\n");
-                    fflush(stderr);
-                }
+
                 if (!mp_ok)
                     leaf_ok = false;
             }
@@ -1132,14 +1084,6 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
         }
     }
 
-    /* --- Populate the output handle. --- */
-    {
-        fprintf(stderr, "DEBUG-COUNTS-POST n=%u", (unsigned)n_topo_nodes);
-        for (uint32_t i = 0; i < n_topo_nodes; ++i)
-            fprintf(stderr, " %u:%u", (unsigned)i, (unsigned)nodes[i].particle_count);
-        fprintf(stderr, "\n");
-        fflush(stderr);
-    }
     out->settings = *settings;
     out->root_center = nodes[0].center;
     out->root_half_size = nodes[0].half_size;
