@@ -66,9 +66,9 @@ int main(const int argc, const char *argv[static argc])
     printf("Barnes-Hut build performance\n");
     printf("============================\n");
     printf("order=%u critical=%u max_depth=%u\n", settings.order, settings.critical_particle_count, settings.max_depth);
-    printf("%-8s %-10s %-8s %-9s %-12s %-10s %-9s %-10s\n", "N", "shape", "depth", "build_ms", "ns/source",
+    printf("%-8s %-14s %-8s %-9s %-12s %-10s %-9s %-10s\n", "N", "shape", "depth", "build_ms", "ns/source",
            "buffer_KiB", "n_threads", "seed");
-    printf("-------- ---------- -------- --------- ------------ ---------- --------- "
+    printf("-------- -------------- -------- --------- ------------ ---------- --------- "
            "----------\n");
 
     for (unsigned lvl = 0; lvl < N_LEVELS; ++lvl)
@@ -130,9 +130,9 @@ int main(const int argc, const char *argv[static argc])
         const double scratch_kib = (double)scratch_sz / 1024.0;
         const double total_kib = buffer_kib + scratch_kib;
 
-        printf("%-8u %u+%u+%u   %-8u %-9.3f %-12.1f %-10.1f %-9u 0x%lx\n", n, tree.n_internal, tree.n_multipole_leaves,
-               tree.n_particle_leaves, tree.max_depth_reached, build_ms, ns_per_source, total_kib, settings.n_threads,
-               (unsigned long)seed);
+        printf("%-8u %4u %4u %4u   %-8u %-9.3f %-12.1f %-10.1f %-9u 0x%lx\n", n, tree.n_internal,
+               tree.n_multipole_leaves, tree.n_particle_leaves, tree.max_depth_reached, build_ms, ns_per_source,
+               total_kib, settings.n_threads, (unsigned long)seed);
 
         /* Sanity checks: tree must have at least one multipole or particle leaf
          * and the sum of leaf kinds must equal total nodes. */

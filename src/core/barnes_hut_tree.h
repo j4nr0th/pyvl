@@ -224,16 +224,12 @@ extern "C"
      *                               settings)` bytes. The contents are not
      *                               preserved across calls.
      * @param scratch_size           Size of @p scratch_buffer in bytes.
-     * @param allocator              Allocator callbacks for residual
-     *                               allocations that cannot be sized from
-     *                               inputs alone. Pass `NULL` to use the libc
-     *                               `malloc`/`free` fallback.
      * @param required_buffer_size   Out-parameter receiving the required size.
      * @return `true` on success, `false` on invalid input (no output written).
      */
     bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
                                const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), void *scratch_buffer,
-                               size_t scratch_size, const allocator_t *allocator, size_t *required_buffer_size);
+                               size_t scratch_size, size_t *required_buffer_size);
 
     /**
      * @brief Run the insert pass into a pre-allocated buffer.

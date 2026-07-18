@@ -158,7 +158,7 @@ int main(const int argc, const char *argv[static argc])
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
         size_t required = 0;
-        const bool ok = barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, NULL, &required);
+        const bool ok = barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required);
         TEST_ASSERT(ok, "count must succeed for valid input");
         TEST_ASSERT(required > 0, "required buffer size must be positive, got %zu", required);
         printf("count(n=100, order=4) = %zu bytes\n", required);
@@ -176,7 +176,7 @@ int main(const int argc, const char *argv[static argc])
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
         size_t required = 12345;
-        const bool ok = barnes_hut_tree_count(0, NULL, &settings, scratch, scratch_sz, NULL, &required);
+        const bool ok = barnes_hut_tree_count(0, NULL, &settings, scratch, scratch_sz, &required);
         TEST_ASSERT(!ok, "count must fail for n_sources=0");
         TEST_ASSERT(required == 0, "count must reset required to 0 on failure, got %zu", required);
         free(scratch);
@@ -282,7 +282,7 @@ int main(const int argc, const char *argv[static argc])
         fflush(stderr);
 
         size_t required = 0;
-        TEST_ASSERT(barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, NULL, &required),
+        TEST_ASSERT(barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required),
                     "count failed");
         TEST_ASSERT(required > 0, "required buffer size must be positive");
 
@@ -377,8 +377,8 @@ int main(const int argc, const char *argv[static argc])
         void *scratch_b = malloc(scratch_sz);
         TEST_ASSERT(scratch_a && scratch_b, "scratch malloc failed");
         size_t required_a = 0, required_b = 0;
-        barnes_hut_tree_count(N_SOURCES, coords_a, &settings, scratch_a, scratch_sz, NULL, &required_a);
-        barnes_hut_tree_count(N_SOURCES, coords_b, &settings, scratch_b, scratch_sz, NULL, &required_b);
+        barnes_hut_tree_count(N_SOURCES, coords_a, &settings, scratch_a, scratch_sz, &required_a);
+        barnes_hut_tree_count(N_SOURCES, coords_b, &settings, scratch_b, scratch_sz, &required_b);
         TEST_ASSERT(required_a == required_b, "count must be deterministic: %zu vs %zu", required_a, required_b);
 
         /* Build both trees and compare depth stats. */
@@ -462,9 +462,8 @@ int main(const int argc, const char *argv[static argc])
          * is needed for a count-only pass), so the allocator is untouched. */
         const size_t alloc_before_c = state.total_alloc_count;
         size_t required_b = 0;
-        TEST_ASSERT(
-            barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &my_allocator, &required_b),
-            "count with custom allocator failed");
+        TEST_ASSERT(barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required_b),
+                    "count with custom allocator failed");
         TEST_ASSERT(state.total_alloc_count == alloc_before_c, "count unexpectedly went through the allocator");
 
         free(scratch);

@@ -84,13 +84,12 @@ void multipole_update(const multipole_t *multipole, const real3_t center, const 
         }
     }
 }
-static size_t multipole_coeff_index(unsigned order, unsigned m, unsigned p, unsigned q, unsigned r)
+static size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r)
 {
     // Coefficients are stored in tetrahedral blocks: block k contains all monomials
     // x^p y^q z^r with p + q + r <= k, ordered by the same nested loops used in
     // multipole_update and multipole_eval. This helper returns the linear index of
     // monomial (p,q,r) inside block m, ignoring the vector-component offset.
-    (void)order;
 
     // Offset of block m: sum_{k=0}^{m-1} C(k+3,3) = C(m+3,4).
     size_t idx = (size_t)m * (m + 1) * (m + 2) * (m + 3) / 24;
@@ -110,7 +109,7 @@ static size_t multipole_coeff_index(unsigned order, unsigned m, unsigned p, unsi
 }
 
 static void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
-                                        const real_t cy, const real_t cz, const multipole_t *out, unsigned max_order)
+                                        const real_t cy, const real_t cz, const multipole_t *out)
 {
     for (unsigned deg = 0; deg <= out_order; ++deg)
     {
@@ -119,11 +118,11 @@ static void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, 
             for (unsigned q = 0; q <= deg - p; ++q)
             {
                 const unsigned r = deg - p - q;
-                const size_t poly_idx = multipole_coeff_index(max_order, deg, p, q, r);
+                const size_t poly_idx = multipole_coeff_index(deg, p, q, r);
                 const real_t c = poly[poly_idx];
                 if (c == 0.0)
                     continue;
-                const size_t out_idx = multipole_coeff_index(max_order, out_order, p, q, r);
+                const size_t out_idx = multipole_coeff_index(out_order, p, q, r);
                 out->coeffs_x[out_idx] += scale * cx * c;
                 out->coeffs_y[out_idx] += scale * cy * c;
                 out->coeffs_z[out_idx] += scale * cz * c;
@@ -148,7 +147,7 @@ static void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, rea
             for (unsigned q = 0; q <= deg - p; ++q)
             {
                 const unsigned r = deg - p - q;
-                const size_t idx = multipole_coeff_index(max_order, deg, p, q, r);
+                const size_t idx = multipole_coeff_index(deg, p, q, r);
                 const real_t c = a[idx];
                 if (c == 0.0)
                     continue;
@@ -156,9 +155,9 @@ static void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, rea
                 b[idx] += lc * c;
                 if (deg < max_order)
                 {
-                    b[multipole_coeff_index(max_order, deg + 1, p + 1, q, r)] += lx * c;
-                    b[multipole_coeff_index(max_order, deg + 1, p, q + 1, r)] += ly * c;
-                    b[multipole_coeff_index(max_order, deg + 1, p, q, r + 1)] += lz * c;
+                    b[multipole_coeff_index(deg + 1, p + 1, q, r)] += lx * c;
+                    b[multipole_coeff_index(deg + 1, p, q + 1, r)] += ly * c;
+                    b[multipole_coeff_index(deg + 1, p, q, r + 1)] += lz * c;
                 }
             }
         }
@@ -182,6 +181,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
     // Build binomial expansions of (x - shift_x)^e etc up to work_order.
     const size_t shift_dim = (size_t)work_order + 1;
     const size_t shift_plane = shift_dim * shift_dim;
+#pragma omp simd
     for (unsigned d = 0; d < 3; ++d)
     {
         const real_t s = (d == 0) ? shift.x : (d == 1) ? shift.y : shift.z;
@@ -212,7 +212,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
             {
                 for (unsigned r = 0; r <= m - p - q; ++r)
                 {
-                    const size_t in_idx = multipole_coeff_index(in_order, m, p, q, r);
+                    const size_t in_idx = multipole_coeff_index(m, p, q, r);
                     const real_t cx = in->coeffs_x[in_idx];
                     const real_t cy = in->coeffs_y[in_idx];
                     const real_t cz = in->coeffs_z[in_idx];
@@ -233,7 +233,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
                                 const real_t factor = shift_exp[0 * shift_plane + p * shift_dim + i] *
                                                       shift_exp[1 * shift_plane + q * shift_dim + j] *
                                                       shift_exp[2 * shift_plane + r * shift_dim + k];
-                                const size_t idx = multipole_coeff_index(work_order, i + j + k, i, j, k);
+                                const size_t idx = multipole_coeff_index(i + j + k, i, j, k);
                                 pse[idx] = factor;
                             }
                         }
@@ -242,7 +242,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
                     // l = 0: denominator factor = 1
                     if (m <= out_order)
                     {
-                        multipole_add_poly_to_order(pse, m, 1.0, cx, cy, cz, out, out_order);
+                        multipole_add_poly_to_order(pse, m, 1.0, cx, cy, cz, out);
                     }
 
                     // l >= 1: denominator binomial series (2 r_B·shift - |shift|^2)^l
@@ -257,7 +257,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
                         binom = binom * (m + l) / (real_t)l;
                         if (m + l <= out_order)
                         {
-                            multipole_add_poly_to_order(pse + nxt * n_coeffs, m + l, binom, cx, cy, cz, out, out_order);
+                            multipole_add_poly_to_order(pse + nxt * n_coeffs, m + l, binom, cx, cy, cz, out);
                         }
                         const unsigned tmp = cur;
                         cur = nxt;

@@ -579,9 +579,8 @@ static barnes_hut_leaf_scratch_t barnes_hut_leaf_scratch_for(const barnes_hut_sc
 
 bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
                            const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), void *scratch_buffer,
-                           size_t scratch_size, const allocator_t *allocator, size_t *required_buffer_size)
+                           size_t scratch_size, size_t *required_buffer_size)
 {
-    (void)allocator; /* count pass needs no residual allocations: the scratch buffer carries everything. */
     if (!required_buffer_size)
         return false;
     *required_buffer_size = 0;
