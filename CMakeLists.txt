@@ -56,6 +56,7 @@ list(
         src/core/transformation.c
         src/core/approx_atan.c
         src/core/multipole.c
+        src/core/barnes_hut_tree.c
 )
 
 list(
@@ -67,6 +68,7 @@ list(
         src/core/flow_solver.h
         src/core/transformation.h
         src/core/approx_atan.h
+        src/core/barnes_hut_tree.h
 )
 
 add_library(static_cvl
@@ -75,6 +77,7 @@ add_library(static_cvl
         src/core/multipole.c
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+target_link_libraries(static_cvl PUBLIC OpenMP::OpenMP_C)
 
 
 Python_add_library(cvl MODULE ${CVL_CORE_SOURCE_FILES} ${CVL_CORE_HEADER_FILES} ${CVL_MODULE_SOURCE_FILES}

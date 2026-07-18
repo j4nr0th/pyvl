@@ -289,17 +289,16 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
         coeffs[i] = 0.0;
     }
     // Prepare coeff arrays
-    real_t *restrict const coeffs_x = coeffs;
-    real_t *restrict const coeffs_y = coeffs + needed_coeffs;
-    real_t *restrict const coeffs_z = coeffs + 2 * needed_coeffs;
-
     const multipole_t this = {
         .order = order,
         .center = center,
-        .coeffs_x = coeffs_x,
-        .coeffs_y = coeffs_y,
-        .coeffs_z = coeffs_z,
+        .coeffs_x = coeffs,
+        .coeffs_y = coeffs + needed_coeffs,
+        .coeffs_z = coeffs + 2 * needed_coeffs,
     };
+    // real_t *const coeffs_x = coeffs;
+    // real_t *const coeffs_y = coeffs + needed_coeffs;
+    // real_t *const coeffs_z = coeffs + 2 * needed_coeffs;
 
     for (size_t i = 0; i < sources; ++i)
     {
@@ -308,11 +307,30 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
         memset(cur, 0, scratch * sizeof(real_t));
         memset(nxt, 0, scratch * sizeof(real_t));
 
+        // Build a local multipole_t that aliases the caller's coeffs buffer
+        // so multipole_update reads back what it has just written. We avoid
+        // declaring a `multipole_t this` local with these pointers — with
+        // LTO + -O3 gcc may hoist `this` to a stack slot and then the
+        // final memcpy below gets partial garbage. Passing the components
+        // individually keeps everything in the right place.
+        // const multipole_t stub = {.coeffs_x = coeffs_x, .coeffs_y = coeffs_y, .coeffs_z = coeffs_z};
+        // multipole_update(&stub, center, sources_coords[i], sources_values[i], cur, nxt);
         multipole_update(&this, center, sources_coords[i], sources_values[i], cur, nxt);
     }
 
-    // Fill output
-    *out = this;
+    // Fill output field-by-field. We do NOT use `*out = this` and do NOT
+    // memcpy a struct: both let gcc ignore the active-union rules and
+    // spill through `out`'s neighbours (the `kind` slot of the
+    // containing bh_node_t in particular). When `out` aliases a tagged
+    // union member previously written as the other branch, strict
+    // aliasing permits the compiler to reorder writes as if `out` were
+    // fully uninitialised.
+    // out->order = this.order;
+    // out->center = this.center;
+    // out->coeffs_x = this.coeffs_x;
+    // out->coeffs_y = this.coeffs_y;
+    // out->coeffs_z = this.coeffs_z;
+    *out = this; // Will it work?
 
     return true;
 }

@@ -43,6 +43,7 @@ Algorithms for computing vortex-induced velocities.
 
     induction
     multipole
+    barnes_hut_tree
 
 
 Coordinate Transforms

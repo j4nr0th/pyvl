@@ -159,7 +159,7 @@ int main(const int argc, const char *argv[static argc])
             const double min_val = TEST_INTERVALS[interval_idx][0];
             const double max_val = TEST_INTERVALS[interval_idx][1];
 
-#pragma omp simd for firstprivate(r) collapse(2)
+#pragma omp simd collapse(2)
             for (unsigned test_idx_1 = 0; test_idx_1 < n_tests; ++test_idx_1)
                 for (unsigned test_idx_2 = 0; test_idx_2 < n_tests; ++test_idx_2)
                 {
@@ -190,7 +190,7 @@ int main(const int argc, const char *argv[static argc])
         const bool negate_x = quadrant_sign & 1; // Quadrants II and III
         const bool negate_y = quadrant_sign & 2; // Quadrants III and IV
         srand(quadrant_sign);                    // Seed the random number generator for reproducibility
-#pragma omp simd for firstprivate(r) collapse(2)
+#pragma omp simd collapse(2)
         for (unsigned interval_idx = 0; interval_idx < N_INTERVALS; ++interval_idx)
         {
             const double min_val = TEST_INTERVALS[interval_idx][0];
@@ -217,8 +217,9 @@ int main(const int argc, const char *argv[static argc])
                 }
         }
     }
+
     const double t_glibc = end_timer(time_glibc) - t_baseline;
-    printf("Time taken for glibc atan: %f seconds for %lu iterations\n", t_glibc, n_tests * 4 * N_INTERVALS);
+    printf("Time taken for glibc atan: %f seconds for %lu iterations (%g)\n", t_glibc, n_tests * 4 * N_INTERVALS, r);
 
     return 0;
 }

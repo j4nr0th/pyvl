@@ -159,7 +159,7 @@ int main(const int argc, const char *argv[static argc])
             const double min_val = TEST_INTERVALS[interval_idx][0];
             const double max_val = TEST_INTERVALS[interval_idx][1];
 
-#pragma omp simd for firstprivate(r) collapse(2)
+#pragma omp simd collapse(2)
             for (unsigned test_idx_1 = 0; test_idx_1 < n_tests; ++test_idx_1)
                 for (unsigned test_idx_2 = 0; test_idx_2 < n_tests; ++test_idx_2)
                 {
@@ -195,6 +195,7 @@ int main(const int argc, const char *argv[static argc])
             const double min_val = TEST_INTERVALS[interval_idx][0];
             const double max_val = TEST_INTERVALS[interval_idx][1];
 
+#pragma omp simd collapse(2)
             for (unsigned test_idx_1 = 0; test_idx_1 < n_tests; ++test_idx_1)
                 for (unsigned test_idx_2 = 0; test_idx_2 < n_tests; ++test_idx_2)
                 {
@@ -217,7 +218,7 @@ int main(const int argc, const char *argv[static argc])
         }
     }
     const double t_glibc = end_timer(time_glibc) - t_baseline;
-    printf("Time taken for glibc atan2: %f seconds for %lu iterations\n", t_glibc, n_tests * 4 * N_INTERVALS);
+    printf("Time taken for glibc atan2: %f seconds for %lu iterations (%g)\n", t_glibc, n_tests * 4 * N_INTERVALS, r);
 
     return 0;
 }
