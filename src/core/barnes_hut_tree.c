@@ -82,23 +82,19 @@ static inline void bh_free(const allocator_t *allocator, void *ptr)
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Topology-only node used during the count phase.
+ * @brief Per-thread view of the leaf scratch region: `leaf_cur[t]`,
+ *        `leaf_nxt[t]`, `leaf_coords[t]`, `leaf_values[t]` for thread `t`.
  *
- * This struct lives in a temporary, function-local buffer and is *not* what
- * callers see. The real tree's `bh_node_t` is laid out in the caller-provided
- * buffer by the insert pass. The two are kept distinct so the kernel's hot
- * path never touches this scratch type.
+ * The OpenMP parallel region is pinned to `n_thread_partitions` via
+ * `num_threads(n_threads)`, so the thread id is always in range.
  */
 typedef struct
 {
-    int32_t children[8]; /* indices into topo[]; -1 if pruned/empty */
-    uint32_t particle_count;
-    uint8_t is_internal; /* 1 once converted to internal */
-    uint8_t depth;       /* 0 at root */
-    /* Cell geometry, replicated from the parent's split so we can descend. */
-    real3_t center;
-    real_t half_size;
-} topo_node_t;
+    real_t *leaf_cur;
+    real_t *leaf_nxt;
+    real_t *leaf_coords;
+    real_t *leaf_values;
+} barnes_hut_leaf_scratch_t;
 
 /* ------------------------------------------------------------------ */
 /* Static helpers                                                     */
@@ -177,8 +173,6 @@ static bool settings_valid(const barnes_hut_settings_t *settings)
         return false;
     if (settings->max_depth < 1)
         return false;
-    if (settings->n_threads < 1)
-        return false;
     return true;
 }
 
@@ -204,10 +198,10 @@ static bool settings_valid(const barnes_hut_settings_t *settings)
  *     decide subdivision, so the leaf each source ends up in is
  *     deterministic.
  */
-static void count_pass(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
-                       const barnes_hut_settings_t *settings, topo_node_t *topo, uint32_t *source_leaf,
-                       unsigned *out_n_internal, unsigned *out_n_multipole_leaves, unsigned *out_n_particle_leaves,
-                       unsigned *out_max_depth)
+barnes_hut_count_res_t barnes_hut_count_pass(unsigned n_sources,
+                                             const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
+                                             const barnes_hut_settings_t *settings, topo_node_t *topo,
+                                             uint32_t *source_leaf)
 {
     /* Initialize root. */
     topo[0] = (topo_node_t){
@@ -274,7 +268,7 @@ static void count_pass(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_c
                 {
                     /* Should never happen given our upper bound; bail safely. */
                     source_leaf[i] = 0;
-                    return;
+                    return (barnes_hut_count_res_t){0};
                 }
                 child = (int32_t)next_node++;
                 topo[child] = (topo_node_t){
@@ -320,7 +314,7 @@ static void count_pass(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_c
                     if (next_node >= 8u * (uint32_t)n_sources + 1u)
                     {
                         source_leaf[i] = 0;
-                        return;
+                        return (barnes_hut_count_res_t){0};
                     }
                     child = (int32_t)next_node++;
                     topo[child] = (topo_node_t){
@@ -372,10 +366,12 @@ static void count_pass(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_c
         }
     }
 
-    *out_n_internal = n_internal;
-    *out_n_multipole_leaves = n_multipole;
-    *out_n_particle_leaves = n_particle;
-    *out_max_depth = max_depth;
+    return (barnes_hut_count_res_t){
+        .n_internal = n_internal,
+        .n_multipole_leaves = n_multipole,
+        .n_particle_leaves = n_particle,
+        .max_depth = max_depth,
+    };
 }
 
 /* ------------------------------------------------------------------ */
@@ -396,11 +392,10 @@ size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *s
     const size_t particle_order_bytes = (size_t)n_sources * sizeof(unsigned);
     /* Worst case: every node carries a multipole. */
     const size_t multipole_coeffs_bytes = max_nodes * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t);
-    const size_t scratch_bytes = multipole_scratch_size(work_order) * sizeof(real_t);
     const size_t shift_exp_bytes = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_bytes = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
 
-    return nodes_bytes + particle_order_bytes + multipole_coeffs_bytes + scratch_bytes + shift_exp_bytes + pse_bytes;
+    return nodes_bytes + particle_order_bytes + multipole_coeffs_bytes + shift_exp_bytes + pse_bytes;
 }
 
 /* ------------------------------------------------------------------ */
@@ -408,25 +403,11 @@ size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *s
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Sum of the per-region sizes of the scratch layout returned by
- *        `barnes_hut_scratch_size`. Kept as a static helper so the layout
- *        computation is shared between the public sizer and the internal
- *        partition routine.
- *
- * `n_thread_partitions` is the number of identical per-thread multipole
- * scratch regions to allocate. Callers must set `settings.n_threads >= 1`
- * (validated by `settings_valid`); the scratch is sized for exactly that
- * many thread partitions, and the OpenMP parallel region is pinned to the
- * same thread count via `num_threads(n_threads)`.
+ * @brief Compute the size of the transient scratch buffer required by the
+ *        count and insert passes.
  */
-static size_t barnes_hut_scratch_layout(unsigned n_sources, const barnes_hut_settings_t *settings,
-                                        unsigned n_thread_partitions, size_t *out_topo, size_t *out_source_leaf_topo,
-                                        size_t *out_source_leaf_real, size_t *out_leaf_buf_total,
-                                        size_t *out_leaf_coords_total, size_t *out_leaf_values_total)
+barnes_hut_scratch_sizes_t barnes_hut_size_scratch(unsigned n_sources, const barnes_hut_settings_t *settings)
 {
-    if (n_sources == 0 || !settings_valid(settings))
-        return 0;
-
     /* Layout (one contiguous byte stream, all offsets are byte offsets):
      *   1. topo                — (8 * n_sources + 1) * sizeof(topo_node_t)
      *   2. source_leaf_topo    — n_sources * sizeof(uint32_t)
@@ -446,114 +427,136 @@ static size_t barnes_hut_scratch_layout(unsigned n_sources, const barnes_hut_set
     const size_t leaf_coords_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
     const size_t leaf_values_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
 
-    const size_t leaf_buf_total = leaf_buf_per_thread * n_thread_partitions;
-    const size_t leaf_coords_total = leaf_coords_per_thread * n_thread_partitions;
-    const size_t leaf_values_total = leaf_values_per_thread * n_thread_partitions;
-
-    if (out_topo)
-        *out_topo = topo_bytes;
-    if (out_source_leaf_topo)
-        *out_source_leaf_topo = source_leaf_topo_bytes;
-    if (out_source_leaf_real)
-        *out_source_leaf_real = source_leaf_real_bytes;
-    if (out_leaf_buf_total)
-        *out_leaf_buf_total = leaf_buf_total;
-    if (out_leaf_coords_total)
-        *out_leaf_coords_total = leaf_coords_total;
-    if (out_leaf_values_total)
-        *out_leaf_values_total = leaf_values_total;
-
-    return topo_bytes + source_leaf_topo_bytes + source_leaf_real_bytes + leaf_buf_total + leaf_coords_total +
-           leaf_values_total;
+    return (barnes_hut_scratch_sizes_t){
+        .size_topo = topo_bytes,
+        .size_source_leaf_topo = source_leaf_topo_bytes,
+        .size_source_leaf_real = source_leaf_real_bytes,
+        .size_leaf_buf_per_thread = leaf_buf_per_thread,
+        .size_leaf_coords_per_thread = leaf_coords_per_thread,
+        .size_leaf_values_per_thread = leaf_values_per_thread,
+    };
 }
 
-size_t barnes_hut_scratch_size(unsigned n_sources, const barnes_hut_settings_t *settings)
+size_t barnes_hut_total_scratch_size(barnes_hut_scratch_sizes_t sizes, unsigned n_threads)
 {
-    /* `settings.n_threads` is guaranteed >= 1 by `settings_valid`. */
-    return barnes_hut_scratch_layout(n_sources, settings, settings->n_threads, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (n_threads < 1)
+        return 0;
+
+    const size_t leaf_buf_total = sizes.size_leaf_buf_per_thread * (size_t)n_threads;
+    const size_t leaf_coords_total = sizes.size_leaf_coords_per_thread * (size_t)n_threads;
+    const size_t leaf_values_total = sizes.size_leaf_values_per_thread * (size_t)n_threads;
+
+    return sizes.size_topo + sizes.size_source_leaf_topo + sizes.size_source_leaf_real + leaf_buf_total +
+           leaf_coords_total + leaf_values_total;
 }
 
-/**
- * @brief Internal scratch view. Each pointer aliases a partition of the
- *        caller-provided `scratch_buffer`. The buffer is single-use; callers
- *        are not required to zero or otherwise initialise it.
- */
-typedef struct
+// /**
+//  * @brief Sum of the per-region sizes of the scratch layout returned by
+//  *        `barnes_hut_scratch_size`. Kept as a static helper so the layout
+//  *        computation is shared between the public sizer and the internal
+//  *        partition routine.
+//  *
+//  * `n_thread_partitions` is the number of identical per-thread multipole
+//  * scratch regions to allocate. Callers must set `settings.n_threads >= 1`
+//  * (validated by `settings_valid`); the scratch is sized for exactly that
+//  * many thread partitions, and the OpenMP parallel region is pinned to the
+//  * same thread count via `num_threads(n_threads)`.
+//  */
+// static size_t barnes_hut_scratch_layout(unsigned n_sources, const barnes_hut_settings_t *settings,
+//                                         unsigned n_thread_partitions, barnes_hut_scratch_sizes_t *out)
+// {
+//     if (n_sources == 0 || !settings_valid(settings))
+//         return 0;
+//
+//     /* Layout (one contiguous byte stream, all offsets are byte offsets):
+//      *   1. topo                — (8 * n_sources + 1) * sizeof(topo_node_t)
+//      *   2. source_leaf_topo    — n_sources * sizeof(uint32_t)
+//      *   3. source_leaf_real    — n_sources * sizeof(unsigned)
+//      *   4. leaf_cur, leaf_nxt  — 2 * leaf_buf_size * sizeof(real_t) per thread
+//      *   5. leaf_coords         — n_sources * 3 * sizeof(real_t) per thread
+//      *   6. leaf_values         — n_sources * 3 * sizeof(real_t) per thread
+//      */
+//     const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
+//     const size_t source_leaf_topo_bytes = (size_t)n_sources * sizeof(uint32_t);
+//     const size_t source_leaf_real_bytes = (size_t)n_sources * sizeof(unsigned);
+//
+//     const size_t n_coeffs = multipole_num_coeffs(settings->order);
+//     const size_t multipole_scratch = multipole_scratch_size(settings->order);
+//     const size_t leaf_buf_size = (3u * n_coeffs > multipole_scratch ? 3u * n_coeffs : multipole_scratch);
+//     const size_t leaf_buf_per_thread = 2u * leaf_buf_size * sizeof(real_t);
+//     const size_t leaf_coords_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
+//     const size_t leaf_values_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
+//
+//     const size_t leaf_buf_total = leaf_buf_per_thread * n_thread_partitions;
+//     const size_t leaf_coords_total = leaf_coords_per_thread * n_thread_partitions;
+//     const size_t leaf_values_total = leaf_values_per_thread * n_thread_partitions;
+//
+//     if (out)
+//     {
+//         out->size_topo = topo_bytes;
+//         out->size_source_leaf_topo = source_leaf_topo_bytes;
+//         out->size_source_leaf_real = source_leaf_real_bytes;
+//         out->size_leaf_buf_per_thread = leaf_buf_per_thread;
+//         out->size_leaf_buf_total = leaf_buf_total;
+//         out->size_leaf_coords_total = leaf_coords_total;
+//         out->size_leaf_values_total = leaf_values_total;
+//     }
+//
+//     return topo_bytes + source_leaf_topo_bytes + source_leaf_real_bytes + leaf_buf_total + leaf_coords_total +
+//            leaf_values_total;
+// }
+
+size_t barnes_hut_scratch_size(unsigned n_sources, unsigned n_threads, const barnes_hut_settings_t *settings)
 {
-    topo_node_t *topo;
-    uint32_t *source_leaf_topo;
-    unsigned *source_leaf_real;
-    /* Per-thread multipole scratch. The arrays are contiguous blocks of
-     * `n_thread_partitions` slices; thread `t` uses offset `t * per_thread`. */
-    unsigned n_thread_partitions;
-    real_t *leaf_cur;    /* [n_thread_partitions * leaf_buf_size] */
-    real_t *leaf_nxt;    /* [n_thread_partitions * leaf_buf_size] */
-    real_t *leaf_coords; /* [n_thread_partitions * n_sources * 3] */
-    real_t *leaf_values; /* [n_thread_partitions * n_sources * 3] */
-} barnes_hut_scratch_t;
+    if (n_sources == 0 || !settings_valid(settings) || n_threads < 1)
+        return 0;
+
+    const barnes_hut_scratch_sizes_t sizes = barnes_hut_size_scratch(n_sources, settings);
+    /* `n_threads` is guaranteed >= 1 by `settings_valid`. */
+    return barnes_hut_total_scratch_size(sizes, n_threads);
+}
 
 /**
  * @brief Partition @p scratch_buffer into the regions described by
- *        `barnes_hut_scratch_layout`. Returns `false` (and leaves `out`
- *        untouched) if @p scratch_size is smaller than required.
+ *        the scratch layout.
+ *
+ * The partition order follows `barnes_hut_scratch_sizes_t`:
+ *   topo | source_leaf_topo | source_leaf_real | leaf_cur | leaf_nxt
+ *   | leaf_coords | leaf_values
  */
-static bool barnes_hut_scratch_partition(unsigned n_sources, const barnes_hut_settings_t *settings,
-                                         unsigned n_thread_partitions, void *scratch_buffer, size_t scratch_size,
-                                         barnes_hut_scratch_t *out)
+barnes_hut_scratch_t barnes_hut_scratch_partition(unsigned n_thread_partitions, void *scratch_buffer,
+                                                  barnes_hut_scratch_sizes_t scratch_sizes)
 {
-    const size_t n_coeffs = multipole_num_coeffs(settings->order);
-    const size_t multipole_scratch = multipole_scratch_size(settings->order);
-    const size_t leaf_buf_size = (3u * n_coeffs > multipole_scratch ? 3u * n_coeffs : multipole_scratch);
-
-    size_t s_topo = 0, s_leaf_topo = 0, s_leaf_real = 0, s_cur = 0, s_nxt = 0, s_coords = 0, s_values = 0;
-    const size_t total = barnes_hut_scratch_layout(n_sources, settings, n_thread_partitions, &s_topo, &s_leaf_topo,
-                                                   &s_leaf_real, NULL, &s_coords, &s_values);
-    if (scratch_size < total)
-        return false;
-
-    /* Recover the per-region sizes the layout intentionally collapsed
-     * into a single `s_buf`. The layout was originally written assuming
-     * `leaf_cur + leaf_nxt` were one combined region, but the per-thread
-     * accessor in `barnes_hut_leaf_scratch_for` treats them as two
-     * independent per-thread arrays. We split the s_buf bucket here so
-     * both leaf_cur and leaf_nxt each get their own `n_thread_partitions *
-     * leaf_buf_size * sizeof(real_t)` slab. */
-    s_cur = (size_t)n_thread_partitions * leaf_buf_size * sizeof(real_t);
-    s_nxt = s_cur;
+    const size_t s_topo = scratch_sizes.size_topo;
+    const size_t s_leaf_topo = scratch_sizes.size_source_leaf_topo;
+    const size_t s_leaf_real = scratch_sizes.size_source_leaf_real;
+    const size_t s_coords = scratch_sizes.size_leaf_coords_per_thread * n_thread_partitions;
+    const size_t s_values = scratch_sizes.size_leaf_values_per_thread * n_thread_partitions;
+    /* size_leaf_buf_per_thread covers leaf_cur + leaf_nxt combined per thread.
+     * Each individual buffer (leaf_cur or leaf_nxt) is half that per thread. */
+    const size_t leaf_buf_each = scratch_sizes.size_leaf_buf_per_thread / 2;
+    const size_t s_cur = (size_t)n_thread_partitions * leaf_buf_each;
+    const size_t s_nxt = s_cur;
 
     uint8_t *bp = (uint8_t *)scratch_buffer;
-    out->topo = (topo_node_t *)bp;
+    barnes_hut_scratch_t out = {0};
+    out.topo = (topo_node_t *)bp;
     bp += s_topo;
-    out->source_leaf_topo = (uint32_t *)bp;
+    out.source_leaf_topo = (uint32_t *)bp;
     bp += s_leaf_topo;
-    out->source_leaf_real = (unsigned *)bp;
+    out.source_leaf_real = (unsigned *)bp;
     bp += s_leaf_real;
-    out->leaf_cur = (real_t *)bp;
+    out.leaf_cur = (real_t *)bp;
     bp += s_cur;
-    out->leaf_nxt = (real_t *)bp;
+    out.leaf_nxt = (real_t *)bp;
     bp += s_nxt;
-    out->leaf_coords = (real_t *)bp;
+    out.leaf_coords = (real_t *)bp;
     bp += s_coords;
-    out->leaf_values = (real_t *)bp;
+    out.leaf_values = (real_t *)bp;
     bp += s_values;
-    out->n_thread_partitions = n_thread_partitions;
-    return true;
+    out.n_thread_partitions = n_thread_partitions;
+    return out;
 }
-
-/**
- * @brief Per-thread view of the leaf scratch region: `leaf_cur[t]`,
- *        `leaf_nxt[t]`, `leaf_coords[t]`, `leaf_values[t]` for thread `t`.
- *
- * The OpenMP parallel region is pinned to `n_thread_partitions` via
- * `num_threads(n_threads)`, so the thread id is always in range.
- */
-typedef struct
-{
-    real_t *leaf_cur;
-    real_t *leaf_nxt;
-    real_t *leaf_coords;
-    real_t *leaf_values;
-} barnes_hut_leaf_scratch_t;
 
 /**
  * @brief Slice the per-thread leaf scratch into a single thread's view.
@@ -574,50 +577,43 @@ static barnes_hut_leaf_scratch_t barnes_hut_leaf_scratch_for(const barnes_hut_sc
 }
 
 /* ------------------------------------------------------------------ */
-/* Public API — count only                                            */
+/* Public API — work buffer sizing                                    */
 /* ------------------------------------------------------------------ */
 
-bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
-                           const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), void *scratch_buffer,
-                           size_t scratch_size, size_t *required_buffer_size)
+barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
+                                                    const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict),
+                                                    barnes_hut_count_res_t count_pass_res)
 {
-    if (!required_buffer_size)
-        return false;
-    *required_buffer_size = 0;
-    if (n_sources == 0 || !settings_valid(settings) || sources_coords == NULL)
-        return false;
-    if (scratch_buffer == NULL || scratch_size == 0)
-        return false;
-
-    barnes_hut_scratch_t scratch;
-    if (!barnes_hut_scratch_partition(n_sources, settings, settings->n_threads, scratch_buffer, scratch_size, &scratch))
-        return false;
-
-    /* Zero the topo scratch — count_pass reads `is_internal` and `children[]`
-     * before writing them, so leaving garbage would corrupt the descent. */
-    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
-    memset(scratch.topo, 0, topo_bytes);
-
-    unsigned n_internal = 0, n_multipole = 0, n_particle = 0, max_depth = 0;
-    count_pass(n_sources, sources_coords, settings, scratch.topo, scratch.source_leaf_topo, &n_internal, &n_multipole,
-               &n_particle, &max_depth);
-
+    const unsigned n_internal = count_pass_res.n_internal;
+    const unsigned n_multipole = count_pass_res.n_multipole_leaves;
+    const unsigned n_particle = count_pass_res.n_particle_leaves;
     const unsigned n_total = n_internal + n_multipole + n_particle;
-    (void)max_depth;
 
     const unsigned work_order = resolve_work_order(settings);
     const size_t nodes_bytes = (size_t)n_total * sizeof(bh_node_t);
     const size_t particle_order_bytes = (size_t)n_sources * sizeof(unsigned);
     const size_t multipole_coeffs_bytes =
         (size_t)(n_internal + n_multipole) * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t);
-    const size_t scratch_bytes = multipole_scratch_size(work_order) * sizeof(real_t);
     const size_t shift_exp_bytes = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_bytes = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
+    const size_t topo_to_real_bytes = (size_t)n_total * sizeof(uint32_t);
+    const size_t mp_slices_bytes = (size_t)n_total * sizeof(real_t *);
 
-    *required_buffer_size =
-        nodes_bytes + particle_order_bytes + multipole_coeffs_bytes + scratch_bytes + shift_exp_bytes + pse_bytes;
+    return (barnes_hut_work_sizes_t){
+        .nodes_bytes = nodes_bytes,
+        .particle_order_bytes = particle_order_bytes,
+        .multipole_coeffs_bytes = multipole_coeffs_bytes,
+        .shift_exp_bytes = shift_exp_bytes,
+        .pse_bytes = pse_bytes,
+        .topo_to_real_bytes = topo_to_real_bytes,
+        .mp_slices_bytes = mp_slices_bytes,
+    };
+}
 
-    return true;
+size_t barnes_hut_total_work_size(barnes_hut_work_sizes_t sizes)
+{
+    return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.shift_exp_bytes +
+           sizes.pse_bytes + sizes.topo_to_real_bytes + sizes.mp_slices_bytes;
 }
 
 /* ------------------------------------------------------------------ */
@@ -636,18 +632,16 @@ bool barnes_hut_tree_count(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sourc
  * parallel `mp_slices_out[]` array rather than in the node struct itself.
  * Multipole leaves use `data.mp` directly (no children to keep).
  *
- * Fills `nodes[]` for the indices it touches. Returns the total number of
- * real-tree nodes written (== `n_total`).
+ * Fills `nodes[]` for the indices it touches.
  */
-static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict), uint32_t n_topo_nodes,
-                                 const barnes_hut_settings_t *settings,
-                                 uint32_t CVL_ARRAY_ARG(topo_to_real, restrict n_topo_nodes),
-                                 bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes), real_t *multipole_coeffs,
-                                 real_t *CVL_ARRAY_ARG(mp_slices_out, restrict n_topo_nodes),
-                                 unsigned *out_n_multipole_slices)
+static void materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict), uint32_t n_topo_nodes,
+                             const barnes_hut_settings_t *settings,
+                             uint32_t CVL_ARRAY_ARG(topo_to_real, restrict n_topo_nodes),
+                             bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes), real_t *multipole_coeffs,
+                             real_t *CVL_ARRAY_ARG(mp_slices_out, restrict n_topo_nodes))
 {
     real_t *cursor = multipole_coeffs;
-    unsigned n_multipole_slices = 0;
+    // unsigned n_multipole_slices = 0;
     uint32_t next_real = 0;
 
     /* Iterative DFS using a small stack (bounded by depth * 8 * 2 = safe). */
@@ -697,7 +691,7 @@ static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict)
                 else
                 {
                     if ((size_t)sp + 1 > DFS_STACK_MAX)
-                        return next_real;
+                        return;
                     stack[sp] = (uint32_t)tn->children[k];
                     depth_stack[sp] = depth + 1;
                     sp += 1;
@@ -718,7 +712,7 @@ static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict)
             node->data.mp.coeffs_z = cursor;
             cursor += multipole_num_coeffs(settings->order);
             mp_slices_out[next_real - 1] = node->data.mp.coeffs_x;
-            n_multipole_slices += 1;
+            // n_multipole_slices += 1;
         }
         else
         {
@@ -742,9 +736,9 @@ static uint32_t materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict)
         }
     }
 
-    if (out_n_multipole_slices != NULL)
-        *out_n_multipole_slices = n_multipole_slices;
-    return next_real;
+    // if (out_n_multipole_slices != NULL)
+    //     *out_n_multipole_slices = n_multipole_slices;
+    // return next_real;
 }
 
 /**
@@ -812,30 +806,260 @@ static void compute_particle_begins(uint32_t n_real_nodes, bh_node_t CVL_ARRAY_A
     }
 }
 
-bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
+static barnes_hut_work_t partition_work_buffer(barnes_hut_work_sizes_t work_sizes, void *buffer)
+{
+    uint8_t *bp = (uint8_t *)buffer;
+    bh_node_t *nodes = (bh_node_t *)bp;
+    bp += work_sizes.nodes_bytes;
+    unsigned *particle_order = (unsigned *)bp;
+    bp += work_sizes.particle_order_bytes;
+    real_t *multipole_coeffs = (real_t *)bp;
+    bp += work_sizes.multipole_coeffs_bytes;
+    real_t *shift_exp = (real_t *)bp;
+    bp += work_sizes.shift_exp_bytes;
+    real_t *pse = (real_t *)bp;
+    bp += work_sizes.pse_bytes;
+    uint32_t *topo_to_real = (uint32_t *)bp;
+    bp += work_sizes.topo_to_real_bytes;
+    real_t **mp_slices = (real_t **)bp;
+    // bp += work_sizes.mp_slices_bytes; // not needed
+    return (barnes_hut_work_t){
+        .nodes = nodes,
+        .particle_order = particle_order,
+        .multipole_coeffs = multipole_coeffs,
+        .shift_exp = shift_exp,
+        .pse = pse,
+        .topo_to_real = topo_to_real,
+        .mp_slices = mp_slices,
+    };
+}
+
+static size_t count_multipole_leaves(const unsigned n_topo_nodes,
+                                     const bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes))
+{
+    unsigned n_mp_leaves = 0;
+#pragma omp simd reduction(+ : n_mp_leaves)
+    for (uint32_t i = 0; i < n_topo_nodes; ++i)
+        if (nodes[i].kind == BH_NODE_MULTIPOLE)
+            n_mp_leaves += 1;
+
+    return n_mp_leaves;
+}
+
+static bool barnes_hut_tree_build_multipoles(
+    const unsigned n_topo_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes),
+    const unsigned *restrict particle_order, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+    const real3_t CVL_ARRAY_ARG(sources_values, restrict), const barnes_hut_settings_t *settings,
+    barnes_hut_scratch_t scratch, size_t leaf_buf_size, unsigned n_sources, unsigned n_threads,
+    real_t *CVL_ARRAY_ARG(mp_slices, restrict n_topo_nodes), const unsigned n_mp_leaves,
+    uint32_t CVL_ARRAY_ARG(mp_leaf_indices, restrict n_mp_leaves))
+{
+    bool leaf_ok = true;
+
+    // TODO: check if this can be parallelized (and if it is worth it)
+    {
+        unsigned k = 0;
+        for (uint32_t i = 0; i < n_topo_nodes; ++i)
+        {
+            if (nodes[i].kind == BH_NODE_MULTIPOLE)
+            {
+                mp_leaf_indices[k] = i;
+                k += 1;
+            }
+        }
+    }
+
+    unsigned worker_id = 0;
+    (void)worker_id;
+
+#pragma omp parallel default(none)                                                                                     \
+    shared(n_mp_leaves, mp_leaf_indices, nodes, particle_order, sources_coords, sources_values, settings, scratch,     \
+               leaf_buf_size, n_sources, leaf_ok, mp_slices, worker_id) num_threads(n_threads)
+    {
+        // const int tid = omp_get_thread_num();
+        unsigned tid;
+#pragma omp atomic capture
+        tid = worker_id++;
+        const barnes_hut_leaf_scratch_t leaf =
+            barnes_hut_leaf_scratch_for(&scratch, (unsigned)tid, n_sources, settings->order);
+#pragma omp for reduction(&& : leaf_ok) schedule(static)
+        for (unsigned ml = 0; ml < n_mp_leaves; ++ml)
+        {
+            const uint32_t i = mp_leaf_indices[ml];
+            const size_t n_particles = nodes[i].particle_count;
+
+            /* Compute |Γ|-weighted centroid. */
+            real3_t center = {.x = 0, .y = 0, .z = 0};
+            real_t cx = 0, cy = 0, cz = 0;
+            real_t total_weight = 0.0;
+#pragma omp simd reduction(+ : cx, cy, cz, total_weight)
+            for (unsigned k = 0; k < n_particles; ++k)
+            {
+                const unsigned src = particle_order[nodes[i].particle_begin + k];
+                const real_t w = real3_mag(sources_values[src]);
+                cx += sources_coords[src].x * w;
+                cy += sources_coords[src].y * w;
+                cz += sources_coords[src].z * w;
+                total_weight += w;
+            }
+
+            center.x = cx;
+            center.y = cy;
+            center.z = cz;
+
+            if (total_weight > 0.0)
+            {
+                center.x /= total_weight;
+                center.y /= total_weight;
+                center.z /= total_weight;
+            }
+            else
+            {
+                center = nodes[i].center;
+            }
+            nodes[i].data.mp.center = center;
+
+            /* Pack sources into the leaf buffer. */
+#pragma omp simd
+            for (unsigned k = 0; k < n_particles; ++k)
+            {
+                const unsigned src = particle_order[nodes[i].particle_begin + k];
+                leaf.leaf_coords[3u * k + 0] = sources_coords[src].x;
+                leaf.leaf_coords[3u * k + 1] = sources_coords[src].y;
+                leaf.leaf_coords[3u * k + 2] = sources_coords[src].z;
+                leaf.leaf_values[3u * k + 0] = sources_values[src].x;
+                leaf.leaf_values[3u * k + 1] = sources_values[src].y;
+                leaf.leaf_values[3u * k + 2] = sources_values[src].z;
+            }
+
+            const bool mp_ok =
+                multipole_create(settings->order, (unsigned)leaf_buf_size, mp_slices[i], center, (unsigned)n_particles,
+                                 (const real3_t *)leaf.leaf_coords, (const real3_t *)leaf.leaf_values, leaf.leaf_cur,
+                                 leaf.leaf_nxt, &nodes[i].data.mp);
+            /* Force gcc to keep nodes[i].kind live across the call —
+             * the strict-aliasing rules can otherwise let it spill a
+             * temporary into the kind slot via the inactive-union
+             * access patterns. */
+            if (nodes[i].kind != BH_NODE_MULTIPOLE)
+                leaf_ok = false;
+
+            if (!mp_ok)
+                leaf_ok = false;
+        }
+    }
+    return leaf_ok;
+}
+
+barnes_hut_tree_t barnes_hut_tree_complete(const barnes_hut_count_res_t count_res, const unsigned n_sources,
+                                           const unsigned n_threads, const barnes_hut_settings_t *settings,
+                                           const barnes_hut_work_t work_buffers, unsigned work_order,
+                                           bh_node_t CVL_ARRAY_ARG(nodes, restrict),
+                                           unsigned CVL_ARRAY_ARG(particle_order, restrict),
+                                           real_t CVL_ARRAY_ARG(multipole_coeffs, restrict),
+                                           real_t *CVL_ARRAY_ARG(mp_slices, restrict))
+{
+    const unsigned n_internal = count_res.n_internal;
+    const unsigned n_multipole = count_res.n_multipole_leaves;
+    const unsigned n_particle = count_res.n_particle_leaves;
+    const unsigned max_depth = count_res.max_depth;
+    const size_t n_topo_nodes = (size_t)n_internal + (size_t)n_multipole + (size_t)n_particle;
+    const unsigned order = settings->order;
+    const size_t n_coeffs = multipole_num_coeffs(order);
+
+    real_t *shift_exp = work_buffers.shift_exp;
+    real_t *pse = work_buffers.pse;
+
+    /* --- Upward sweep: aggregate child multipoles into internal nodes. ---
+     * Parallelised by depth level: all internal nodes at the same depth
+     * can be processed in parallel because they touch disjoint children
+     * (the tree partitions the source set). Within a level, the work
+     * scales with the number of children, not just node count, so we use
+     * a dynamic schedule. --- */
+    for (unsigned d = max_depth; d > 0; --d)
+    {
+#pragma omp parallel for default(none) shared(d, n_topo_nodes, nodes, order, mp_slices, work_order, shift_exp, pse,    \
+                                                  n_coeffs, n_threads) schedule(dynamic, 16) num_threads(n_threads)
+        for (uint32_t i = 0; i < n_topo_nodes; ++i)
+        {
+            if (nodes[i].kind != BH_NODE_INTERNAL || nodes[i].depth != d)
+                continue;
+
+            /* Zero the internal node's slice and prepare a multipole_t for it. */
+            real_t *slice = mp_slices[i];
+            memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
+            const multipole_t internal_mp = {.order = order,
+                                             .center = nodes[i].center,
+                                             .coeffs_x = slice,
+                                             .coeffs_y = slice + n_coeffs,
+                                             .coeffs_z = slice + 2u * n_coeffs};
+
+            for (int oct = 0; oct < 8; ++oct)
+            {
+                bh_node_t *child = nodes[i].data.internal.children[oct];
+                if (child == NULL)
+                    continue;
+                if (child->kind == BH_NODE_PARTICLE)
+                    continue;
+
+                /* For both BH_NODE_INTERNAL and BH_NODE_MULTIPOLE children,
+                 * the multipole slice is in mp_slices[] (we use a side
+                 * table to avoid clobbering children[] in the union). */
+                real_t *child_slice = mp_slices[child - nodes];
+                if (child_slice == NULL)
+                    continue; /* safety guard */
+                multipole_t child_mp = {.order = order,
+                                        .center = child->data.mp.center,
+                                        .coeffs_x = child_slice,
+                                        .coeffs_y = child_slice + n_coeffs,
+                                        .coeffs_z = child_slice + 2u * n_coeffs};
+                multipole_add_shift(&child_mp, &internal_mp, work_order, shift_exp, pse);
+            }
+        }
+    }
+
+    barnes_hut_tree_t out = {0};
+    out.settings = *settings;
+    out.root_center = nodes[0].center;
+    out.root_half_size = nodes[0].half_size;
+    out.n_sources = n_sources;
+    out.n_nodes = n_topo_nodes;
+    out.n_internal = n_internal;
+    out.n_multipole_leaves = n_multipole;
+    out.n_particle_leaves = n_particle;
+    out.max_depth_reached = max_depth;
+    out.nodes = nodes;
+    out.particle_order = particle_order;
+    out.multipole_coeffs = multipole_coeffs;
+
+    return out;
+}
+
+/**
+ * TODO: split this into several functions so none need to allocate and just ask for buffer sizes.
+ */
+bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
+                            const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
                             const real3_t CVL_ARRAY_ARG(sources_values, restrict n_sources),
                             const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), void *scratch_buffer,
                             size_t scratch_size, const allocator_t *allocator, void *buffer, size_t buffer_size,
                             barnes_hut_tree_t *out)
 {
-    if (!buffer || !out)
-        return false;
-    if (!scratch_buffer || scratch_size == 0)
+    if (!buffer || !out || !scratch_buffer)
         return false;
     if (n_sources == 0 || !settings_valid(settings))
         return false;
     if (sources_coords == NULL || sources_values == NULL)
         return false;
 
-    const unsigned work_order = resolve_work_order(settings);
-    const unsigned n_threads = settings->n_threads;
-
-    /* --- Partition the scratch buffer (topo + source-leaf maps + per-thread
-     * leaf multipole scratch). All of these are input-sized, so the scratch
-     * is reusable across calls and across trees. --- */
-    barnes_hut_scratch_t scratch;
-    if (!barnes_hut_scratch_partition(n_sources, settings, n_threads, scratch_buffer, scratch_size, &scratch))
+    /* --- Size and partition the scratch buffer. --- */
+    const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(n_sources, settings);
+    const size_t needed_scratch = barnes_hut_total_scratch_size(scratch_sizes, n_threads);
+    if (scratch_size < needed_scratch)
         return false;
+
+    const barnes_hut_scratch_t scratch = barnes_hut_scratch_partition(n_threads, scratch_buffer, scratch_sizes);
+
+    const unsigned work_order = resolve_work_order(settings);
 
     /* Zero the topo scratch — count_pass reads `is_internal` and `children[]`
      * before writing them, so leaving garbage would corrupt the descent. */
@@ -843,63 +1067,41 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
     memset(scratch.topo, 0, topo_bytes);
 
     /* --- Run the count pass to learn the topology. --- */
-    unsigned n_internal = 0, n_multipole = 0, n_particle = 0, max_depth = 0;
-    count_pass(n_sources, sources_coords, settings, scratch.topo, scratch.source_leaf_topo, &n_internal, &n_multipole,
-               &n_particle, &max_depth);
+    const barnes_hut_count_res_t count_res =
+        barnes_hut_count_pass(n_sources, sources_coords, settings, scratch.topo, scratch.source_leaf_topo);
 
+    const unsigned n_internal = count_res.n_internal;
+    const unsigned n_multipole = count_res.n_multipole_leaves;
+    const unsigned n_particle = count_res.n_particle_leaves;
+    const unsigned max_depth = count_res.max_depth;
     const uint32_t n_topo_nodes = (uint32_t)(n_internal + n_multipole + n_particle);
     if (n_topo_nodes == 0)
         return false;
+
+    /* --- Compute partition layout and validate buffer_size. --- */
+    const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(n_sources, settings, count_res);
+    if (buffer_size < barnes_hut_total_work_size(work_sizes))
+        return false;
+
+    /* --- Set up views into the caller buffer. --- */
+    const barnes_hut_work_t work_buffers = partition_work_buffer(work_sizes, buffer);
+
+    bh_node_t *nodes = work_buffers.nodes;
+    unsigned *particle_order = work_buffers.particle_order;
+    real_t *multipole_coeffs = work_buffers.multipole_coeffs;
+    real_t *shift_exp = work_buffers.shift_exp;
+    real_t *pse = work_buffers.pse;
 
     /* --- Allocate the count-pass-output-sized residual scratch through the
      * allocator. `topo_to_real` maps each topo node to its bh_node_t index;
      * `mp_slices` carries each multipole-bearing node's coefficient slice
      * pointer. Both are sized from `n_topo_nodes` which is only known after
      * the count pass, hence the fallback to the allocator. --- */
-    uint32_t *topo_to_real = (uint32_t *)bh_alloc(allocator, (size_t)n_topo_nodes * sizeof(*topo_to_real));
-    real_t **mp_slices = (real_t **)bh_alloc(allocator, (size_t)n_topo_nodes * sizeof(*mp_slices));
-    if (!topo_to_real || !mp_slices)
-    {
-        bh_free(allocator, topo_to_real);
-        bh_free(allocator, mp_slices);
-        return false;
-    }
-
-    /* --- Compute partition layout and validate buffer_size. --- */
-    const size_t nodes_bytes = (size_t)n_topo_nodes * sizeof(bh_node_t);
-    const size_t particle_order_bytes = (size_t)n_sources * sizeof(unsigned);
-    const size_t multipole_coeffs_bytes =
-        (size_t)(n_internal + n_multipole) * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t);
-    const size_t scratch_bytes = multipole_scratch_size(work_order) * sizeof(real_t);
-    const size_t shift_exp_bytes = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
-    const size_t pse_bytes = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
-    const size_t total_bytes =
-        nodes_bytes + particle_order_bytes + multipole_coeffs_bytes + scratch_bytes + shift_exp_bytes + pse_bytes;
-    if (buffer_size < total_bytes)
-    {
-        bh_free(allocator, topo_to_real);
-        bh_free(allocator, mp_slices);
-        return false;
-    }
-
-    /* --- Set up views into the caller buffer. --- */
-    uint8_t *bp = (uint8_t *)buffer;
-    bh_node_t *nodes = (bh_node_t *)bp;
-    bp += nodes_bytes;
-    unsigned *particle_order = (unsigned *)bp;
-    bp += particle_order_bytes;
-    real_t *multipole_coeffs = (real_t *)bp;
-    bp += multipole_coeffs_bytes;
-    real_t *buf_scratch = (real_t *)bp;
-    bp += scratch_bytes;
-    real_t *shift_exp = (real_t *)bp;
-    bp += shift_exp_bytes;
-    real_t *pse = (real_t *)bp;
+    uint32_t *topo_to_real = work_buffers.topo_to_real;
+    real_t **mp_slices = work_buffers.mp_slices;
 
     /* --- Materialize the bh_node_t tree from the topo array. --- */
-    const uint32_t n_real =
-        materialize_tree(scratch.topo, n_topo_nodes, settings, topo_to_real, nodes, multipole_coeffs, mp_slices, NULL);
-    (void)n_real;
+    materialize_tree(scratch.topo, n_topo_nodes, settings, topo_to_real, nodes, multipole_coeffs, mp_slices);
 
     /* --- Descend each source through the bh_node_t tree to count per-leaf. --- */
     descend_for_each_source(n_sources, sources_coords, n_topo_nodes, nodes, scratch.source_leaf_real, n_threads);
@@ -907,39 +1109,47 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
     /* --- Assign particle ranges per leaf. --- */
     compute_particle_begins(n_topo_nodes, nodes);
 
+    /* Count multipole leaves up front so each thread gets a contiguous
+     * subrange of indices in a packed array (omp doesn't iterate sparse
+     * indices cleanly). */
+    const unsigned n_mp_leaves = count_multipole_leaves(n_topo_nodes, nodes);
+
     /* --- Fill particle_order[]. --- */
+    // NOTE: Can parallelise this using atomic capture. Schedule is static, with big chunks, because typically the
+    // leaves close in index are close in space, so by giving them large chunks, we have less of a chance of triggering
+    // atomics.
+    // TODO: set the chunk size to something like N/num_threads, but make sure it's at least 1. This will help with load
+    // balancing.
+#pragma omp parallel for default(none) shared(n_sources, scratch, nodes, particle_order) schedule(static)              \
+    num_threads(n_threads)
     for (unsigned i = 0; i < n_sources; ++i)
     {
         const unsigned leaf_idx = scratch.source_leaf_real[i];
-        bh_node_t *leaf = &nodes[leaf_idx];
-        const unsigned slot = leaf->particle_begin + leaf->particle_count;
+        bh_node_t *leaf = nodes + leaf_idx;
+        unsigned cnt;
+#pragma omp atomic capture
+        {
+            cnt = leaf->particle_count;
+            leaf->particle_count += 1;
+        }
+        const unsigned slot = leaf->particle_begin + cnt;
         particle_order[slot] = i;
-        leaf->particle_count += 1;
     }
 
     /* --- Build multipoles for each multipole-bearing leaf. Parallelised:
      * the scratch is pre-partitioned into n_threads independent leaf
      * scratch slices; thread `t` writes only into slice `t`. --- */
-    const size_t n_coeffs = multipole_num_coeffs(settings->order);
-    const size_t multipole_scratch = multipole_scratch_size(settings->order);
-    const size_t leaf_buf_size = (3u * n_coeffs > multipole_scratch ? 3u * n_coeffs : multipole_scratch);
-
-    /* Count multipole leaves up front so each thread gets a contiguous
-     * subrange of indices in a packed array (omp doesn't iterate sparse
-     * indices cleanly). */
-    unsigned n_mp_leaves = 0;
-    for (uint32_t i = 0; i < n_topo_nodes; ++i)
-        if (nodes[i].kind == BH_NODE_MULTIPOLE)
-            n_mp_leaves += 1;
 
     bool leaf_ok = true;
+    const size_t n_coeffs = multipole_num_coeffs(settings->order);
     if (n_mp_leaves > 0)
     {
+        const size_t multipole_scratch = multipole_scratch_size(settings->order);
+
+        const size_t leaf_buf_size = (3u * n_coeffs > multipole_scratch ? 3u * n_coeffs : multipole_scratch);
         uint32_t *mp_leaf_indices = (uint32_t *)bh_alloc(allocator, (size_t)n_mp_leaves * sizeof(uint32_t));
         if (mp_leaf_indices == NULL)
         {
-            bh_free(allocator, topo_to_real);
-            bh_free(allocator, mp_slices);
             return false;
         }
         {
@@ -1030,8 +1240,6 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
     }
     if (!leaf_ok)
     {
-        bh_free(allocator, topo_to_real);
-        bh_free(allocator, mp_slices);
         return false;
     }
 
@@ -1097,32 +1305,142 @@ bool barnes_hut_tree_insert(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sour
     out->nodes = nodes;
     out->particle_order = particle_order;
     out->multipole_coeffs = multipole_coeffs;
-    out->scratch = buf_scratch;
-    out->shift_exp = shift_exp;
-    out->pse = pse;
 
-    bh_free(allocator, topo_to_real);
-    bh_free(allocator, mp_slices);
     return true;
 }
 
-bool barnes_hut_tree_build(unsigned n_sources, const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
+size_t barnes_hut_downward_pass(const unsigned n_sources,
+                                const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
+                                const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict),
+                                barnes_hut_scratch_t scratch, barnes_hut_work_t work_buffers,
+                                barnes_hut_count_res_t count_res, unsigned n_threads)
+{
+    /* --- Materialize the bh_node_t tree from the topo array. --- */
+    const size_t n_topo_nodes = count_res.n_internal + count_res.n_multipole_leaves + count_res.n_particle_leaves;
+    materialize_tree(scratch.topo, n_topo_nodes, settings, work_buffers.topo_to_real, work_buffers.nodes,
+                     work_buffers.multipole_coeffs, work_buffers.mp_slices);
+
+    /* --- Descend each source through the bh_node_t tree to count per-leaf. --- */
+    descend_for_each_source(n_sources, sources_coords, n_topo_nodes, work_buffers.nodes, scratch.source_leaf_real,
+                            n_threads);
+
+    /* --- Assign particle ranges per leaf. --- */
+    compute_particle_begins(n_topo_nodes, work_buffers.nodes);
+
+    /* Count multipole leaves up front so each thread gets a contiguous
+     * subrange of indices in a packed array (omp doesn't iterate sparse
+     * indices cleanly). */
+    return count_multipole_leaves(n_topo_nodes, work_buffers.nodes);
+}
+
+bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
+                           const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
                            const real3_t CVL_ARRAY_ARG(sources_values, restrict n_sources),
-                           const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), void *scratch_buffer,
-                           size_t scratch_size, const allocator_t *allocator, void *buffer, size_t buffer_size,
+                           const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict), const allocator_t *allocator,
                            barnes_hut_tree_t *out)
 {
-    /* `barnes_hut_tree_build` is identical to `barnes_hut_tree_insert`:
-     * the count pass + buffer sizing is already done inside insert (we just
-     * re-validate that the user-supplied buffer is big enough). Callers who
-     * want to allocate the buffer themselves use barnes_hut_tree_count() to
-     * size it and then call barnes_hut_tree_insert().
-     *
-     * This is the one-shot entry point: it accepts a pre-allocated buffer
-     * and refuses if too small (so the caller can either pre-size via
-     * barnes_hut_buffer_size or barnes_hut_tree_count and re-allocate). */
-    return barnes_hut_tree_insert(n_sources, sources_coords, sources_values, settings, scratch_buffer, scratch_size,
-                                  allocator, buffer, buffer_size, out);
+    void *scratch_buffer = NULL, *work_buffer = NULL;
+    uint32_t *multipole_leaf_indices = NULL;
+    // Return value for later cleanup
+    bool ret = false;
+
+    // Validation
+    if (!out || n_sources == 0 || !settings_valid(settings) || sources_coords == NULL || sources_values == NULL)
+        return false;
+
+    // Size the scratch buffer and partition it
+    const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(n_sources, settings);
+    const size_t needed_scratch = barnes_hut_total_scratch_size(scratch_sizes, n_threads);
+    if (needed_scratch == 0)
+        return false;
+
+    // Allocation 1
+    scratch_buffer = bh_alloc(allocator, needed_scratch);
+    if (!scratch_buffer)
+        return false;
+
+    const barnes_hut_scratch_t scratch = barnes_hut_scratch_partition(n_threads, scratch_buffer, scratch_sizes);
+
+    /* Zero the topo scratch — count_pass reads `is_internal` and `children[]`
+     * before writing them, so leaving garbage would corrupt the descent. */
+    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
+    memset(scratch.topo, 0, topo_bytes);
+
+    /* --- Run the count pass to learn the topology. --- */
+    const barnes_hut_count_res_t count_res =
+        barnes_hut_count_pass(n_sources, sources_coords, settings, scratch.topo, scratch.source_leaf_topo);
+
+    // Size the work buffer and allocate it
+
+    /* --- Compute partition layout and validate buffer_size. --- */
+    const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(n_sources, settings, count_res);
+    const size_t total_work_size = barnes_hut_total_work_size(work_sizes);
+
+    // Allocation 2
+    work_buffer = bh_alloc(allocator, total_work_size);
+    if (!work_buffer)
+        goto cleanup;
+
+    /* --- Set up views into the caller buffer. --- */
+    const barnes_hut_work_t work_buffers = partition_work_buffer(work_sizes, work_buffer);
+
+    /* --- Perform the downward pass and count multipole leaves. --- */
+    const size_t n_multipole_leaves =
+        barnes_hut_downward_pass(n_sources, sources_coords, settings, scratch, work_buffers, count_res, n_threads);
+
+    /* --- Fill particle_order[]. --- */
+    // NOTE: Can parallelise this using atomic capture. Schedule is static, with big chunks, because typically the
+    // leaves close in index are close in space, so by giving them large chunks, we have less of a chance of triggering
+    // atomics.
+#pragma omp parallel for default(none) shared(n_sources, scratch, work_buffers) schedule(static) num_threads(n_threads)
+    for (unsigned i = 0; i < n_sources; ++i)
+    {
+        const unsigned leaf_idx = scratch.source_leaf_real[i];
+        bh_node_t *leaf = work_buffers.nodes + leaf_idx;
+        unsigned cnt;
+#pragma omp atomic capture
+        {
+            cnt = leaf->particle_count;
+            leaf->particle_count += 1;
+        }
+        const unsigned slot = leaf->particle_begin + cnt;
+        work_buffers.particle_order[slot] = i;
+    }
+
+    if (n_multipole_leaves > 0)
+    {
+        // We have to construct the multipoles
+        multipole_leaf_indices = (uint32_t *)bh_alloc(allocator, (size_t)n_multipole_leaves * sizeof(uint32_t));
+        if (!multipole_leaf_indices)
+            goto cleanup;
+
+        // Build the multipoles
+        const size_t n_coeffs_mp = multipole_num_coeffs(settings->order);
+        const size_t mp_scratch = multipole_scratch_size(settings->order);
+        const size_t leaf_buf_size = (3u * n_coeffs_mp > mp_scratch ? 3u * n_coeffs_mp : mp_scratch);
+        const bool leaf_ok = barnes_hut_tree_build_multipoles(
+            (unsigned)count_res.n_internal + count_res.n_multipole_leaves + count_res.n_particle_leaves,
+            work_buffers.nodes, work_buffers.particle_order, sources_coords, sources_values, settings, scratch,
+            leaf_buf_size, n_sources, n_threads, work_buffers.mp_slices, (unsigned)n_multipole_leaves,
+            multipole_leaf_indices);
+
+        // We can cleanup early!
+        bh_free(allocator, multipole_leaf_indices);
+
+        if (!leaf_ok)
+            goto cleanup;
+    }
+
+    *out = barnes_hut_tree_complete(count_res, n_sources, n_threads, settings, work_buffers,
+                                    resolve_work_order(settings), work_buffers.nodes, work_buffers.particle_order,
+                                    work_buffers.multipole_coeffs, work_buffers.mp_slices);
+
+    ret = true;
+    // End of the function/cleanup
+cleanup:
+    bh_free(allocator, work_buffer);
+    bh_free(allocator, scratch_buffer);
+    return ret;
 }
 
 unsigned barnes_hut_tree_n_nodes(const barnes_hut_tree_t *tree)

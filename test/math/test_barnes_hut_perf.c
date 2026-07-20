@@ -61,7 +61,8 @@ int main(const int argc, const char *argv[static argc])
     (void)argv;
 
     const barnes_hut_settings_t settings = {
-        .order = 4, .critical_particle_count = 16, .max_depth = 24, .work_order = 0, .n_threads = 1};
+        .order = 4, .critical_particle_count = 16, .max_depth = 24, .work_order = 0};
+    const unsigned n_threads = 1;
 
     printf("Barnes-Hut build performance\n");
     printf("============================\n");
@@ -87,7 +88,7 @@ int main(const int argc, const char *argv[static argc])
         }
         generate_clustered(seed, n, CLUSTER_RADIUS[lvl], DISTRIBUTION_R, coords, values);
 
-        const size_t scratch_sz = barnes_hut_scratch_size(n, &settings);
+        const size_t scratch_sz = barnes_hut_scratch_size(n, 1, &settings);
         const size_t required = barnes_hut_buffer_size(n, &settings);
         if (required == 0 || scratch_sz == 0)
         {
@@ -112,7 +113,7 @@ int main(const int argc, const char *argv[static argc])
         barnes_hut_tree_t tree;
         const double t0 = seconds_now();
         const bool ok =
-            barnes_hut_tree_insert(n, coords, values, &settings, scratch, scratch_sz, NULL, buffer, required, &tree);
+            barnes_hut_tree_insert(n, 1, coords, values, &settings, scratch, scratch_sz, NULL, buffer, required, &tree);
         const double t1 = seconds_now();
         if (!ok)
         {
@@ -132,7 +133,7 @@ int main(const int argc, const char *argv[static argc])
 
         printf("%-8u %4u %4u %4u   %-8u %-9.3f %-12.1f %-10.1f %-9u 0x%lx\n", n, tree.n_internal,
                tree.n_multipole_leaves, tree.n_particle_leaves, tree.max_depth_reached, build_ms, ns_per_source,
-               total_kib, settings.n_threads, (unsigned long)seed);
+               total_kib, 1, (unsigned long)seed);
 
         /* Sanity checks: tree must have at least one multipole or particle leaf
          * and the sum of leaf kinds must equal total nodes. */

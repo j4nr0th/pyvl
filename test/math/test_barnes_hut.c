@@ -103,52 +103,40 @@ int main(const int argc, const char *argv[static argc])
     /* ========== Stage 1: sizing/count ========== */
 
     {
-        const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                                .critical_particle_count = 8,
-                                                .max_depth = 20,
-                                                .work_order = 0,
-                                                .n_threads = TEST_N_THREADS};
+        const barnes_hut_settings_t settings = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
         const size_t sz = barnes_hut_buffer_size(0, &settings);
         TEST_ASSERT(sz == 0, "buffer_size for n_sources=0 must be 0, got %zu", sz);
     }
 
     {
         const barnes_hut_settings_t settings = {
-            .order = 0, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .n_threads = TEST_N_THREADS};
+            .order = 0, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
         const size_t sz = barnes_hut_buffer_size(10, &settings);
         TEST_ASSERT(sz == 0, "buffer_size for order=0 must be 0, got %zu", sz);
     }
 
     {
-        const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                                .critical_particle_count = 8,
-                                                .max_depth = 20,
-                                                .work_order = 0,
-                                                .n_threads = TEST_N_THREADS};
+        const barnes_hut_settings_t settings = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
         const size_t sz = barnes_hut_buffer_size(100, &settings);
         TEST_ASSERT(sz > 0, "buffer_size for n=100 must be positive, got %zu", sz);
         printf("buffer_size(n=100, order=4) = %zu bytes\n", sz);
     }
 
     {
-        /* n_threads == 0 must be rejected by buffer_size (and by every other
-         * public entry point). */
-        const barnes_hut_settings_t bad = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .n_threads = 0};
-        const size_t sz = barnes_hut_buffer_size(100, &bad);
-        TEST_ASSERT(sz == 0, "buffer_size for n_threads=0 must be 0, got %zu", sz);
-
-        const size_t scratch = barnes_hut_scratch_size(100, &bad);
+        /* n_threads == 0 must be rejected by scratch_size. */
+        const barnes_hut_settings_t good = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+        const size_t scratch = barnes_hut_scratch_size(100, 0, &good);
         TEST_ASSERT(scratch == 0, "scratch_size for n_threads=0 must be 0, got %zu", scratch);
     }
 
     {
-        const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                                .critical_particle_count = 8,
-                                                .max_depth = 20,
-                                                .work_order = 0,
-                                                .n_threads = TEST_N_THREADS};
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
+        const barnes_hut_settings_t settings = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
+        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
         TEST_ASSERT(scratch_sz > 0, "scratch_size for n=100 must be positive, got %zu", scratch_sz);
         printf("scratch_size(n=100, order=4, n_threads=%u) = %zu bytes\n", TEST_N_THREADS, scratch_sz);
 
@@ -157,80 +145,73 @@ int main(const int argc, const char *argv[static argc])
         generate_sources(0x12345ULL, N_SOURCES, coords, values);
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
-        size_t required = 0;
-        const bool ok = barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required);
-        TEST_ASSERT(ok, "count must succeed for valid input");
+        const barnes_hut_scratch_t bh_scratch = barnes_hut_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
+        const barnes_hut_count_res_t count_res =
+            barnes_hut_count_pass(N_SOURCES, coords, &settings, bh_scratch.topo, bh_scratch.source_leaf_topo);
+        const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(N_SOURCES, &settings, count_res);
+        const size_t required = barnes_hut_total_work_size(work_sizes);
         TEST_ASSERT(required > 0, "required buffer size must be positive, got %zu", required);
         printf("count(n=100, order=4) = %zu bytes\n", required);
         free(scratch);
     }
 
     {
-        /* count must fail (and reset required) for n_sources=0. */
-        const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                                .critical_particle_count = 8,
-                                                .max_depth = 20,
-                                                .work_order = 0,
-                                                .n_threads = TEST_N_THREADS};
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
-        void *scratch = malloc(scratch_sz);
-        TEST_ASSERT(scratch != NULL, "scratch malloc failed");
-        size_t required = 12345;
-        const bool ok = barnes_hut_tree_count(0, NULL, &settings, scratch, scratch_sz, &required);
-        TEST_ASSERT(!ok, "count must fail for n_sources=0");
-        TEST_ASSERT(required == 0, "count must reset required to 0 on failure, got %zu", required);
-        free(scratch);
+        /* barnes_hut_size_work_buffer works with minimal (valid) count_res. */
+        const barnes_hut_settings_t settings = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+        const barnes_hut_count_res_t minimal = {
+            .n_internal = 1, .n_multipole_leaves = 1, .n_particle_leaves = 1, .max_depth = 1};
+        const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(N_SOURCES, &settings, minimal);
+        const size_t required = barnes_hut_total_work_size(work_sizes);
+        TEST_ASSERT(required > 0, "size for minimal count_res must be >0, got %zu", required);
     }
 
     /* Invalid-input error paths for insert. */
     {
-        const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                                .critical_particle_count = 8,
-                                                .max_depth = 20,
-                                                .work_order = 0,
-                                                .n_threads = TEST_N_THREADS};
+        const barnes_hut_settings_t settings = {
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
         real3_t coords[N_SOURCES];
         real3_t values[N_SOURCES];
         generate_sources(0x12345ULL, N_SOURCES, coords, values);
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
+        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, TEST_N_THREADS, &settings);
         const size_t required = barnes_hut_buffer_size(N_SOURCES, &settings);
         void *scratch = malloc(scratch_sz);
         void *buffer = malloc(required);
         TEST_ASSERT(scratch && buffer, "scratch/buffer malloc failed");
         barnes_hut_tree_t tree;
 
-        TEST_ASSERT(
-            !barnes_hut_tree_insert(0, coords, values, &settings, scratch, scratch_sz, NULL, buffer, required, &tree),
-            "insert must fail for n_sources=0");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, NULL, values, &settings, scratch, scratch_sz, NULL, buffer,
-                                            required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(0, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz, NULL,
+                                            buffer, required, &tree),
+                    "insert must fail for n_sources=0");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, NULL, values, &settings, scratch, scratch_sz,
+                                            NULL, buffer, required, &tree),
                     "insert must fail for NULL sources_coords");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, coords, NULL, &settings, scratch, scratch_sz, NULL, buffer,
-                                            required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, NULL, &settings, scratch, scratch_sz,
+                                            NULL, buffer, required, &tree),
                     "insert must fail for NULL sources_values");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, coords, values, NULL, scratch, scratch_sz, NULL, buffer,
-                                            required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, NULL, scratch, scratch_sz, NULL,
+                                            buffer, required, &tree),
                     "insert must fail for NULL settings");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, NULL, scratch_sz, NULL, buffer,
-                                            required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, scratch_sz,
+                                            NULL, buffer, required, &tree),
                     "insert must fail for NULL scratch_buffer");
-        TEST_ASSERT(
-            !barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, 0, NULL, buffer, required, &tree),
-            "insert must fail for scratch_size=0");
-        TEST_ASSERT(
-            !barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, 16, NULL, buffer, required, &tree),
-            "insert must fail for too-small scratch");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, NULL, NULL,
-                                            required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, 0, NULL,
+                                            buffer, required, &tree),
+                    "insert must fail for scratch_size=0");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, 16, NULL,
+                                            buffer, required, &tree),
+                    "insert must fail for too-small scratch");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+                                            NULL, NULL, required, &tree),
                     "insert must fail for NULL buffer");
-        TEST_ASSERT(
-            !barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, NULL, buffer, 0, &tree),
-            "insert must fail for buffer_size=0");
-        TEST_ASSERT(
-            !barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, NULL, buffer, 16, &tree),
-            "insert must fail for too-small buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, NULL, buffer,
-                                            required, NULL),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+                                            NULL, buffer, 0, &tree),
+                    "insert must fail for buffer_size=0");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+                                            NULL, buffer, 16, &tree),
+                    "insert must fail for too-small buffer");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+                                            NULL, buffer, required, NULL),
                     "insert must fail for NULL out");
 
         free(scratch);
@@ -239,11 +220,8 @@ int main(const int argc, const char *argv[static argc])
 
     /* ========== Stage 2: insert pass ========== */
 
-    const barnes_hut_settings_t settings = {.order = TEST_ORDER,
-                                            .critical_particle_count = 8,
-                                            .max_depth = 20,
-                                            .work_order = 0,
-                                            .n_threads = TEST_N_THREADS};
+    const barnes_hut_settings_t settings = {
+        .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
 
     /* Build a tree once and inspect it. */
     {
@@ -273,17 +251,20 @@ int main(const int argc, const char *argv[static argc])
         }
 
         const barnes_hut_settings_t settings = {
-            .order = 4, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .n_threads = TEST_N_THREADS};
+            .order = 4, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
 
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
+        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
+        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
         fprintf(stderr, "MALLOC scratch=%p sz=%zu\n", scratch, scratch_sz);
         fflush(stderr);
 
-        size_t required = 0;
-        TEST_ASSERT(barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required),
-                    "count failed");
+        const barnes_hut_scratch_t bh_scratch = barnes_hut_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
+        const barnes_hut_count_res_t count_res =
+            barnes_hut_count_pass(N_SOURCES, coords, &settings, bh_scratch.topo, bh_scratch.source_leaf_topo);
+        const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(N_SOURCES, &settings, count_res);
+        const size_t required = barnes_hut_total_work_size(work_sizes);
         TEST_ASSERT(required > 0, "required buffer size must be positive");
 
         void *buffer = malloc(required);
@@ -292,8 +273,8 @@ int main(const int argc, const char *argv[static argc])
         fflush(stderr);
 
         barnes_hut_tree_t tree;
-        const bool ok = barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, NULL, buffer,
-                                               required, &tree);
+        const bool ok = barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch,
+                                               scratch_sz, NULL, buffer, required, &tree);
         TEST_ASSERT(ok, "insert failed for valid input");
         TEST_ASSERT(tree.n_sources == N_SOURCES, "n_sources mismatch: %u", tree.n_sources);
         TEST_ASSERT(tree.n_nodes >= 1, "tree must have at least the root, got %u", tree.n_nodes);
@@ -372,13 +353,23 @@ int main(const int argc, const char *argv[static argc])
         generate_sources(0xABCDEFULL, N_SOURCES, coords_a, values_a);
         generate_sources(0xABCDEFULL, N_SOURCES, coords_b, values_b);
 
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
+        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
+        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
         void *scratch_a = malloc(scratch_sz);
         void *scratch_b = malloc(scratch_sz);
         TEST_ASSERT(scratch_a && scratch_b, "scratch malloc failed");
-        size_t required_a = 0, required_b = 0;
-        barnes_hut_tree_count(N_SOURCES, coords_a, &settings, scratch_a, scratch_sz, &required_a);
-        barnes_hut_tree_count(N_SOURCES, coords_b, &settings, scratch_b, scratch_sz, &required_b);
+
+        /* Count pass + size work buffer for determinism check. */
+        const barnes_hut_scratch_t bhs_a = barnes_hut_scratch_partition(TEST_N_THREADS, scratch_a, scratch_sizes);
+        const barnes_hut_count_res_t cr_a =
+            barnes_hut_count_pass(N_SOURCES, coords_a, &settings, bhs_a.topo, bhs_a.source_leaf_topo);
+        const barnes_hut_work_sizes_t ws_a = barnes_hut_size_work_buffer(N_SOURCES, &settings, cr_a);
+        const barnes_hut_scratch_t bhs_b = barnes_hut_scratch_partition(TEST_N_THREADS, scratch_b, scratch_sizes);
+        const barnes_hut_count_res_t cr_b =
+            barnes_hut_count_pass(N_SOURCES, coords_b, &settings, bhs_b.topo, bhs_b.source_leaf_topo);
+        const barnes_hut_work_sizes_t ws_b = barnes_hut_size_work_buffer(N_SOURCES, &settings, cr_b);
+        const size_t required_a = barnes_hut_total_work_size(ws_a);
+        const size_t required_b = barnes_hut_total_work_size(ws_b);
         TEST_ASSERT(required_a == required_b, "count must be deterministic: %zu vs %zu", required_a, required_b);
 
         /* Build both trees and compare depth stats. */
@@ -386,11 +377,11 @@ int main(const int argc, const char *argv[static argc])
         void *buffer_b = malloc(required_b);
         TEST_ASSERT(buffer_a && buffer_b, "malloc failed");
         barnes_hut_tree_t tree_a, tree_b;
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, coords_a, values_a, &settings, scratch_a, scratch_sz, NULL,
-                                           buffer_a, required_a, &tree_a),
+        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords_a, values_a, &settings, scratch_a,
+                                           scratch_sz, NULL, buffer_a, required_a, &tree_a),
                     "insert A failed");
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, coords_b, values_b, &settings, scratch_b, scratch_sz, NULL,
-                                           buffer_b, required_b, &tree_b),
+        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords_b, values_b, &settings, scratch_b,
+                                           scratch_sz, NULL, buffer_b, required_b, &tree_b),
                     "insert B failed");
 
         unsigned lo_a = UINT32_MAX, hi_a = 0;
@@ -433,15 +424,20 @@ int main(const int argc, const char *argv[static argc])
         real3_t values[N_SOURCES];
         generate_sources(0xCAFEBABEULL, N_SOURCES, coords, values);
 
-        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings);
+        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
+        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
+
+        const barnes_hut_scratch_t bh_scratch = barnes_hut_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
+
+        /* Insert test with custom allocator. */
         const size_t required = barnes_hut_buffer_size(N_SOURCES, &settings);
         void *buffer = malloc(required);
         TEST_ASSERT(buffer != NULL, "buffer malloc failed");
         barnes_hut_tree_t tree;
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, coords, values, &settings, scratch, scratch_sz, &my_allocator,
-                                           buffer, required, &tree),
+        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+                                           &my_allocator, buffer, required, &tree),
                     "insert with custom allocator failed");
         TEST_ASSERT(state.total_alloc_count > 0, "custom allocator was not used for any allocation");
         TEST_ASSERT(state.total_alloc_count == state.total_free_count,
@@ -451,20 +447,22 @@ int main(const int argc, const char *argv[static argc])
         /* Reset counters, repeat with the convenience `build` entry point. */
         const size_t alloc_before = state.total_alloc_count;
         const size_t free_before = state.total_free_count;
-        TEST_ASSERT(barnes_hut_tree_build(N_SOURCES, coords, values, &settings, scratch, scratch_sz, &my_allocator,
-                                          buffer, required, &tree),
+        TEST_ASSERT(barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &my_allocator, &tree),
                     "build with custom allocator failed");
         TEST_ASSERT(state.total_alloc_count > alloc_before, "build did not exercise the allocator");
         TEST_ASSERT(state.total_alloc_count - alloc_before == state.total_free_count - free_before,
                     "build leaked scratch under custom allocator");
 
-        /* count() routes only through the scratch buffer (no residual allocation
-         * is needed for a count-only pass), so the allocator is untouched. */
+        /* count/size routes only through the scratch buffer (no residual
+         * allocation is needed for a count-only pass), so the allocator
+         * is untouched. */
         const size_t alloc_before_c = state.total_alloc_count;
-        size_t required_b = 0;
-        TEST_ASSERT(barnes_hut_tree_count(N_SOURCES, coords, &settings, scratch, scratch_sz, &required_b),
-                    "count with custom allocator failed");
-        TEST_ASSERT(state.total_alloc_count == alloc_before_c, "count unexpectedly went through the allocator");
+        const barnes_hut_scratch_t bh_scratch2 = barnes_hut_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
+        const barnes_hut_count_res_t count_res2 =
+            barnes_hut_count_pass(N_SOURCES, coords, &settings, bh_scratch2.topo, bh_scratch2.source_leaf_topo);
+        const barnes_hut_work_sizes_t ws2 = barnes_hut_size_work_buffer(N_SOURCES, &settings, count_res2);
+        TEST_ASSERT(barnes_hut_total_work_size(ws2) > 0, "size should be > 0");
+        TEST_ASSERT(state.total_alloc_count == alloc_before_c, "count/size unexpectedly went through the allocator");
 
         free(scratch);
         free(buffer);
