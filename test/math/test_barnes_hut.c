@@ -253,29 +253,9 @@ int main(const int argc, const char *argv[static argc])
         const barnes_hut_settings_t settings = {
             .order = 4, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
 
-        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
-        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
-        void *scratch = malloc(scratch_sz);
-        TEST_ASSERT(scratch != NULL, "scratch malloc failed");
-        fprintf(stderr, "MALLOC scratch=%p sz=%zu\n", scratch, scratch_sz);
-        fflush(stderr);
-
-        const barnes_hut_scratch_t bh_scratch = barnes_hut_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
-        const barnes_hut_count_res_t count_res =
-            barnes_hut_count_pass(N_SOURCES, coords, &settings, bh_scratch.topo, bh_scratch.source_leaf_topo);
-        const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(N_SOURCES, &settings, count_res);
-        const size_t required = barnes_hut_total_work_size(work_sizes);
-        TEST_ASSERT(required > 0, "required buffer size must be positive");
-
-        void *buffer = malloc(required);
-        TEST_ASSERT(buffer != NULL, "buffer malloc failed");
-        fprintf(stderr, "MALLOC buffer=%p sz=%zu scratch=%p\n", buffer, required, scratch);
-        fflush(stderr);
-
         barnes_hut_tree_t tree;
-        const bool ok = barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch,
-                                               scratch_sz, NULL, buffer, required, &tree);
-        TEST_ASSERT(ok, "insert failed for valid input");
+        const bool ok = barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, &tree);
+        TEST_ASSERT(ok, "build failed for valid input");
         TEST_ASSERT(tree.n_sources == N_SOURCES, "n_sources mismatch: %u", tree.n_sources);
         TEST_ASSERT(tree.n_nodes >= 1, "tree must have at least the root, got %u", tree.n_nodes);
         TEST_ASSERT(tree.n_nodes == tree.n_internal + tree.n_multipole_leaves + tree.n_particle_leaves,
@@ -340,8 +320,7 @@ int main(const int argc, const char *argv[static argc])
         printf("multipole-leaf fidelity: max rel err = %.3e\n", max_err);
         TEST_ASSERT(max_err < 1e-12, "multipole-leaf should match direct construction: %.3e", max_err);
 
-        free(scratch);
-        free(buffer);
+        free(tree.buffer);
     }
 
     /* Determinism: same seed -> identical tree shape. */
@@ -353,36 +332,11 @@ int main(const int argc, const char *argv[static argc])
         generate_sources(0xABCDEFULL, N_SOURCES, coords_a, values_a);
         generate_sources(0xABCDEFULL, N_SOURCES, coords_b, values_b);
 
-        const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
-        const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
-        void *scratch_a = malloc(scratch_sz);
-        void *scratch_b = malloc(scratch_sz);
-        TEST_ASSERT(scratch_a && scratch_b, "scratch malloc failed");
-
-        /* Count pass + size work buffer for determinism check. */
-        const barnes_hut_scratch_t bhs_a = barnes_hut_scratch_partition(TEST_N_THREADS, scratch_a, scratch_sizes);
-        const barnes_hut_count_res_t cr_a =
-            barnes_hut_count_pass(N_SOURCES, coords_a, &settings, bhs_a.topo, bhs_a.source_leaf_topo);
-        const barnes_hut_work_sizes_t ws_a = barnes_hut_size_work_buffer(N_SOURCES, &settings, cr_a);
-        const barnes_hut_scratch_t bhs_b = barnes_hut_scratch_partition(TEST_N_THREADS, scratch_b, scratch_sizes);
-        const barnes_hut_count_res_t cr_b =
-            barnes_hut_count_pass(N_SOURCES, coords_b, &settings, bhs_b.topo, bhs_b.source_leaf_topo);
-        const barnes_hut_work_sizes_t ws_b = barnes_hut_size_work_buffer(N_SOURCES, &settings, cr_b);
-        const size_t required_a = barnes_hut_total_work_size(ws_a);
-        const size_t required_b = barnes_hut_total_work_size(ws_b);
-        TEST_ASSERT(required_a == required_b, "count must be deterministic: %zu vs %zu", required_a, required_b);
-
-        /* Build both trees and compare depth stats. */
-        void *buffer_a = malloc(required_a);
-        void *buffer_b = malloc(required_b);
-        TEST_ASSERT(buffer_a && buffer_b, "malloc failed");
         barnes_hut_tree_t tree_a, tree_b;
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords_a, values_a, &settings, scratch_a,
-                                           scratch_sz, NULL, buffer_a, required_a, &tree_a),
-                    "insert A failed");
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords_b, values_b, &settings, scratch_b,
-                                           scratch_sz, NULL, buffer_b, required_b, &tree_b),
-                    "insert B failed");
+        TEST_ASSERT(barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords_a, values_a, &settings, NULL, &tree_a),
+                    "build A failed");
+        TEST_ASSERT(barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords_b, values_b, &settings, NULL, &tree_b),
+                    "build B failed");
 
         unsigned lo_a = UINT32_MAX, hi_a = 0;
         unsigned lo_b = UINT32_MAX, hi_b = 0;
@@ -401,10 +355,8 @@ int main(const int argc, const char *argv[static argc])
         /* NULL outputs: must not crash. */
         barnes_hut_tree_depth_stats(&tree_a, NULL, NULL);
 
-        free(scratch_a);
-        free(scratch_b);
-        free(buffer_a);
-        free(buffer_b);
+        free(tree_a.buffer);
+        free(tree_b.buffer);
     }
 
     /* Custom allocator: verify the allocator callbacks are still used for
@@ -450,8 +402,12 @@ int main(const int argc, const char *argv[static argc])
         TEST_ASSERT(barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &my_allocator, &tree),
                     "build with custom allocator failed");
         TEST_ASSERT(state.total_alloc_count > alloc_before, "build did not exercise the allocator");
-        TEST_ASSERT(state.total_alloc_count - alloc_before == state.total_free_count - free_before,
-                    "build leaked scratch under custom allocator");
+        /* build allocates scratch+work+mp_indices (3 allocs), frees scratch+mp_indices (2 frees).
+         * work buffer stays alive as tree.buffer — free it now. */
+        my_free(&state, tree.buffer);
+        TEST_ASSERT(state.total_alloc_count == state.total_free_count,
+                    "build leaked under custom allocator: %zu allocs vs %zu frees", state.total_alloc_count,
+                    state.total_free_count);
 
         /* count/size routes only through the scratch buffer (no residual
          * allocation is needed for a count-only pass), so the allocator

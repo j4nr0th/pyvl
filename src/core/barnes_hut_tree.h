@@ -384,12 +384,17 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
                             barnes_hut_tree_t *out);
 
 /**
- * @brief Convenience: run count and insert in one call.
+ * @brief Convenience wrapper: run count + insert in one call.
  *
- * Allocates scratch and work buffers internally through the @p allocator
- * callback, so the caller only needs to provide sources, settings, and an
- * output handle. Use `barnes_hut_tree_insert` when you want to manage
- * buffer lifetimes yourself (e.g. reuse buffers across frames).
+ * Allocates scratch and work buffers internally through the @p allocator,
+ * so the caller only needs sources, settings, and an output handle. The
+ * work buffer remains owned by the returned tree (see `out->buffer`) and
+ * must be freed via `allocator->deallocate()` when the tree is no longer
+ * needed (or via `free()` when using the default libc allocator by passing
+ * `NULL` for @p allocator).
+ *
+ * Use `barnes_hut_tree_insert` when you want to manage buffer lifetimes
+ * yourself (e.g. reuse buffers across solver frames).
  *
  * @param n_sources         Number of source points.
  * @param n_threads         Number of OpenMP threads (>= 1).
@@ -400,6 +405,7 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
  *                          Pass `NULL` for the libc `malloc`/`free`
  *                          fallback.
  * @param out               Out-parameter receiving the populated tree handle.
+ *                          The caller must eventually free `out->buffer`.
  * @return `true` on success.
  */
 bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,

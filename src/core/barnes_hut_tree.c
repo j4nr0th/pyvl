@@ -1434,6 +1434,9 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
     *out = barnes_hut_tree_complete(count_res, n_sources, n_threads, settings, work_buffers,
                                     resolve_work_order(settings), work_buffers.nodes, work_buffers.particle_order,
                                     work_buffers.multipole_coeffs, work_buffers.mp_slices);
+    out->buffer = (uint8_t *)work_buffer;
+    out->buffer_size = total_work_size;
+    work_buffer = NULL; /* ownership transferred to out */
 
     ret = true;
     // End of the function/cleanup
