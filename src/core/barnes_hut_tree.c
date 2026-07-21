@@ -720,7 +720,10 @@ static void materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict), ui
         }
     }
 
-    /* Second pass: resolve child pointers that hold topo-index sentinels. */
+    /* Second pass: resolve child pointers that hold topo-index sentinels.
+     * Parallelised: each internal node writes to its own children[] slot,
+     * so threads touch disjoint cache lines. */
+#pragma omp parallel for default(none) shared(n_topo_nodes, topo, topo_to_real, nodes) schedule(static, 256)
     for (uint32_t ti = 0; ti < n_topo_nodes; ++ti)
     {
         const topo_node_t *tn = &topo[ti];
@@ -788,22 +791,56 @@ static void descend_for_each_source(unsigned n_sources, const real3_t CVL_ARRAY_
 }
 
 /**
- * @brief Compute per-leaf `particle_begin` as a prefix sum across leaves.
- *        Internal nodes are skipped — they don't own particle slots.
+ * @brief Combined pass: compute particle_begin prefix sums with count reset,
+ *        count multipole leaves, and (optionally) build depth-range table.
+ *
+ * Replaces three separate O(nodes) walks with one. The depth range output
+ * is used by the upward sweep for slice-based iteration.
+ *
+ * @param n_nodes     Number of nodes.
+ * @param nodes       Node array.
+ * @param max_depth   Maximum depth (from count_res), or 0 to skip ranges.
+ * @param depth_start Output array [max_depth+2], or NULL.
+ * @param depth_end   Output array [max_depth+2], or NULL.
+ * @return Number of MULTIPOLE leaves.
  */
-static void compute_particle_begins(uint32_t n_real_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_real_nodes))
+static unsigned compute_node_metadata(uint32_t n_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                                      unsigned max_depth, unsigned CVL_ARRAY_ARG(depth_start, restrict),
+                                      unsigned CVL_ARRAY_ARG(depth_end, restrict))
 {
+    unsigned n_mp_leaves = 0;
     unsigned cursor = 0;
-    for (uint32_t i = 0; i < n_real_nodes; ++i)
+
+    if (depth_start && depth_end)
     {
+        for (unsigned d = 0; d <= max_depth + 1; ++d)
+        {
+            depth_start[d] = n_nodes;
+            depth_end[d] = n_nodes;
+        }
+    }
+
+    for (uint32_t i = 0; i < n_nodes; ++i)
+    {
+        const unsigned d = nodes[i].depth;
+        if (depth_start)
+        {
+            if (i < depth_start[d])
+                depth_start[d] = i;
+            depth_end[d] = i + 1;
+        }
+
         if (nodes[i].kind != BH_NODE_INTERNAL)
         {
             nodes[i].particle_begin = cursor;
             cursor += nodes[i].particle_count;
-            /* Reset to 0 — we'll use it as a write cursor below. */
             nodes[i].particle_count = 0;
+
+            if (nodes[i].kind == BH_NODE_MULTIPOLE)
+                n_mp_leaves += 1;
         }
     }
+    return n_mp_leaves;
 }
 
 static barnes_hut_work_t partition_work_buffer(barnes_hut_work_sizes_t work_sizes, void *buffer)
@@ -832,18 +869,6 @@ static barnes_hut_work_t partition_work_buffer(barnes_hut_work_sizes_t work_size
         .topo_to_real = topo_to_real,
         .mp_slices = mp_slices,
     };
-}
-
-static size_t count_multipole_leaves(const unsigned n_topo_nodes,
-                                     const bh_node_t CVL_ARRAY_ARG(nodes, restrict n_topo_nodes))
-{
-    unsigned n_mp_leaves = 0;
-#pragma omp simd reduction(+ : n_mp_leaves)
-    for (uint32_t i = 0; i < n_topo_nodes; ++i)
-        if (nodes[i].kind == BH_NODE_MULTIPOLE)
-            n_mp_leaves += 1;
-
-    return n_mp_leaves;
 }
 
 static bool barnes_hut_tree_build_multipoles(
@@ -950,13 +975,141 @@ static bool barnes_hut_tree_build_multipoles(
     return leaf_ok;
 }
 
-barnes_hut_tree_t barnes_hut_tree_complete(const barnes_hut_count_res_t count_res, const unsigned n_sources,
-                                           const unsigned n_threads, const barnes_hut_settings_t *settings,
-                                           const barnes_hut_work_t work_buffers, unsigned work_order,
-                                           bh_node_t CVL_ARRAY_ARG(nodes, restrict),
-                                           unsigned CVL_ARRAY_ARG(particle_order, restrict),
-                                           real_t CVL_ARRAY_ARG(multipole_coeffs, restrict),
-                                           real_t *CVL_ARRAY_ARG(mp_slices, restrict))
+/* ------------------------------------------------------------------ */
+/* Upward sweep helpers                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Build a compact depth-range table for the node array.
+ *
+ * Nodes are in DFS pre-order, so each depth forms a contiguous index range
+ * [depth_start[d], depth_end[d]). The table has @p max_depth + 2 entries
+ * (entries max_depth+1 and max_depth+2 are sentinel-zeroed for safety).
+ *
+ * @param n_nodes      Number of nodes in @p nodes.
+ * @param nodes        Node array (DFS pre-order).
+ * @param max_depth    The maximum depth in the tree.
+ * @param depth_start  Output array of size max_depth+2, populated with start
+ *                     indices.
+ * @param depth_end    Output array of size max_depth+2, populated with
+ *                     one-past-end indices.
+ */
+static void compute_depth_ranges(unsigned n_nodes, const bh_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                                 unsigned max_depth, unsigned CVL_ARRAY_ARG(depth_start, restrict max_depth + 2),
+                                 unsigned CVL_ARRAY_ARG(depth_end, restrict max_depth + 2))
+{
+    for (unsigned d = 0; d <= max_depth + 1; ++d)
+    {
+        depth_start[d] = n_nodes; /* sentinel: empty range */
+        depth_end[d] = n_nodes;
+    }
+
+    for (unsigned i = 0; i < n_nodes; ++i)
+    {
+        const unsigned d = nodes[i].depth;
+        if (i < depth_start[d])
+            depth_start[d] = i;
+        depth_end[d] = i + 1;
+    }
+}
+
+/**
+ * @brief Process one depth level of the upward sweep for internal nodes.
+ *
+ * Shifts child multipoles into their parent and (for particle-leaf children)
+ * updates the parent multipole directly. Only nodes in [depth_start,
+ * depth_end) with kind == BH_NODE_INTERNAL are processed — no full-scan
+ * filtering needed.
+ *
+ * @param depth_start   First node index at this depth.
+ * @param depth_end     One-past-last node index at this depth.
+ * @param nodes         Node array.
+ * @param order         Multipole order.
+ * @param n_coeffs      Number of coefficients per component.
+ * @param mp_slices     Per-node multipole slice pointers.
+ * @param work_order    Work order for add_shift.
+ * @param shift_exp     Shift expansion scratch.
+ * @param pse           Polynomial scratch.
+ * @param particle_order  Source-index order array.
+ * @param sources_coords  Source coordinates.
+ * @param sources_values  Source strengths.
+ * @param scratch       Scratch buffer (for per-thread leaf_cur/nxt).
+ * @param leaf_stride   Per-thread stride in leaf_cur/nxt.
+ * @param n_threads     OpenMP thread count.
+ */
+static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node_t CVL_ARRAY_ARG(nodes, restrict),
+                               unsigned order, size_t n_coeffs, real_t *CVL_ARRAY_ARG(mp_slices, restrict),
+                               unsigned work_order, real_t CVL_ARRAY_ARG(shift_exp, restrict),
+                               real_t CVL_ARRAY_ARG(pse, restrict),
+                               const unsigned CVL_ARRAY_ARG(particle_order, restrict),
+                               const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                               const real3_t CVL_ARRAY_ARG(sources_values, restrict),
+                               const barnes_hut_scratch_t *scratch, size_t leaf_stride, unsigned n_threads)
+{
+#pragma omp parallel for default(none)                                                                                 \
+    shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, particle_order,      \
+               sources_coords, sources_values, scratch, leaf_stride) schedule(dynamic, 16) num_threads(n_threads)
+    for (uint32_t i = depth_start; i < depth_end; ++i)
+    {
+        if (nodes[i].kind != BH_NODE_INTERNAL)
+            continue;
+
+        /* Zero the internal node's slice and prepare a multipole_t. */
+        real_t *slice = mp_slices[i];
+        memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
+        const multipole_t internal_mp = {.order = order,
+                                         .center = nodes[i].center,
+                                         .coeffs_x = slice,
+                                         .coeffs_y = slice + n_coeffs,
+                                         .coeffs_z = slice + 2u * n_coeffs};
+
+        /* Per-thread scratch for multipole_update. */
+        const int tid = omp_get_thread_num();
+        real_t *particle_cur = scratch->leaf_cur + (size_t)tid * leaf_stride;
+        real_t *particle_nxt = scratch->leaf_nxt + (size_t)tid * leaf_stride;
+
+        for (int oct = 0; oct < 8; ++oct)
+        {
+            bh_node_t *child = nodes[i].data.internal.children[oct];
+            if (child == NULL)
+                continue;
+
+            if (child->kind == BH_NODE_PARTICLE)
+            {
+                for (unsigned k = child->particle_begin; k < child->particle_begin + child->particle_count; ++k)
+                {
+                    const unsigned src = particle_order[k];
+                    multipole_update(&internal_mp, nodes[i].center, sources_coords[src], sources_values[src],
+                                     particle_cur, particle_nxt);
+                }
+            }
+            else
+            {
+
+                /* For BH_NODE_INTERNAL and BH_NODE_MULTIPOLE children the
+                 * multipole slice is in mp_slices[] (side table avoids
+                 * clobbering children[] in the union). */
+                real_t *child_slice = mp_slices[child - nodes];
+                if (child_slice == NULL)
+                    continue;
+                multipole_t child_mp = {.order = order,
+                                        .center = child->data.mp.center,
+                                        .coeffs_x = child_slice,
+                                        .coeffs_y = child_slice + n_coeffs,
+                                        .coeffs_z = child_slice + 2u * n_coeffs};
+                multipole_add_shift(&child_mp, &internal_mp, work_order, shift_exp, pse);
+            }
+        }
+    }
+}
+
+barnes_hut_tree_t barnes_hut_tree_complete(
+    const barnes_hut_count_res_t count_res, const unsigned n_sources, const unsigned n_threads,
+    const barnes_hut_settings_t *settings, const barnes_hut_work_t work_buffers, unsigned work_order,
+    const real3_t CVL_ARRAY_ARG(sources_coords, restrict), const real3_t CVL_ARRAY_ARG(sources_values, restrict),
+    bh_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned CVL_ARRAY_ARG(particle_order, restrict),
+    real_t CVL_ARRAY_ARG(multipole_coeffs, restrict), real_t *CVL_ARRAY_ARG(mp_slices, restrict),
+    const barnes_hut_scratch_t *scratch)
 {
     const unsigned n_internal = count_res.n_internal;
     const unsigned n_multipole = count_res.n_multipole_leaves;
@@ -969,52 +1122,23 @@ barnes_hut_tree_t barnes_hut_tree_complete(const barnes_hut_count_res_t count_re
     real_t *shift_exp = work_buffers.shift_exp;
     real_t *pse = work_buffers.pse;
 
-    /* --- Upward sweep: aggregate child multipoles into internal nodes. ---
-     * Parallelised by depth level: all internal nodes at the same depth
-     * can be processed in parallel because they touch disjoint children
-     * (the tree partitions the source set). Within a level, the work
-     * scales with the number of children, not just node count, so we use
-     * a dynamic schedule. --- */
-    for (unsigned d = max_depth; d > 0; --d)
+    /* Per-thread scratch stride for multipole_update. */
+    const size_t leaf_stride =
+        (3u * n_coeffs > multipole_scratch_size(order)) ? (3u * n_coeffs) : multipole_scratch_size(order);
+
+    /* Build depth-range table for slice-based iteration (avoids O(all-nodes)
+     * scan at each depth level — only the internal node at each depth is
+     * visited). Tree depth is stored in uint8_t, so 256 covers all. */
+    unsigned depth_start[256], depth_end[256];
+    compute_depth_ranges((unsigned)n_topo_nodes, nodes, max_depth, depth_start, depth_end);
+
+    /* --- Upward sweep: aggregate all children into internal nodes. --- */
+    for (unsigned d = max_depth;; --d)
     {
-#pragma omp parallel for default(none) shared(d, n_topo_nodes, nodes, order, mp_slices, work_order, shift_exp, pse,    \
-                                                  n_coeffs, n_threads) schedule(dynamic, 16) num_threads(n_threads)
-        for (uint32_t i = 0; i < n_topo_nodes; ++i)
-        {
-            if (nodes[i].kind != BH_NODE_INTERNAL || nodes[i].depth != d)
-                continue;
-
-            /* Zero the internal node's slice and prepare a multipole_t for it. */
-            real_t *slice = mp_slices[i];
-            memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
-            const multipole_t internal_mp = {.order = order,
-                                             .center = nodes[i].center,
-                                             .coeffs_x = slice,
-                                             .coeffs_y = slice + n_coeffs,
-                                             .coeffs_z = slice + 2u * n_coeffs};
-
-            for (int oct = 0; oct < 8; ++oct)
-            {
-                bh_node_t *child = nodes[i].data.internal.children[oct];
-                if (child == NULL)
-                    continue;
-                if (child->kind == BH_NODE_PARTICLE)
-                    continue;
-
-                /* For both BH_NODE_INTERNAL and BH_NODE_MULTIPOLE children,
-                 * the multipole slice is in mp_slices[] (we use a side
-                 * table to avoid clobbering children[] in the union). */
-                real_t *child_slice = mp_slices[child - nodes];
-                if (child_slice == NULL)
-                    continue; /* safety guard */
-                multipole_t child_mp = {.order = order,
-                                        .center = child->data.mp.center,
-                                        .coeffs_x = child_slice,
-                                        .coeffs_y = child_slice + n_coeffs,
-                                        .coeffs_z = child_slice + 2u * n_coeffs};
-                multipole_add_shift(&child_mp, &internal_mp, work_order, shift_exp, pse);
-            }
-        }
+        upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse,
+                           particle_order, sources_coords, sources_values, scratch, leaf_stride, n_threads);
+        if (d == 0)
+            break;
     }
 
     barnes_hut_tree_t out = {0};
@@ -1030,6 +1154,7 @@ barnes_hut_tree_t barnes_hut_tree_complete(const barnes_hut_count_res_t count_re
     out.nodes = nodes;
     out.particle_order = particle_order;
     out.multipole_coeffs = multipole_coeffs;
+    out.mp_slices = mp_slices;
 
     return out;
 }
@@ -1106,13 +1231,9 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
     /* --- Descend each source through the bh_node_t tree to count per-leaf. --- */
     descend_for_each_source(n_sources, sources_coords, n_topo_nodes, nodes, scratch.source_leaf_real, n_threads);
 
-    /* --- Assign particle ranges per leaf. --- */
-    compute_particle_begins(n_topo_nodes, nodes);
-
-    /* Count multipole leaves up front so each thread gets a contiguous
-     * subrange of indices in a packed array (omp doesn't iterate sparse
-     * indices cleanly). */
-    const unsigned n_mp_leaves = count_multipole_leaves(n_topo_nodes, nodes);
+    /* --- Assign particle ranges, reset counts, and count multipole leaves
+     * in one combined pass (was three separate O(nodes) walks). --- */
+    const unsigned n_mp_leaves = compute_node_metadata(n_topo_nodes, nodes, 0, NULL, NULL);
 
     /* --- Fill particle_order[]. --- */
     // NOTE: Can parallelise this using atomic capture. Schedule is static, with big chunks, because typically the
@@ -1243,52 +1364,23 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
         return false;
     }
 
-    /* --- Upward sweep: aggregate child multipoles into internal nodes. ---
-     * Parallelised by depth level: all internal nodes at the same depth
-     * can be processed in parallel because they touch disjoint children
-     * (the tree partitions the source set). Within a level, the work
-     * scales with the number of children, not just node count, so we use
-     * a dynamic schedule. --- */
-    for (unsigned d = max_depth; d > 0; --d)
+    /* Per-thread scratch stride for multipole_update. */
+    const unsigned order = settings->order;
+    const size_t leaf_stride =
+        (3u * n_coeffs > multipole_scratch_size(order)) ? (3u * n_coeffs) : multipole_scratch_size(order);
+
+    /* Build depth-range table for slice-based iteration. Tree depth is
+     * stored in uint8_t, so 256 entries cover all possible depths. */
+    unsigned depth_start[256], depth_end[256];
+    compute_depth_ranges(n_topo_nodes, nodes, max_depth, depth_start, depth_end);
+
+    /* --- Upward sweep: aggregate all children into internal nodes. --- */
+    for (unsigned d = max_depth;; --d)
     {
-#pragma omp parallel for default(none) shared(d, n_topo_nodes, nodes, settings, mp_slices, work_order, shift_exp, pse, \
-                                                  n_coeffs, n_threads) schedule(dynamic, 16) num_threads(n_threads)
-        for (uint32_t i = 0; i < n_topo_nodes; ++i)
-        {
-            if (nodes[i].kind != BH_NODE_INTERNAL || nodes[i].depth != d)
-                continue;
-
-            /* Zero the internal node's slice and prepare a multipole_t for it. */
-            real_t *slice = mp_slices[i];
-            memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
-            multipole_t internal_mp = {.order = settings->order,
-                                       .center = nodes[i].center,
-                                       .coeffs_x = slice,
-                                       .coeffs_y = slice + n_coeffs,
-                                       .coeffs_z = slice + 2u * n_coeffs};
-
-            for (int oct = 0; oct < 8; ++oct)
-            {
-                bh_node_t *child = nodes[i].data.internal.children[oct];
-                if (child == NULL)
-                    continue;
-                if (child->kind == BH_NODE_PARTICLE)
-                    continue;
-
-                /* For both BH_NODE_INTERNAL and BH_NODE_MULTIPOLE children,
-                 * the multipole slice is in mp_slices[] (we use a side
-                 * table to avoid clobbering children[] in the union). */
-                real_t *child_slice = mp_slices[child - nodes];
-                if (child_slice == NULL)
-                    continue; /* safety guard */
-                multipole_t child_mp = {.order = settings->order,
-                                        .center = child->data.mp.center,
-                                        .coeffs_x = child_slice,
-                                        .coeffs_y = child_slice + n_coeffs,
-                                        .coeffs_z = child_slice + 2u * n_coeffs};
-                multipole_add_shift(&child_mp, &internal_mp, work_order, shift_exp, pse);
-            }
-        }
+        upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse,
+                           particle_order, sources_coords, sources_values, &scratch, leaf_stride, n_threads);
+        if (d == 0)
+            break;
     }
 
     out->settings = *settings;
@@ -1305,6 +1397,7 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
     out->nodes = nodes;
     out->particle_order = particle_order;
     out->multipole_coeffs = multipole_coeffs;
+    out->mp_slices = work_buffers.mp_slices;
 
     return true;
 }
@@ -1324,13 +1417,9 @@ size_t barnes_hut_downward_pass(const unsigned n_sources,
     descend_for_each_source(n_sources, sources_coords, n_topo_nodes, work_buffers.nodes, scratch.source_leaf_real,
                             n_threads);
 
-    /* --- Assign particle ranges per leaf. --- */
-    compute_particle_begins(n_topo_nodes, work_buffers.nodes);
-
-    /* Count multipole leaves up front so each thread gets a contiguous
-     * subrange of indices in a packed array (omp doesn't iterate sparse
-     * indices cleanly). */
-    return count_multipole_leaves(n_topo_nodes, work_buffers.nodes);
+    /* --- Assign particle ranges, reset counts, and count multipole leaves
+     * in one combined pass. --- */
+    return compute_node_metadata((uint32_t)n_topo_nodes, work_buffers.nodes, count_res.max_depth, NULL, NULL);
 }
 
 bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
@@ -1431,9 +1520,10 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
             goto cleanup;
     }
 
-    *out = barnes_hut_tree_complete(count_res, n_sources, n_threads, settings, work_buffers,
-                                    resolve_work_order(settings), work_buffers.nodes, work_buffers.particle_order,
-                                    work_buffers.multipole_coeffs, work_buffers.mp_slices);
+    *out =
+        barnes_hut_tree_complete(count_res, n_sources, n_threads, settings, work_buffers, resolve_work_order(settings),
+                                 sources_coords, sources_values, work_buffers.nodes, work_buffers.particle_order,
+                                 work_buffers.multipole_coeffs, work_buffers.mp_slices, &scratch);
     out->buffer = (uint8_t *)work_buffer;
     out->buffer_size = total_work_size;
     work_buffer = NULL; /* ownership transferred to out */
@@ -1485,4 +1575,152 @@ void barnes_hut_tree_depth_stats(const barnes_hut_tree_t *tree, unsigned *min_de
 size_t barnes_hut_tree_memory_bytes(const barnes_hut_tree_t *tree)
 {
     return tree ? tree->buffer_size : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Evaluation                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Particle-leaf direct-evaluation kernel: @f$ \Gamma / |r|^2 @f$.
+ *
+ * Matches the asymptotic scaling of `multipole_eval` (no cross product, no
+ * @f$ 1/4\pi @f$ factor). Returns zero for singularities (r < 1e-30).
+ */
+static inline real3_t particle_kernel(real3_t gamma, real3_t r_vec)
+{
+    const real_t r2 = real3_dot(r_vec, r_vec);
+    if (r2 < 1e-30)
+        return (real3_t){.x = 0, .y = 0, .z = 0};
+    return real3_mul1(gamma, 1.0 / r2);
+}
+
+/**
+ * @brief Multipole Acceptance Criterion (MAC).
+ *
+ * When `theta <= 0` (default): neighbour criterion — accept if the target
+ * point is outside the cell's @f$ 3 \times 3 \times 3 @f$ neighbourhood
+ * (@f$ |\Delta x| > 2 h @f$ or @f$ |\Delta y| > 2 h @f$ or
+ * @f$ |\Delta z| > 2 h @f$).
+ *
+ * When `theta > 0`: opening-angle criterion — accept if
+ * @f$ h / |r| < \theta @f$.
+ */
+static inline bool mac_accept(const bh_node_t *node, real3_t point, double theta)
+{
+    const real3_t diff = real3_sub(point, node->center);
+    if (theta <= 0.0)
+    {
+        /* Neighbour criterion: outside 3x3x3 cell neighbourhood. */
+        return fabs(diff.x) > 2.0 * node->half_size || fabs(diff.y) > 2.0 * node->half_size ||
+               fabs(diff.z) > 2.0 * node->half_size;
+    }
+    /* Opening-angle criterion. */
+    const real_t dist = real3_mag(diff);
+    if (dist < 1e-30)
+        return false;
+    return node->half_size / dist < theta;
+}
+
+real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                             const real3_t CVL_ARRAY_ARG(sources_values, restrict), real3_t point,
+                             barnes_hut_eval_settings_t eval_settings)
+{
+    if (tree == NULL || tree->nodes == NULL || tree->n_nodes == 0)
+        return (real3_t){.x = 0, .y = 0, .z = 0};
+
+    real3_t result = {.x = 0, .y = 0, .z = 0};
+
+    enum
+    {
+        EVAL_STACK_MAX = 1024
+    };
+    uint32_t stack[EVAL_STACK_MAX];
+    int sp = 0;
+    stack[sp++] = 0;
+
+    const double theta = eval_settings.theta;
+    const unsigned order = tree->settings.order;
+    const size_t n_coeffs = multipole_num_coeffs(order);
+
+    while (sp > 0)
+    {
+        sp -= 1;
+        const uint32_t idx = stack[sp];
+        const bh_node_t *node = &tree->nodes[idx];
+
+        /* Hot path: BH_NODE_INTERNAL is most common, especially near root. */
+        if (CVL_EXPECT_CONDITION(node->kind == BH_NODE_INTERNAL))
+        {
+            if (mac_accept(node, point, theta))
+            {
+                /* Evaluate the internal node's aggregated multipole.
+                 * Prefetch coefficient arrays before constructing the
+                 * multipole_t to hide memory latency. */
+                real_t *slice = tree->mp_slices[idx];
+                if (CVL_EXPECT_CONDITION(slice != NULL))
+                {
+                    CVL_PREFETCH(slice, 0, 3);
+                    CVL_PREFETCH(slice + n_coeffs, 0, 3);
+                    CVL_PREFETCH(slice + 2u * n_coeffs, 0, 3);
+                    const multipole_t mp = {.order = order,
+                                            .center = node->center,
+                                            .coeffs_x = slice,
+                                            .coeffs_y = slice + n_coeffs,
+                                            .coeffs_z = slice + 2u * n_coeffs};
+                    result = real3_add(result, multipole_eval(&mp, point));
+                }
+            }
+            else
+            {
+                /* Descend into children. */
+                for (int k = 0; k < 8; ++k)
+                {
+                    const bh_node_t *child = node->data.internal.children[k];
+                    if (CVL_EXPECT_CONDITION(child == NULL))
+                        continue;
+                    if ((size_t)sp + 1 > EVAL_STACK_MAX)
+                        break;
+                    stack[sp++] = (uint32_t)(child - tree->nodes);
+                }
+            }
+        }
+        else if (CVL_EXPECT_CONDITION(node->kind == BH_NODE_MULTIPOLE))
+        {
+            /* Prefetch multipole coefficients before evaluation. */
+            const multipole_t *mp = &node->data.mp;
+            CVL_PREFETCH(mp->coeffs_x, 0, 3);
+            CVL_PREFETCH(mp->coeffs_y, 0, 3);
+            CVL_PREFETCH(mp->coeffs_z, 0, 3);
+            result = real3_add(result, multipole_eval(mp, point));
+        }
+        else
+        {
+            /* BH_NODE_PARTICLE — direct sum over particles in this leaf. */
+            const unsigned begin = node->particle_begin;
+            const unsigned end = begin + node->particle_count;
+            for (unsigned k = begin; k < end; ++k)
+            {
+                const unsigned src = tree->particle_order[k];
+                const real3_t dr = real3_sub(point, sources_coords[src]);
+                result = real3_add(result, particle_kernel(sources_values[src], dr));
+            }
+        }
+    }
+
+    return result;
+}
+
+void barnes_hut_tree_eval_all(const barnes_hut_tree_t *tree, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                              const real3_t CVL_ARRAY_ARG(sources_values, restrict), unsigned n_targets,
+                              const real3_t CVL_ARRAY_ARG(targets, restrict n_targets),
+                              real3_t CVL_ARRAY_ARG(results, restrict n_targets),
+                              barnes_hut_eval_settings_t eval_settings, unsigned n_threads)
+{
+#pragma omp parallel for default(none) shared(tree, sources_coords, sources_values, n_targets, targets, results,       \
+                                                  eval_settings) num_threads(n_threads) schedule(static)
+    for (unsigned i = 0; i < n_targets; ++i)
+    {
+        results[i] = barnes_hut_tree_eval(tree, sources_coords, sources_values, targets[i], eval_settings);
+    }
 }

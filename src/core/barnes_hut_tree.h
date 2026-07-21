@@ -170,10 +170,9 @@ typedef struct bh_node
  *  3. `multipole_coeffs`- flat coefficient storage, partitioned by
  *                         multipole-bearing leaf. Slice size is
  *                         `3 * multipole_num_coeffs(order)` per such node.
- *  4–6. `shift_exp` / `pse` / `topo_to_real` / `mp_slices` — transient
- *       scratch regions used during the build. They are allocated as part of
- *       the buffer but are NOT exposed on the tree handle. After the build
- *       returns, only regions 1–3 carry the output tree.
+ *  4–6. `shift_exp` / `pse` / `topo_to_real` — transient scratch regions used
+ *       during the build. After the build returns, only regions 1–3 and the
+ *       side-table `mp_slices` (on the tree handle) carry the output tree.
  *
  * `work_order` is resolved at build time as
  * `settings.work_order ? settings.work_order : settings.order`.
@@ -200,6 +199,7 @@ typedef struct
     bh_node_t *nodes;
     unsigned *particle_order;
     real_t *multipole_coeffs;
+    real_t **mp_slices;
 } barnes_hut_tree_t;
 
 typedef struct
@@ -209,6 +209,24 @@ typedef struct
     unsigned n_particle_leaves;
     unsigned max_depth;
 } barnes_hut_count_res_t;
+
+/**
+ * @brief Settings for tree evaluation.
+ *
+ * Members:
+ *  - `theta` — opening angle @f$ \theta @f$. When `<= 0` (default), the
+ *    neighbour criterion is used: the multipole of a cell is accepted
+ *    whenever the target point lies outside the cell's 3×3×3 neighbourhood.
+ *    When `> 0`, the opening-angle criterion applies: a cell's multipole is
+ *    accepted whenever `half_size / distance < theta`.
+ */
+typedef struct
+{
+    double theta;
+} barnes_hut_eval_settings_t;
+
+/** @brief Default eval settings: neighbour criterion. */
+#define BARNES_HUT_EVAL_SETTINGS_DEFAULT ((barnes_hut_eval_settings_t){.theta = 0.0})
 
 barnes_hut_count_res_t barnes_hut_count_pass(unsigned n_sources,
                                              const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
@@ -431,3 +449,42 @@ void barnes_hut_tree_depth_stats(const barnes_hut_tree_t *tree, unsigned *min_de
  * Equal to `tree->buffer_size` for trees built through this module.
  */
 size_t barnes_hut_tree_memory_bytes(const barnes_hut_tree_t *tree);
+
+/**
+ * @brief Evaluate the tree at a single target point.
+ *
+ * Walks the octree from the root, deciding at each internal node whether to
+ * accept its multipole (via the MAC) or descend into its children.
+ *
+ * @param tree               Built tree handle.
+ * @param sources_coords     Source coordinates (the same array used to build
+ *                           the tree).
+ * @param sources_values     Source strengths (same array used to build the
+ *                           tree).
+ * @param point              Target evaluation point.
+ * @param eval_settings      Multipole acceptance settings.
+ * @return Induced velocity @f$ \vec{v}(\mathrm{point}) @f$.
+ */
+real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                             const real3_t CVL_ARRAY_ARG(sources_values, restrict), real3_t point,
+                             barnes_hut_eval_settings_t eval_settings);
+
+/**
+ * @brief Evaluate the tree at multiple target points (batched, OpenMP).
+ *
+ * Thread-safe: each target is evaluated independently with a local stack.
+ *
+ * @param tree               Built tree handle.
+ * @param sources_coords     Source coordinates (same arrays used to build).
+ * @param sources_values     Source strengths.
+ * @param n_targets          Number of target points.
+ * @param targets            Array of target points.
+ * @param results            Output array for induced velocities.
+ * @param eval_settings      Multipole acceptance settings.
+ * @param n_threads          OpenMP thread count.
+ */
+void barnes_hut_tree_eval_all(const barnes_hut_tree_t *tree, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                              const real3_t CVL_ARRAY_ARG(sources_values, restrict), unsigned n_targets,
+                              const real3_t CVL_ARRAY_ARG(targets, restrict n_targets),
+                              real3_t CVL_ARRAY_ARG(results, restrict n_targets),
+                              barnes_hut_eval_settings_t eval_settings, unsigned n_threads);

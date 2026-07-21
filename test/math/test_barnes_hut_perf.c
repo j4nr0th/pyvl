@@ -64,13 +64,17 @@ int main(const int argc, const char *argv[static argc])
         .order = 4, .critical_particle_count = 16, .max_depth = 24, .work_order = 0};
     const unsigned n_threads = 1;
 
-    printf("Barnes-Hut build performance\n");
-    printf("============================\n");
+    printf("Barnes-Hut performance\n");
+    printf("=====================\n");
     printf("order=%u critical=%u max_depth=%u\n", settings.order, settings.critical_particle_count, settings.max_depth);
-    printf("%-8s %-14s %-8s %-9s %-12s %-10s %-9s %-10s\n", "N", "shape", "depth", "build_ms", "ns/source",
-           "buffer_KiB", "n_threads", "seed");
-    printf("-------- -------------- -------- --------- ------------ ---------- --------- "
-           "----------\n");
+    printf("%-8s %-14s %-8s ", "N", "shape", "depth");
+    printf("%-9s %-10s %-9s ", "bld_ms", "bld_ns/s", "buf_KiB");
+    printf("%-9s %-10s ", "ev_ms", "ev_ns/s");
+    printf("%-10s %-9s\n", "direct_ms", "spdup");
+    printf("-------- -------------- -------- ");
+    printf("--------- ---------- --------- ");
+    printf("--------- ---------- ");
+    printf("---------- ---------\n");
 
     for (unsigned lvl = 0; lvl < N_LEVELS; ++lvl)
     {
@@ -131,10 +135,6 @@ int main(const int argc, const char *argv[static argc])
         const double scratch_kib = (double)scratch_sz / 1024.0;
         const double total_kib = buffer_kib + scratch_kib;
 
-        printf("%-8u %4u %4u %4u   %-8u %-9.3f %-12.1f %-10.1f %-9u 0x%lx\n", n, tree.n_internal,
-               tree.n_multipole_leaves, tree.n_particle_leaves, tree.max_depth_reached, build_ms, ns_per_source,
-               total_kib, 1, (unsigned long)seed);
-
         /* Sanity checks: tree must have at least one multipole or particle leaf
          * and the sum of leaf kinds must equal total nodes. */
         if (tree.n_nodes == 0)
@@ -155,6 +155,59 @@ int main(const int argc, const char *argv[static argc])
             free(values);
             return 1;
         }
+
+        /* --- Eval timing (batch tree eval at source positions) --- */
+        const barnes_hut_eval_settings_t eval_cfg = {.theta = 0.0};
+        real3_t *eval_results = (real3_t *)malloc((size_t)n * sizeof(real3_t));
+        double eval_ms = 0, eval_ns_per = 0;
+        if (eval_results)
+        {
+            const double te0 = seconds_now();
+            barnes_hut_tree_eval_all(&tree, coords, values, n, coords, eval_results, eval_cfg, n_threads);
+            const double te1 = seconds_now();
+            eval_ms = (te1 - te0) * 1e3;
+            eval_ns_per = (te1 - te0) * 1e9 / (double)n;
+        }
+        free(eval_results);
+
+        /* --- Direct O(N²) timing for small N --- */
+        double direct_ms = 0, speedup = 0;
+        if (n <= 10000)
+        {
+            real3_t *direct_res = (real3_t *)malloc((size_t)n * sizeof(real3_t));
+            if (direct_res)
+            {
+                const double td0 = seconds_now();
+                for (unsigned i = 0; i < n; ++i)
+                {
+                    real3_t res = {.x = 0, .y = 0, .z = 0};
+                    for (unsigned j = 0; j < n; ++j)
+                    {
+                        if (i == j)
+                            continue;
+                        const real3_t dr = real3_sub(coords[i], coords[j]);
+                        const real_t r2 = real3_dot(dr, dr);
+                        if (r2 < 1e-30)
+                            continue;
+                        res = real3_add(res, real3_mul1(values[j], 1.0 / r2));
+                    }
+                    direct_res[i] = res;
+                }
+                const double td1 = seconds_now();
+                direct_ms = (td1 - td0) * 1e3;
+                speedup = direct_ms / eval_ms;
+            }
+            free(direct_res);
+        }
+
+        printf("%-8u %4u %4u %4u   %-8u ", n, tree.n_internal, tree.n_multipole_leaves, tree.n_particle_leaves,
+               tree.max_depth_reached);
+        printf("%-9.3f %-10.1f %-9.1f ", build_ms, ns_per_source, total_kib);
+        printf("%-9.3f %-10.1f ", eval_ms, eval_ns_per);
+        if (direct_ms > 0)
+            printf("%-10.3f %-9.1f\n", direct_ms, speedup);
+        else
+            printf("%-10s %-9s\n", "N/A", "N/A");
 
         free(scratch);
         free(buffer);

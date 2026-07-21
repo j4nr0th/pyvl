@@ -64,6 +64,21 @@ static real_t rel_error(const real3_t a, const real3_t b)
     return real3_mag(d) / denom;
 }
 
+/** @brief Direct O(N) sum matching the multipole kernel: Γ / |r|². */
+static real3_t direct_field(real3_t point, const real3_t *coords, const real3_t *values, unsigned n)
+{
+    real3_t res = {.x = 0, .y = 0, .z = 0};
+    for (unsigned i = 0; i < n; ++i)
+    {
+        const real3_t dr = real3_sub(point, coords[i]);
+        const real_t r2 = real3_dot(dr, dr);
+        if (r2 < 1e-30)
+            continue;
+        res = real3_add(res, real3_mul1(values[i], 1.0 / r2));
+    }
+    return res;
+}
+
 typedef struct
 {
     size_t total_alloc_bytes;
@@ -422,6 +437,130 @@ int main(const int argc, const char *argv[static argc])
 
         free(scratch);
         free(buffer);
+    }
+
+    /* ========== Stage 3: Evaluation ========== */
+    {
+        /* Use a larger source count cluster to get a deeper tree (depth >= 2)
+         * so multipole evaluations at source positions are well-separated. */
+        const unsigned N_BIG = 2000;
+        const unsigned N_CLUSTERS = 20;
+        const unsigned PER_CLUSTER = N_BIG / N_CLUSTERS;
+        real3_t *coords_big = (real3_t *)malloc((size_t)N_BIG * sizeof(real3_t));
+        real3_t *values_big = (real3_t *)malloc((size_t)N_BIG * sizeof(real3_t));
+        {
+            uint64_t s = 0xDEADBEEFULL;
+            for (unsigned i = 0; i < N_BIG; ++i)
+            {
+                const unsigned c = i % PER_CLUSTER;
+                const real_t cx = xorshift_uniform_range(&s, -1.0, 1.0);
+                const real_t cy = xorshift_uniform_range(&s, -1.0, 1.0);
+                const real_t cz = xorshift_uniform_range(&s, -1.0, 1.0);
+                coords_big[i].x = cx + xorshift_uniform_range(&s, -0.02, 0.02);
+                coords_big[i].y = cy + xorshift_uniform_range(&s, -0.02, 0.02);
+                coords_big[i].z = cz + xorshift_uniform_range(&s, -0.02, 0.02);
+                values_big[i].x = xorshift_uniform_range(&s, -1.0, 1.0);
+                values_big[i].y = xorshift_uniform_range(&s, -1.0, 1.0);
+                values_big[i].z = xorshift_uniform_range(&s, -1.0, 1.0);
+            }
+        }
+        barnes_hut_tree_t tree;
+        TEST_ASSERT(barnes_hut_tree_build(N_BIG, TEST_N_THREADS, coords_big, values_big, &settings, NULL, &tree),
+                    "build failed for big eval tree");
+        printf("3. eval tree: n_nodes=%u (int=%u mp=%u ptcl=%u) depth=%u\n", tree.n_nodes, tree.n_internal,
+               tree.n_multipole_leaves, tree.n_particle_leaves, tree.max_depth_reached);
+
+        /* 3a. Far-field accuracy: evaluate at points well outside the source
+         *     distribution (|coordinate| > 5), so the root multipole is
+         *     accepted by the neighbor criterion and evaluated directly.
+         *     This tests the complete upward-sweep aggregation including
+         *     particle leaf contributions. */
+        {
+            real_t max_err = 0.0;
+            uint64_t seed = 0xF00D;
+            for (unsigned j = 0; j < N_EVAL; ++j)
+            {
+                /* Pick a random sign vector (±) for each axis to cover all
+                 * octants, with magnitude in [5, 10] to be safely far-field. */
+                const real_t sx = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sy = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sz = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t r = xorshift_uniform_range(&seed, 5.0, 10.0);
+                const real3_t pt = {.x = sx * r, .y = sy * r, .z = sz * r};
+                const real3_t approx =
+                    barnes_hut_tree_eval(&tree, coords_big, values_big, pt, BARNES_HUT_EVAL_SETTINGS_DEFAULT);
+                const real3_t direct = direct_field(pt, coords_big, values_big, N_BIG);
+                const real_t err = rel_error(approx, direct);
+                if (err > max_err)
+                    max_err = err;
+            }
+            printf("3a. far-field eval accuracy: max rel err = %.3e\n", max_err);
+            /* With order 4 and root half-size ≈ 1, error at distance 5-10
+             * scales as (h/r)^(P+1) ≈ (0.1-0.2)^5 ≈ 1e-5 to 3e-4, but
+             * clustered sources add a modest prefactor. */
+            TEST_ASSERT(max_err < 1e-2, "far-field eval error too large: %.3e", max_err);
+        }
+
+        /* 3b. Batch eval_all matches single-point eval. */
+        {
+            const unsigned N_TARGETS = N_EVAL;
+            real3_t targets[N_TARGETS];
+            uint64_t seed = 0xBEEF;
+            for (unsigned j = 0; j < N_TARGETS; ++j)
+            {
+                const real_t sx = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sy = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sz = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                targets[j] = (real3_t){.x = sx * 6.0, .y = sy * 6.0, .z = sz * 6.0};
+            }
+            real3_t batch_results[N_TARGETS];
+            barnes_hut_tree_eval_all(&tree, coords_big, values_big, N_TARGETS, targets, batch_results,
+                                     BARNES_HUT_EVAL_SETTINGS_DEFAULT, 1);
+
+            for (unsigned j = 0; j < N_TARGETS; ++j)
+            {
+                const real3_t single =
+                    barnes_hut_tree_eval(&tree, coords_big, values_big, targets[j], BARNES_HUT_EVAL_SETTINGS_DEFAULT);
+                const real_t err = rel_error(batch_results[j], single);
+                TEST_ASSERT(err < 1e-15, "batch/single mismatch at target %u: %.3e", j, err);
+            }
+            printf("3b. batch/single consistency: OK\n");
+        }
+
+        /* 3c. Invalid inputs: NULL tree returns zero. */
+        {
+            const real3_t pt = {.x = 1, .y = 0, .z = 0};
+            const real3_t res =
+                barnes_hut_tree_eval(NULL, coords_big, values_big, pt, BARNES_HUT_EVAL_SETTINGS_DEFAULT);
+            TEST_ASSERT(res.x == 0 && res.y == 0 && res.z == 0, "NULL tree must return zero");
+            printf("3c. NULL-tree guard: OK\n");
+        }
+
+        /* 3d. Opening-angle mode (theta=0.5): same far-field regime. */
+        {
+            real_t max_err = 0.0;
+            const barnes_hut_eval_settings_t theta_cfg = {.theta = 0.5};
+            uint64_t seed = 0xCAFE;
+            for (unsigned j = 0; j < N_EVAL; ++j)
+            {
+                const real_t sx = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sy = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t sz = xorshift_uniform_range(&seed, 0, 1) < 0.5 ? -1.0 : 1.0;
+                const real_t r = xorshift_uniform_range(&seed, 5.0, 10.0);
+                const real3_t pt = {.x = sx * r, .y = sy * r, .z = sz * r};
+                const real3_t approx = barnes_hut_tree_eval(&tree, coords_big, values_big, pt, theta_cfg);
+                const real3_t direct = direct_field(pt, coords_big, values_big, N_BIG);
+                const real_t err = rel_error(approx, direct);
+                if (err > max_err)
+                    max_err = err;
+            }
+            printf("3d. theta=0.5 far-field: max rel err = %.3e\n", max_err);
+            TEST_ASSERT(max_err < 1e-2, "theta=0.5 eval error too large: %.3e", max_err);
+        }
+
+        free(tree.buffer);
+        free(coords_big);
+        free(values_big);
     }
 
     printf("test_barnes_hut: OK\n");

@@ -22,10 +22,16 @@
 #define CVL_EXTERNAL __attribute__((visibility("default")))
 #define CVL_ARRAY_ARG(arr, sz) arr[sz]
 #define CVL_EXPECT_CONDITION(x) (__builtin_expect(x, 1))
+/** @brief Prefetch @p addr for read (rw=0) or write (rw=1) with locality 0-3. */
+#define CVL_PREFETCH(addr, rw, locality) (__builtin_prefetch(addr, rw, locality))
 #endif
 
 #ifndef CVL_EXPECT_CONDITION
 #define CVL_EXPECT_CONDITION(x) (x)
+#endif
+
+#ifndef CVL_PREFETCH
+#define CVL_PREFETCH(addr, rw, locality) ((void)0)
 #endif
 
 #ifndef CVL_INTERNAL
