@@ -37,28 +37,28 @@
 /* Transient types exposed for function signatures.                    */
 /* ------------------------------------------------------------------ */
 
-/* Internal type used during count phase, not part of public API */
+/** @brief Internal topology node used during the count phase of tree construction. */
 typedef struct
 {
-    int32_t children[8];
-    uint32_t particle_count;
-    uint8_t is_internal;
-    uint8_t depth;
-    real3_t center;
-    real_t half_size;
+    int32_t children[8];     /**< Child topo-node indices; -1 indicates an empty child. */
+    uint32_t particle_count; /**< Number of source particles in this cell. */
+    uint8_t is_internal;     /**< 1 if this cell has been subdivided, 0 otherwise. */
+    uint8_t depth;           /**< Octree depth of this cell (root = 0). */
+    real3_t center;          /**< Centre of the cell. */
+    real_t half_size;        /**< Half-extent of the cell along each axis. */
 } topo_node_t;
 
-/* Internal scratch view, not part of public API */
+/** @brief Partitioned view of the transient scratch buffer for the tree build. */
 typedef struct
 {
-    topo_node_t *topo;
-    uint32_t *source_leaf_topo;
-    unsigned *source_leaf_real;
-    unsigned n_thread_partitions;
-    real_t *leaf_cur;
-    real_t *leaf_nxt;
-    real_t *leaf_coords;
-    real_t *leaf_values;
+    topo_node_t *topo;            /**< Topology array (count-pass output). */
+    uint32_t *source_leaf_topo;   /**< Per-source leaf index into the topology array. */
+    unsigned *source_leaf_real;   /**< Per-source leaf index into the @c bh_node_t array. */
+    unsigned n_thread_partitions; /**< Number of OpenMP thread partitions. */
+    real_t *leaf_cur;             /**< Per-thread multipole build scratch (current). */
+    real_t *leaf_nxt;             /**< Per-thread multipole build scratch (next). */
+    real_t *leaf_coords;          /**< Per-thread source-coordinate scratch. */
+    real_t *leaf_values;          /**< Per-thread source-values scratch. */
 } barnes_hut_scratch_t;
 
 /**
@@ -78,10 +78,10 @@ typedef enum
  */
 typedef struct
 {
-    unsigned order;
-    unsigned critical_particle_count;
-    unsigned max_depth;
-    unsigned work_order;
+    unsigned order;                   /**< Multipole expansion order (>= 1). */
+    unsigned critical_particle_count; /**< Minimum number of sources before a leaf becomes a multipole cell. */
+    unsigned max_depth;               /**< Maximum octree depth (>= 1). */
+    unsigned work_order;              /**< Internal expansion order for work buffers. */
 } barnes_hut_settings_t;
 
 /**
@@ -154,6 +154,21 @@ typedef struct
 
 #define BARNES_HUT_EVAL_SETTINGS_DEFAULT ((barnes_hut_eval_settings_t){.theta = 0.0})
 
+/**
+ * @brief Run the sequential count pass to determine tree topology.
+ *
+ * Walks the source coordinates and builds the topology array, counting how
+ * many internal nodes, multipole leaves, and particle leaves the tree will
+ * contain. No multipole coefficients are computed; this pass only determines
+ * the structural sizes needed to allocate the work buffer.
+ *
+ * @param n_sources         Number of source points.
+ * @param sources_coords    Source coordinates (read-only).
+ * @param settings          Build settings (order, critical_particle_count, max_depth).
+ * @param topo              Output topology array (pre-allocated from scratch).
+ * @param source_leaf       Output per-source leaf index in the topology array.
+ * @return Count results: n_internal, n_multipole_leaves, n_particle_leaves, max_depth.
+ */
 barnes_hut_count_res_t barnes_hut_count_pass(unsigned n_sources,
                                              const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
                                              const barnes_hut_settings_t *settings, topo_node_t *topo,
@@ -220,15 +235,16 @@ size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *s
  */
 size_t barnes_hut_scratch_size(unsigned n_sources, unsigned n_threads, const barnes_hut_settings_t *settings);
 
+/** @brief Per-region byte sizes of the work buffer layout. */
 typedef struct
 {
-    size_t nodes_bytes;
-    size_t particle_order_bytes;
-    size_t multipole_coeffs_bytes;
-    size_t shift_exp_bytes;
-    size_t pse_bytes;
-    size_t topo_to_real_bytes;
-    size_t mp_slices_bytes;
+    size_t nodes_bytes;            /**< Bytes for the @c bh_node_t array. */
+    size_t particle_order_bytes;   /**< Bytes for the particle permutation array. */
+    size_t multipole_coeffs_bytes; /**< Bytes for multipole coefficient storage. */
+    size_t shift_exp_bytes;        /**< Bytes for shift-expansion scratch. */
+    size_t pse_bytes;              /**< Bytes for PSE (point-spread) scratch. */
+    size_t topo_to_real_bytes;     /**< Bytes for topology-to-real-node index map. */
+    size_t mp_slices_bytes;        /**< Bytes for multipole slice pointers. */
 } barnes_hut_work_sizes_t;
 
 /**
@@ -247,17 +263,24 @@ barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
                                                     const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict),
                                                     barnes_hut_count_res_t count_pass_res);
 
+/**
+ * @brief Total work buffer size in bytes from per-region sizes.
+ *
+ * @param sizes  Per-region sizes from `barnes_hut_size_work_buffer`.
+ * @return Total buffer size in bytes.
+ */
 size_t barnes_hut_total_work_size(barnes_hut_work_sizes_t sizes);
 
+/** @brief Partitioned view of the work buffer, providing direct pointers to each region. */
 typedef struct
 {
-    bh_node_t *nodes;
-    unsigned *particle_order;
-    real_t *multipole_coeffs;
-    real_t *shift_exp;
-    real_t *pse;
-    uint32_t *topo_to_real;
-    real_t **mp_slices;
+    bh_node_t *nodes;         /**< Pointer to the @c bh_node_t array. */
+    unsigned *particle_order; /**< Pointer to the particle-order permutation. */
+    real_t *multipole_coeffs; /**< Pointer to multipole coefficient storage. */
+    real_t *shift_exp;        /**< Pointer to shift-expansion scratch space. */
+    real_t *pse;              /**< Pointer to PSE scratch space. */
+    uint32_t *topo_to_real;   /**< Pointer to the topology-to-real-node index map. */
+    real_t **mp_slices;       /**< Pointer to the multipole slice-pointer array. */
 } barnes_hut_work_t;
 
 /**

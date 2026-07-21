@@ -1,10 +1,19 @@
 #pragma once
 #include "common.h"
 
+/**
+ * @brief Reflection plane used for symmetry transformations.
+ *
+ * Defines a plane by an origin point and a unit normal vector.
+ * Positions and vectors can be reflected across this plane to
+ * implement symmetry boundary conditions.
+ *
+ * The normal must be a unit vector (@f$ \|\mathbf{n}\| = 1 @f$).
+ */
 typedef struct
 {
-    real3_t origin; // Point on the plane
-    real3_t normal; // Unit vector normal to the plane
+    real3_t origin; /**< A point lying on the plane. */
+    real3_t normal; /**< Unit vector orthogonal to the plane. */
 } transformation_plane_t;
 
 /**

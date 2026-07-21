@@ -610,6 +610,12 @@ barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
     };
 }
 
+/**
+ * @brief Sum all per-region byte sizes to obtain the total work buffer size.
+ *
+ * @param sizes  Per-region sizes from `barnes_hut_size_work_buffer`.
+ * @return Total work buffer size in bytes.
+ */
 size_t barnes_hut_total_work_size(barnes_hut_work_sizes_t sizes)
 {
     return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.shift_exp_bytes +
@@ -1102,7 +1108,29 @@ static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node
     }
 }
 
-barnes_hut_tree_t barnes_hut_tree_complete(
+/**
+ * @brief Finalise the tree handle after the downward pass and multipole build.
+ *
+ * Runs the upward sweep (aggregating child multipoles into parents via
+ * multipole_add_shift), then fills and returns a barnes_hut_tree_t handle
+ * pointing into the caller-provided work buffers.
+ *
+ * @param count_res        Count-pass results (node topology counts).
+ * @param n_sources        Number of source points.
+ * @param n_threads        Number of OpenMP threads (>= 1).
+ * @param settings         Build settings.
+ * @param work_buffers     Partitioned work buffer views.
+ * @param work_order       Internal expansion order for multipole_add_shift.
+ * @param sources_coords   Source coordinates.
+ * @param sources_values   Source strengths.
+ * @param nodes            Materialised bh_node_t array.
+ * @param particle_order   Per-leaf source index ordering.
+ * @param multipole_coeffs Contiguous multipole coefficient storage.
+ * @param mp_slices        Per-node multipole slice pointers.
+ * @param scratch          Scratch buffer (per-thread temp storage).
+ * @return Populated tree handle (views into caller buffers, no allocation).
+ */
+static barnes_hut_tree_t barnes_hut_tree_complete(
     const barnes_hut_count_res_t count_res, const unsigned n_sources, const unsigned n_threads,
     const barnes_hut_settings_t *settings, const barnes_hut_work_t work_buffers, unsigned work_order,
     const real3_t CVL_ARRAY_ARG(sources_coords, restrict), const real3_t CVL_ARRAY_ARG(sources_values, restrict),
@@ -1401,11 +1429,27 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
     return true;
 }
 
-size_t barnes_hut_downward_pass(const unsigned n_sources,
-                                const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
-                                const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict),
-                                barnes_hut_scratch_t scratch, barnes_hut_work_t work_buffers,
-                                barnes_hut_count_res_t count_res, unsigned n_threads)
+/**
+ * @brief Run the downward pass: materialise nodes, descend sources, count leaves.
+ *
+ * Converts the topo array into a bh_node_t array, descends every source
+ * through the materialised tree to accumulate per-leaf counts, then
+ * computes node metadata (particle ranges, multipole counts).
+ *
+ * @param n_sources       Number of source points.
+ * @param sources_coords  Source coordinates.
+ * @param settings        Build settings.
+ * @param scratch         Scratch buffer views (topo array, source-leaf maps).
+ * @param work_buffers    Work buffer views (nodes, particle_order, etc.).
+ * @param count_res       Count-pass results.
+ * @param n_threads       Number of OpenMP threads (>= 1).
+ * @return Number of multipole leaves found.
+ */
+static size_t barnes_hut_downward_pass(const unsigned n_sources,
+                                       const real3_t CVL_ARRAY_ARG(sources_coords, restrict n_sources),
+                                       const barnes_hut_settings_t CVL_ARRAY_ARG(settings, restrict),
+                                       barnes_hut_scratch_t scratch, barnes_hut_work_t work_buffers,
+                                       barnes_hut_count_res_t count_res, unsigned n_threads)
 {
     /* --- Materialize the bh_node_t tree from the topo array. --- */
     const size_t n_topo_nodes = count_res.n_internal + count_res.n_multipole_leaves + count_res.n_particle_leaves;

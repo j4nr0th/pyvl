@@ -182,6 +182,98 @@ API
 
    Caller-visible tree handle.
 
+.. c:type:: barnes_hut_count_res_t
+
+   Count-pass results: how many internal nodes, multipole leaves, particle
+   leaves, and the maximum tree depth reached.
+
+.. c:type:: barnes_hut_scratch_sizes_t
+
+   Per-region scratch buffer sizes (topo array, source-leaf maps,
+   per-thread multipole scratch). Use ``barnes_hut_total_scratch_size``
+   to get the total.
+
+.. c:type:: barnes_hut_work_sizes_t
+
+   Per-region work buffer sizes (nodes, particle_order, multipole_coeffs,
+   shift_exp, pse, topo_to_real, mp_slices). Use ``barnes_hut_total_work_size``
+   to get the total.
+
+.. c:type:: barnes_hut_work_t
+
+   Partitioned work buffer views: pointers into a single allocated buffer
+   for each logical region.
+
+.. c:type:: barnes_hut_eval_settings_t
+
+   Evaluation settings. Use ``BARNES_HUT_EVAL_SETTINGS_DEFAULT`` for
+   the default configuration (neighbour criterion).
+
+.. c:function:: barnes_hut_count_res_t barnes_hut_count_pass(unsigned n_sources, const real3_t *sources_coords, const barnes_hut_settings_t *settings, topo_node_t *topo, uint32_t *source_leaf)
+
+   Run the sequential count pass to determine tree topology.
+
+   Walks each source through the topo array, splitting cells that exceed
+   the multipole threshold. Does not allocate multipole coefficients —
+   only determines which cells become internal, multipole leaves, or
+   particle leaves.
+
+   :param n_sources: Number of source points.
+   :param sources_coords: Source coordinates.
+   :param settings: Build settings.
+   :param topo: Pre-allocated topo array (sized by scratch API).
+   :param source_leaf: Output: per-source leaf-topo index.
+   :return: Node-type counts and max depth.
+
+.. c:function:: barnes_hut_scratch_sizes_t barnes_hut_size_scratch(unsigned n_sources, const barnes_hut_settings_t *settings)
+
+   Compute per-region scratch buffer sizes.
+
+   Unlike ``barnes_hut_scratch_size``, returns individual region sizes
+   rather than a single total.
+
+   :param n_sources: Number of source points.
+   :param settings: Build settings.
+   :return: Per-region scratch sizes.
+
+.. c:function:: size_t barnes_hut_total_scratch_size(barnes_hut_scratch_sizes_t sizes, unsigned n_threads)
+
+   Total scratch buffer size from per-region sizes and thread count.
+
+   :param sizes: Per-region sizes from ``barnes_hut_size_scratch``.
+   :param n_threads: Number of OpenMP threads (>= 1).
+   :return: Total scratch buffer size in bytes.
+
+.. c:function:: barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources, const barnes_hut_settings_t *settings, barnes_hut_count_res_t count_pass_res)
+
+   Compute exact work buffer sizes from count-pass results.
+
+   After ``barnes_hut_count_pass`` returns, feed the result here to
+   determine the exact byte layout of the work buffer.
+
+   :param n_sources: Number of source points.
+   :param settings: Build settings.
+   :param count_pass_res: Result from ``barnes_hut_count_pass``.
+   :return: Per-region work buffer sizes.
+
+.. c:function:: size_t barnes_hut_total_work_size(barnes_hut_work_sizes_t sizes)
+
+   Total work buffer size in bytes.
+
+   Sums all per-region sizes from ``barnes_hut_size_work_buffer``.
+
+   :param sizes: Per-region work sizes.
+   :return: Total bytes.
+
+.. c:function:: barnes_hut_scratch_t barnes_hut_scratch_partition(unsigned n_threads, void *scratch_buffer, barnes_hut_scratch_sizes_t scratch_sizes)
+
+   Partition a scratch buffer into the regions needed by the build.
+
+   :param n_threads: Number of OpenMP threads (>= 1).
+   :param scratch_buffer: Scratch buffer to partition.
+   :param scratch_sizes: Pre-computed scratch sizes.
+   :return: A partitioned scratch view.
+
 .. c:function:: size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *settings)
 
    Return the total bytes required to hold a tree.

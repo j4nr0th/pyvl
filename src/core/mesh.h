@@ -7,13 +7,12 @@
 
 #include "common.h"
 
+/** @brief Represents a connection (edge) between two mesh points. */
 typedef struct
 {
-    geo_id_t p1;
-    geo_id_t p2;
-}
-/** @brief Represents a connection between two points. */
-line_t;
+    geo_id_t p1; /**< ID of the first endpoint. */
+    geo_id_t p2; /**< ID of the second endpoint. */
+} line_t;
 
 /*
  *  Struct containing either primary or dual mesh.
@@ -129,18 +128,16 @@ line_t;
  *          one unique).
  *
  */
+/** @brief Main mesh data structure containing all geometric information. */
 typedef struct
 {
-    unsigned n_points;
-    unsigned n_lines;
-    line_t *lines;
-    unsigned n_surfaces;
-    // length of (n_surfaces + 1), with surface_offsets[i] being offset of surface i into surface_lines array
-    unsigned *surface_offsets;
-    geo_id_t *surface_lines;
-}
-/** @brief Main mesh data structure containing all geometric information. */
-mesh_t;
+    unsigned n_points;         /**< Number of mesh points (vertices). */
+    unsigned n_lines;          /**< Number of lines (edges). */
+    line_t *lines;             /**< Array of @p n_lines line elements. */
+    unsigned n_surfaces;       /**< Number of surfaces (faces). */
+    unsigned *surface_offsets; /**< Offsets into @p surface_lines; length @p n_surfaces + 1. */
+    geo_id_t *surface_lines;   /**< Flattened array of surface line IDs with orientation. */
+} mesh_t;
 
 /**
  * @brief Compute displacement from beginning of the line to the end. By setting the `line_id.orientation != 0`, the

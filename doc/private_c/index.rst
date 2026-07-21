@@ -44,10 +44,13 @@ Algorithms for computing vortex-induced velocities.
     induction
     multipole
     barnes_hut_tree
+    approx_atan
+    cost_model
 
 
 Coordinate Transforms
 ---------------------
+
 
 Utilities for coordinate transformation composition and inversion.
 

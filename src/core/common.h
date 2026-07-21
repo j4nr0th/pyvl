@@ -10,9 +10,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** @brief The constant pi (π). */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+/** @brief The reciprocal of pi (1/π). */
 #ifndef M_1_PI
 #define M_1_PI 0.31830988618379067154 /* 1/pi */
 #endif
@@ -64,10 +66,15 @@ typedef struct
 
 enum
 {
-    INVALID_ID = ((~(uint32_t)0) >> 1),                     //  ID that should not correspond to any entry
+    /** @brief Sentinel value indicating no valid ID. */
+    INVALID_ID = ((~(uint32_t)0) >> 1), //  ID that should not correspond to any entry
+    /** @brief Flag OR-ed with an ID to indicate reverse orientation. */
     REVERSED = ((uint32_t)1) << (8 * sizeof(uint32_t) - 1), // OR-ed with ID to indicate reverse direction
 };
 
+/** @brief Check if a geo_id_t holds a valid (non-sentinel) ID.
+ * @param id Pointer to the ID to check.
+ * @return true if the ID is valid, false otherwise. */
 static inline bool id_valid(const geo_id_t *id)
 {
     return id->value != INVALID_ID;
@@ -112,18 +119,34 @@ typedef union {
 /** @brief 3x3 matrix type. Row, element, or flat array access. */
 real3x3_t;
 
+/** @brief Component-wise addition of two 3D vectors.
+ * @param a First vector.
+ * @param b Second vector.
+ * @return Component-wise sum a + b. */
 static inline real3_t real3_add(const real3_t a, const real3_t b)
 {
     return (real3_t){.v0 = a.v0 + b.v0, .v1 = a.v1 + b.v1, .v2 = a.v2 + b.v2};
 }
+/** @brief Component-wise subtraction of two 3D vectors.
+ * @param a First vector.
+ * @param b Second vector.
+ * @return Component-wise difference a - b. */
 static inline real3_t real3_sub(const real3_t a, const real3_t b)
 {
     return (real3_t){.v0 = a.v0 - b.v0, .v1 = a.v1 - b.v1, .v2 = a.v2 - b.v2};
 }
+/** @brief Dot product of two 3D vectors.
+ * @param a First vector.
+ * @param b Second vector.
+ * @return Dot product a · b. */
 static inline real_t real3_dot(const real3_t a, const real3_t b)
 {
     return a.v0 * b.v0 + a.v1 * b.v1 + a.v2 * b.v2;
 }
+/** @brief Cross product of two 3D vectors.
+ * @param a First vector.
+ * @param b Second vector.
+ * @return Cross product a × b. */
 static inline real3_t real3_cross(const real3_t a, const real3_t b)
 {
     return (real3_t){
@@ -132,28 +155,48 @@ static inline real3_t real3_cross(const real3_t a, const real3_t b)
         .v2 = a.v0 * b.v1 - a.v1 * b.v0,
     };
 }
+/** @brief Magnitude (Euclidean length) of a 3D vector.
+ * @param a Input vector.
+ * @return Length of a. */
 static inline real_t real3_mag(const real3_t a)
 {
     return sqrt(real3_dot(a, a));
 }
+/** @brief Unit vector in the same direction as a.
+ * @param a Input vector.
+ * @return Normalized vector a / |a|. */
 static inline real3_t real3_unit(const real3_t a)
 {
     const real_t mag = 1.0 / real3_mag(a);
     return (real3_t){.v0 = a.v0 * mag, .v1 = a.v1 * mag, .v2 = a.v2 * mag};
 }
+/** @brief Scalar multiplication of a 3D vector.
+ * @param a Input vector.
+ * @param k Scalar factor.
+ * @return Vector a scaled by k. */
 static inline real3_t real3_mul1(const real3_t a, const real_t k)
 {
     return (real3_t){.v0 = a.v0 * k, .v1 = a.v1 * k, .v2 = a.v2 * k};
 }
+/** @brief Negation of a 3D vector.
+ * @param a Input vector.
+ * @return Component-wise negation -a. */
 static inline real3_t real3_neg(const real3_t a)
 {
     return (real3_t){.v0 = -a.v0, .v1 = -a.v1, .v2 = -a.v2};
 }
+/** @brief Maximum component of a 3D vector.
+ * @param a Input vector.
+ * @return The largest of x, y, z. */
 static inline real_t real3_max(const real3_t a)
 {
     return a.v0 > a.v1 ? (a.v0 > a.v2 ? a.v0 : a.v2) : (a.v1 > a.v2 ? a.v1 : a.v2);
 }
 
+/** @brief Multiply a 3×3 matrix by a 3D vector.
+ * @param a 3×3 matrix.
+ * @param b 3D vector.
+ * @return Matrix-vector product a b. */
 static inline real3_t real3x3_vecmul(const real3x3_t a, const real3_t b)
 {
     return (real3_t){
@@ -163,11 +206,19 @@ static inline real3_t real3x3_vecmul(const real3x3_t a, const real3_t b)
     };
 }
 
+/** @brief Multiply the transpose of a 3×3 matrix by a 3D vector (row vectors dotted with b).
+ * @param a 3×3 matrix.
+ * @param b 3D vector.
+ * @return Matrix^T-vector product a^T b. */
 static inline real3_t real3x3_vecmul_transpose(const real3x3_t a, const real3_t b)
 {
     return real3_add(real3_mul1(a.row0, b.v0), real3_add(real3_mul1(a.row1, b.v1), real3_mul1(a.row2, b.v2)));
 }
 
+/** @brief Multiply two 3×3 matrices.
+ * @param a Left matrix.
+ * @param b Right matrix.
+ * @return Matrix product a b. */
 static inline real3x3_t real3x3_matmul(const real3x3_t a, const real3x3_t b)
 {
     const real3_t col_b0 = {{b.m00, b.m10, b.m20}};
@@ -212,6 +263,9 @@ static inline real3x3_t real3x3_matmul_transpose(const real3x3_t a, const real3x
     };
 }
 
+/** @brief Construct a 3×3 rotation matrix from Euler angles (XYZ convention).
+ * @param angles Euler angles (roll, pitch, yaw).
+ * @return Rotation matrix. */
 static inline real3x3_t real3x3_from_angles(const real3_t angles)
 {
     if (angles.x == 0 && angles.y == 0 && angles.z == 0)
@@ -239,6 +293,9 @@ static inline real3x3_t real3x3_from_angles(const real3_t angles)
         .m22 = cx * cy,
     };
 }
+/** @brief Construct the inverse (transpose) of a rotation matrix from Euler angles (XYZ convention).
+ * @param angles Euler angles (roll, pitch, yaw).
+ * @return Inverse rotation matrix. */
 static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
 {
     const real_t cx = cos(angles.x);
@@ -260,11 +317,17 @@ static inline real3x3_t real3x3_inverse_from_angles(const real3_t angles)
         .m22 = cx * cy,
     };
 }
+/** @brief Extract Euler angles (XYZ convention) from a rotation matrix.
+ * @param a Rotation matrix.
+ * @return Euler angles (roll, pitch, yaw). */
 static inline real3_t angles_from_real3x3(const real3x3_t a)
 {
     return (real3_t){.v0 = atan2(a.m21, a.m22), .v1 = atan2(-a.m20, hypot(a.m00, a.m10)), .v2 = atan2(a.m10, a.m00)};
 }
 
+/** @brief Normalize an angle to the range [0, 2π].
+ * @param a Angle in radians.
+ * @return Angle clamped to [0, 2π]. */
 static inline real_t clamp_angle_to_range(const real_t a)
 {
     const double rem = remainder((double)a, 2 * M_PI);
@@ -273,11 +336,18 @@ static inline real_t clamp_angle_to_range(const real_t a)
     return rem;
 }
 
+/** @brief Check if all components of a 3D vector are zero.
+ * @param a Input vector.
+ * @return true if all components are zero, false otherwise. */
 static inline bool real3_all_zero(const real3_t a)
 {
     return (a.x == 0 && a.y == 0 && a.z == 0) != 0;
 }
 
+/** @brief Compare two geo_id_t for equality and orientation.
+ * @param id1 First ID to compare.
+ * @param id2 Second ID to compare.
+ * @return 1 if equal (same value and orientation), 0 if different value, -1 if same value but opposite orientation. */
 static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)
 {
     if (id1.value != id2.value)
