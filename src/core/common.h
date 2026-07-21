@@ -20,7 +20,9 @@
 #ifdef __GNUC__
 #define CVL_INTERNAL __attribute__((visibility("hidden")))
 #define CVL_EXTERNAL __attribute__((visibility("default")))
+#ifndef CVL_ARRAY_ARG
 #define CVL_ARRAY_ARG(arr, sz) arr[sz]
+#endif
 #define CVL_EXPECT_CONDITION(x) (__builtin_expect(x, 1))
 /** @brief Prefetch @p addr for read (rw=0) or write (rw=1) with locality 0-3. */
 #define CVL_PREFETCH(addr, rw, locality) (__builtin_prefetch(addr, rw, locality))
@@ -46,9 +48,14 @@
 #define CVL_ARRAY_ARG(arr, sz) *arr
 #endif
 
+/** Alias for double. Used throughout the codebase to represent real (floating-point) numbers. */
 typedef double real_t;
 // typedef uint32_t id_t;
 
+/**
+ * A structure representing an ID with orientation for mesh elements.
+ * The value field stores the element index (31 bits) and orientation stores a flip flag (1 bit).
+ */
 typedef struct
 {
     uint32_t value : 31;
@@ -80,7 +87,9 @@ typedef union {
         real_t v1;
         real_t v2;
     };
-} real3_t;
+}
+/** @brief 3D vector type. x/y/z, v0/v1/v2, or data[3] access. */
+real3_t;
 
 typedef union {
     struct
@@ -99,7 +108,9 @@ typedef union {
         real_t m10, m11, m12;
         real_t m20, m21, m22;
     };
-} real3x3_t;
+}
+/** @brief 3x3 matrix type. Row, element, or flat array access. */
+real3x3_t;
 
 static inline real3_t real3_add(const real3_t a, const real3_t b)
 {
@@ -282,6 +293,8 @@ typedef struct
     void (*deallocate)(void *state, void *ptr);
     void *(*reallocate)(void *state, void *ptr, size_t new_size);
     void *state;
-} allocator_t;
+}
+/** @brief Callback-based memory allocation interface. */
+allocator_t;
 
 #endif // COMMON_H

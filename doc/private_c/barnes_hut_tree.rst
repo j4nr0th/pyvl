@@ -156,14 +156,6 @@ table) — are routed through the ``allocator`` argument
 ``NULL`` selects a libc-backed default; callers with arena, pool, or
 instrumentation needs can plug in their own callbacks.
 
-The per-thread multipole scratch inside the scratch buffer uses the
-**worst-case** bound (``n_sources * 3 * sizeof(real_t)`` for
-``leaf_coords`` / ``leaf_values``) allocated once per thread and
-reused, so there is no per-leaf allocation. Callers that need tighter
-bounds can expose their own allocator that grows or pools
- callers with arena,
-pool, or instrumentation needs can plug in their own callbacks.
-
 The per-thread multipole scratch uses the **worst-case** bound
 (``n_sources * 3 * sizeof(real_t)`` for ``leaf_coords`` /
 ``leaf_values``) allocated once per thread and reused, so there is
@@ -174,168 +166,111 @@ expose their own allocator that grows or pools differently.
 API
 ---
 
-Node kinds
-~~~~~~~~~~
+.. c:type:: bh_node_kind_t
 
-.. c:enum:: bh_node_kind_t
-
-Each ``bh_node_t`` carries a tag indicating whether the node is an
-internal cell (``BH_NODE_INTERNAL``), a multipole-compressed leaf
-(``BH_NODE_MULTIPOLE``), or a particle leaf (``BH_NODE_PARTICLE``).
-
-
-Settings
-~~~~~~~~
+   Discriminator for a Barnes-Hut node.
 
 .. c:type:: barnes_hut_settings_t
 
-User-tunable hyperparameters:
-
-``order``
-    Expansion order :math:`P` used by multipole leaves and the upward
-    sweep. Must satisfy :math:`P \ge 1`.
-
-``critical_particle_count``
-    Minimum number of sources to keep in a leaf before considering
-    subdivision or compression. Must satisfy :math:`\ge 1`. Cells
-    with fewer sources become particle leaves; cells with more are
-    considered for subdivision or multipole compression.
-
-``max_depth``
-    Hard cap on tree depth to prevent pathological spatial clusters
-    from blowing up the recursion.
-
-``work_order``
-    Order used by the upward-sweep aggregator. May be larger than
-    ``order`` to allow truncation of child contributions at a higher
-    threshold. A value of 0 means "use ``order``".
-
-``n_threads``
-    OpenMP thread count for the parallel passes (count is
-    sequential, insert is parallel). A value of 0 means "use the
-    OMP default".
-
-    .. note::
-       All public entry points require ``n_threads >= 1``. A
-       settings struct with ``n_threads == 0`` is rejected by
-       every API (sizers return 0, builders return ``false``).
-       Callers that want "OMP chooses" behaviour should call
-       ``omp_get_max_threads()`` themselves and pass the result.
-
-
-Node layout
-~~~~~~~~~~~
+   User-tunable hyperparameters.
 
 .. c:type:: bh_node_t
 
-The materialized tree node. Members are private to the implementation;
-callers should not inspect them directly.
-
-.. code-block:: c
-
-    typedef struct {
-        bh_node_kind_t kind;
-        uint8_t depth;
-        real3_t center;
-        real_t half_size;
-        unsigned particle_begin;
-        unsigned particle_count;
-        union {
-            struct {
-                struct bh_node_s *children[8];
-            } internal;
-            multipole_t mp;
-        } data;
-    } bh_node_t;
-
-``data.internal.children[k]`` for ``k = 0..7`` indexes the eight
-children in octant order. ``NULL`` indicates an empty child slot
-that has been pruned. ``data.mp`` is meaningful only for multipole
-leaves; it shares storage with ``data.internal.children`` and so
-should not be read from internal nodes.
-
-
-Tree handle
-~~~~~~~~~~~
+   Single node of the Barnes-Hut tree.
 
 .. c:type:: barnes_hut_tree_t
 
-Caller-visible handle returned by :c:func:`barnes_hut_tree_insert` and
-:c:func:`barnes_hut_tree_build`. Contains the tree shape
-(``n_nodes``, ``n_internal``, ``n_multipole_leaves``,
-``n_particle_leaves``, ``max_depth_reached``) and pointers to the
-underlying buffer partitions. All members are read-only after the
-build completes.
-
-
-Functions
-~~~~~~~~~
+   Caller-visible tree handle.
 
 .. c:function:: size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *settings)
 
-Return the total bytes required to hold a tree over ``n_sources``
-with the given ``settings``. Returns 0 if the inputs are invalid.
+   Return the total bytes required to hold a tree.
 
-.. c:function:: bool barnes_hut_tree_count(unsigned n_sources, const real3_t *sources_coords, const barnes_hut_settings_t *settings, const allocator_t *allocator, size_t *required_buffer_size)
+   :param n_sources: Number of source points.
+   :param settings: Build settings.
+   :return: Required buffer size in bytes, or 0 on invalid input.
 
-.. c:function:: size_t barnes_hut_scratch_size(unsigned n_sources, const barnes_hut_settings_t *settings)
+.. c:function:: size_t barnes_hut_scratch_size(unsigned n_sources, unsigned n_threads, const barnes_hut_settings_t *settings)
 
-Return the bytes needed for the transient ``scratch_buffer`` passed
-to :c:func:`barnes_hut_tree_count` and :c:func:`barnes_hut_tree_insert`.
-The scratch layout holds the count-pass topology array
-(``8 * n_sources + 1`` ``topo_node_t`` entries), per-source leaf
-indices (topology pass and real-tree pass), and one
-per-thread leaf-multipole region (sized for ``n_threads``
-partitions). The scratch is input-sized and reusable across trees
-with the same source count.
+   Return the bytes needed for the transient scratch buffer.
 
-.. c:function:: bool barnes_hut_tree_count(unsigned n_sources, const real3_t *sources_coords, const barnes_hut_settings_t *settings, void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, size_t *required_buffer_size)
-
-Run the count pass only and write the actual bytes needed (which
-may be smaller than :c:func:`barnes_hut_buffer_size` because the
-worst-case node estimate is loose). Returns ``true`` on success.
-
-The ``scratch_buffer`` of size ``scratch_size`` (sized by
-:c:func:`barnes_hut_scratch_size`) carries the topology array and
-per-source leaf indices for the count pass.
-
-The ``allocator`` argument routes any residual scratch through
-caller-supplied callbacks. Pass ``NULL`` to use the libc-backed
-default.
-
-.. c:function:: bool barnes_hut_tree_insert(unsigned n_sources, const real3_t *sources_coords, const real3_t *sources_values, const barnes_hut_settings_t *settings, void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, void *buffer, size_t buffer_size, barnes_hut_tree_t *out)
-
-Build the tree in-place in the caller-provided ``buffer`` of size
-``buffer_size``. The tree handle is written to ``*out``. Returns
-``false`` on invalid inputs or insufficient buffer space.
-
-The ``scratch_buffer`` (sized by :c:func:`barnes_hut_scratch_size`)
-carries the input-sized transient state — the count-pass topology
-array, the per-source leaf indices, and per-thread leaf-multipole
-scratch.
-
-The ``allocator`` argument routes the count-pass-output-sized
-residual scratch (``topo_to_real`` index and ``mp_slices`` side
-table) through caller-supplied callbacks. Pass ``NULL`` to use the
-libc-backed default.
-
-.. c:function:: bool barnes_hut_tree_build(unsigned n_sources, const real3_t *sources_coords, const real3_t *sources_values, const barnes_hut_settings_t *settings, void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, void *buffer, size_t buffer_size, barnes_hut_tree_t *out)
-
-Convenience wrapper around :c:func:`barnes_hut_tree_insert`. Callers
-that have already pre-sized the buffer (using either
-:c:func:`barnes_hut_buffer_size` or :c:func:`barnes_hut_tree_count`)
-use this one-shot entry point.
+   :param n_sources: Number of source points.
+   :param n_threads: Number of OpenMP threads.
+   :param settings: Build settings.
+   :return: Required scratch size in bytes, or 0 on invalid input.
 
 .. c:function:: unsigned barnes_hut_tree_n_nodes(const barnes_hut_tree_t *tree)
 
-Return the total number of nodes in the tree.
+   Return the total number of nodes in the tree.
+
+   :param tree: Tree handle.
+   :return: Node count.
 
 .. c:function:: void barnes_hut_tree_depth_stats(const barnes_hut_tree_t *tree, unsigned *min_depth, unsigned *max_depth)
 
-Fill the depth statistics for the tree. Walks every materialized
-node and returns the observed depth range. Either output may be NULL.
+   Fill the depth statistics for the tree.
+
+   :param tree: Tree handle.
+   :param min_depth: Output for minimum depth.
+   :param max_depth: Output for maximum depth.
 
 .. c:function:: size_t barnes_hut_tree_memory_bytes(const barnes_hut_tree_t *tree)
 
-Return the total bytes occupied by the tree in its buffer (sum of
-all partitions).
+   Return the total bytes occupied by the tree in its buffer.
+
+   :param tree: Tree handle.
+   :return: Total buffer bytes.
+
+.. c:function:: bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t *sources_coords, const real3_t *sources_values, const barnes_hut_settings_t *settings, void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, void *buffer, size_t buffer_size, barnes_hut_tree_t *out)
+
+   Build the tree in-place in a caller-provided buffer.
+
+   :param n_sources: Number of source points.
+   :param n_threads: Number of OpenMP threads (>= 1).
+   :param sources_coords: Coordinates of the source points.
+   :param sources_values: Vector source strengths.
+   :param settings: Build settings.
+   :param scratch_buffer: Transient scratch buffer.
+   :param scratch_size: Size of scratch_buffer.
+   :param allocator: Allocator callbacks (NULL for libc default).
+   :param buffer: Persistent storage for the output tree.
+   :param buffer_size: Size of buffer.
+   :param out: Out-parameter for the populated tree handle.
+   :return: true on success.
+
+.. c:function:: bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads, const real3_t *sources_coords, const real3_t *sources_values, const barnes_hut_settings_t *settings, const allocator_t *allocator, barnes_hut_tree_t *out)
+
+   Convenience wrapper: run count + insert in one call, allocating buffers internally.
+
+   :param n_sources: Number of source points.
+   :param n_threads: Number of OpenMP threads (>= 1).
+   :param sources_coords: Coordinates of the source points.
+   :param sources_values: Vector source strengths.
+   :param settings: Build settings.
+   :param allocator: Allocator callbacks (NULL for libc default).
+   :param out: Out-parameter for the populated tree handle.
+   :return: true on success.
+
+.. c:function:: real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t *sources_coords, const real3_t *sources_values, real3_t point, barnes_hut_eval_settings_t eval_settings)
+
+   Evaluate the tree at a single target point.
+
+   :param tree: Built tree handle.
+   :param sources_coords: Source coordinates.
+   :param sources_values: Source strengths.
+   :param point: Target evaluation point.
+   :param eval_settings: Multipole acceptance settings.
+   :return: Induced velocity at the point.
+
+.. c:function:: void barnes_hut_tree_eval_all(const barnes_hut_tree_t *tree, const real3_t *sources_coords, const real3_t *sources_values, unsigned n_targets, const real3_t *targets, real3_t *results, barnes_hut_eval_settings_t eval_settings, unsigned n_threads)
+
+   Evaluate the tree at multiple target points (batched, OpenMP).
+
+   :param tree: Built tree handle.
+   :param sources_coords: Source coordinates.
+   :param sources_values: Source strengths.
+   :param n_targets: Number of target points.
+   :param targets: Array of target points.
+   :param results: Output array for induced velocities.
+   :param eval_settings: Multipole acceptance settings.
+   :param n_threads: OpenMP thread count.

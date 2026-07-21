@@ -38,25 +38,4 @@ All whitespace is ignored, with no difference between newlines and spaces.
 Serialization Functions
 -----------------------
 
-.. c:function:: char *serialize_mesh(const mesh_t *this, const real3_t *positions, const allocator_t *allocator)
-
-   Convert a mesh into a null-terminated UTF-8 string representation.
-
-   :param this: Mesh to serialize
-   :param positions: Array of mesh point positions
-   :param allocator: Allocator for string memory (can be a stack allocator)
-   :return: Pointer to the serialized string, or NULL on failure. The caller
-            is responsible for freeing this memory using the provided allocator's
-            deallocate function.
-
-.. c:function:: int deserialize_mesh(mesh_t *p_out, real3_t **p_positions, const char *str, const allocator_t *allocator)
-
-   Parse a serialized mesh string and reconstruct the mesh structure.
-
-   :param p_out: Pointer to receive the deserialized mesh
-   :param p_positions: Pointer to receive the position array
-   :param str: String containing the serialized mesh data
-   :param allocator: Allocator for mesh memory
-   :return: 0 on success, -1 on failure. On failure, the error location can
-            be determined by checking the string position where parsing failed
-            (the function stops at the first error).
+.. c:autodoc:: mesh_io.h

@@ -10,9 +10,8 @@ the C implementation.
 Core Scalar Type
 ----------------
 
-.. c:type:: real_t
-
-Alias for ``double``. Used throughout the codebase to represent real (floating-point) numbers.
+.. c:autotype:: real_t
+   :file: common.h
 
 
 3D Vector Type
@@ -20,12 +19,8 @@ Alias for ``double``. Used throughout the codebase to represent real (floating-p
 
 .. c:type:: real3_t
 
-A union type representing a 3D vector with three components. Provides multiple ways
-to access the components:
-
-- ``x``, ``y``, ``z`` - Named component access
-- ``v0``, ``v1``, ``v2`` - Indexed component access
-- ``data[3]`` - Array access
+   A union type representing a 3D vector with three components. Provides multiple ways
+   to access the components: ``x``/``y``/``z``, ``v0``/``v1``/``v2``, or ``data[3]``.
 
 
 3D Matrix Type
@@ -33,11 +28,8 @@ to access the components:
 
 .. c:type:: real3x3_t
 
-A union type representing a 3x3 matrix. Supports:
-
-- ``row0``, ``row1``, ``row2`` - Row access as real3_t
-- ``m00`` through ``m22`` - Individual element access
-- ``data[9]`` - Flat array access
+   A union type representing a 3x3 matrix. Supports row access (``row0``/``row1``/``row2``),
+   individual element access (``m00``--``m22``), or flat array access (``data[9]``).
 
 
 Geometric ID Type
@@ -45,14 +37,7 @@ Geometric ID Type
 
 .. c:type:: geo_id_t
 
-A structure representing an ID with orientation for mesh elements.
-
-.. code-block:: c
-
-    typedef struct {
-        uint32_t value : 31;
-        uint32_t orientation : 1;
-    } geo_id_t;
+   A structure representing an ID with orientation for mesh elements.
 
 **Special Constants:**
 
@@ -185,18 +170,8 @@ Matrix Operations
 Memory Allocator
 ----------------
 
-.. c:type:: allocator_t
-
-Callback-based memory allocation interface.
-
-.. code-block:: c
-
-    typedef struct {
-        void *(*allocate)(void *state, size_t size);
-        void (*deallocate)(void *state, void *ptr);
-        void *(*reallocate)(void *state, void *ptr, size_t new_size);
-        void *state;
-    } allocator_t;
+.. c:autotype:: allocator_t
+   :file: common.h
 
 The allocator provides stateful memory management with allocate, deallocate, and
 reallocate callbacks.

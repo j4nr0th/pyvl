@@ -72,3 +72,27 @@ Inverse Transformation Composition
    :param off_b: Offset of B
    :param p_trans_out: Pointer to receive output inverse transformation matrix
    :param p_off_out: Pointer to receive output offset
+
+
+Reflection Plane
+----------------
+
+.. c:type:: transformation_plane_t
+
+   A plane used for symmetry transformations, defined by an origin point and a unit normal.
+
+.. c:function:: real3_t transformation_plane_transform_position(const transformation_plane_t *plane, const real3_t point)
+
+   Reflect a position across a symmetry plane.
+
+   :param plane: Plane used for transformation.
+   :param point: Position to transform.
+   :return: Reflected position.
+
+.. c:function:: real3_t transformation_plane_transform_vector(const transformation_plane_t *plane, const real3_t vector)
+
+   Reflect a direction vector across a symmetry plane.
+
+   :param plane: Plane used for transformation.
+   :param vector: Vector to transform.
+   :return: Reflected vector.

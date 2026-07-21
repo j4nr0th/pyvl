@@ -3,6 +3,8 @@
 For the full list of built-in configuration values, see the documentation:
 https://www.sphinx-doc.org/en/master/usage/configuration.html"""
 
+import os
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
@@ -22,7 +24,41 @@ extensions: list[str] = [
     "sphinx_gallery.gen_gallery",
     "jupyter_sphinx",
     "pydata_sphinx_theme",
+    "hawkmoth",
+    "hawkmoth.ext.javadoc",
 ]
+
+hawkmoth_root = os.path.abspath("../src/core")
+
+
+def _hawkmoth_clang_flags():
+    """Build hawkmoth clang flags with system include paths queried from clang."""
+    flags = ["-I.", "-DCVL_ARRAY_ARG(arr,sz)=*arr"]
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["clang", "-E", "-x", "c", "-", "-v"],
+            capture_output=True, text=True, input="", timeout=10,
+        )
+        # Parse the search path list from stderr
+        lines = result.stderr.splitlines()
+        in_search = False
+        for line in lines:
+            if line.startswith("#include <...> search starts here:"):
+                in_search = True
+                continue
+            if in_search:
+                path = line.strip()
+                if not path or "End of search list" in path:
+                    break
+                flags.append(f"-I{path}")
+    except Exception:
+        pass
+    return flags
+
+
+hawkmoth_clang = _hawkmoth_clang_flags()
+hawkmoth_transform_default = "javadoc"
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']

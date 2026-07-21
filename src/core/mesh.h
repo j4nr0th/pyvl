@@ -11,9 +11,11 @@ typedef struct
 {
     geo_id_t p1;
     geo_id_t p2;
-} line_t;
+}
+/** @brief Represents a connection between two points. */
+line_t;
 
-/**
+/*
  *  Struct containing either primary or dual mesh.
  *
  *  A primary mesh like this:
@@ -136,7 +138,9 @@ typedef struct
     // length of (n_surfaces + 1), with surface_offsets[i] being offset of surface i into surface_lines array
     unsigned *surface_offsets;
     geo_id_t *surface_lines;
-} mesh_t;
+}
+/** @brief Main mesh data structure containing all geometric information. */
+mesh_t;
 
 /**
  * @brief Compute displacement from beginning of the line to the end. By setting the `line_id.orientation != 0`, the

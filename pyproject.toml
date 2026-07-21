@@ -64,6 +64,8 @@ docs = [
     "threadpoolctl",
     "av",
     "imageio",
+    "hawkmoth>=0.22.0",
+    "clang",
 ]
 
 
