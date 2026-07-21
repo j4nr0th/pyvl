@@ -123,29 +123,37 @@ def test_solver_system_updates_self_diagonal_on_global_motion():
     moving_frame = ReferenceFrame(theta=lambda t: (0.0, 0.0, t))
     geometry = make_square_geometry(reference_frame=moving_frame)
 
+    v_co = 1e-6
+    v_fa = 1e-6
+    v_ss = 1e-6
+
     system_with_plane = SolverSystem(
         time=0.0,
-        vortex_cutoff=1e-6,
-        vortex_far_approximation=1e-6,
-        vortex_smallest_size=1e-6,
+        vortex_cutoff=v_co,
+        vortex_far_approximation=v_fa,
+        vortex_smallest_size=v_ss,
         geo=[geometry],
         symmetry_plane=plane,
     )
     before_with_plane = system_with_plane._self_induction_diags[geometry.label].copy()
-    system_with_plane.update(1.0)
+    system_with_plane.update(
+        1.0, vortex_cutoff=v_co, vortex_far_approximation=v_fa, vortex_smallest_size=v_ss
+    )
 
     system_without_plane = SolverSystem(
         time=0.0,
-        vortex_cutoff=1e-6,
-        vortex_far_approximation=1e-6,
-        vortex_smallest_size=1e-6,
+        vortex_cutoff=v_co,
+        vortex_far_approximation=v_fa,
+        vortex_smallest_size=v_ss,
         geo=[geometry],
         symmetry_plane=None,
     )
     before_without_plane = system_without_plane._self_induction_diags[
         geometry.label
     ].copy()
-    system_without_plane.update(1.0)
+    system_without_plane.update(
+        1.0, vortex_cutoff=v_co, vortex_far_approximation=v_fa, vortex_smallest_size=v_ss
+    )
 
     np.testing.assert_array_equal(
         before_without_plane, system_without_plane._self_induction_diags[geometry.label]

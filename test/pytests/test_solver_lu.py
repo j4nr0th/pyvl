@@ -39,7 +39,9 @@ def _compute_normal_rhs(
                     target_geo.normals, time=time
                 )
                 nmat = source_geo.msh.induction_matrix3(
-                    tol=vtol,
+                    vortex_cutoff=vtol,
+                    vortex_far_approximation=vtol,
+                    vortex_smallest_size=vtol,
                     positions=source_pos,
                     control_points=target_cpts,
                     normals=target_normals,
@@ -71,7 +73,13 @@ def test_solver_system_inverse_consistency():
         rf = ReferenceFrame(offset=rng.uniform(-10, 10, 3))
         geos.append(Geometry(f"geo{i}", rf, mesh, points))
 
-    solver = SolverSystem(time=67, tol=vtol, geo=geos)
+    solver = SolverSystem(
+        time=67,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+        geo=geos,
+    )
 
     # Prepare random true solution
     x_true = {g.label: rng.uniform(-10, +10, g.msh.n_surfaces) for g in geos}
@@ -137,9 +145,20 @@ def test_solver_system_inverse_complex_moving():
         ),
     ]
 
-    solver = SolverSystem(time=3, tol=vtol, geo=geos)
+    solver = SolverSystem(
+        time=3,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+        geo=geos,
+    )
 
-    solver.update(t_new=1.0)
+    solver.update(
+        t_new=1.0,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+    )
 
     x_true = {g.label: rng.uniform(-10, +10, g.msh.n_surfaces) for g in geos}
     y = _compute_normal_rhs(solver, vtol, x_true, time=1.0)
@@ -195,7 +214,13 @@ def test_solver_system_multi_move_cycles():
     mesh = Mesh(len(tri_points), tri_conn)
     geos.append(Geometry("tri0", make_moving_frame(rng), mesh, tri_points))
 
-    solver = SolverSystem(time=-1, tol=vtol, geo=geos)
+    solver = SolverSystem(
+        time=-1,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+        geo=geos,
+    )
 
     for move_cycle in range(4):
         # Build new reference frames with fresh target positions
@@ -220,7 +245,12 @@ def test_solver_system_multi_move_cycles():
 
         t_start = float(move_cycle) + 1.0
         t_end = t_start + 1.0
-        solver.update(t_new=t_end)
+        solver.update(
+            t_new=t_end,
+            vortex_cutoff=vtol,
+            vortex_far_approximation=vtol,
+            vortex_smallest_size=vtol,
+        )
 
         x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
         y = _compute_normal_rhs(solver, vtol, x_true, time=t_end)
@@ -267,13 +297,24 @@ def test_solver_system_mixed_motion_groups():
         Geometry("moving1", make_moving_frame(rng), Mesh(len(points), conn), points)
     )
 
-    solver = SolverSystem(time=-1, tol=vtol, geo=geos)
+    solver = SolverSystem(
+        time=-1,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+        geo=geos,
+    )
 
     for move_cycle in range(3):
         # Replace the moving frame with a new time-varying one
         t_start = float(move_cycle) + 1.0
         t_end = t_start + 1.0
-        solver.update(t_new=t_end)
+        solver.update(
+            t_new=t_end,
+            vortex_cutoff=vtol,
+            vortex_far_approximation=vtol,
+            vortex_smallest_size=vtol,
+        )
 
         x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
         y = _compute_normal_rhs(solver, vtol, x_true, time=t_end)
@@ -336,7 +377,14 @@ def test_solver_system_rotating_motion_assignments():
         for i in range(3)
     ]
 
-    solver = SolverSystem(time=0.0, tol=vtol, geo=geos, symmetry_plane=symmetry_plane)
+    solver = SolverSystem(
+        time=0.0,
+        vortex_cutoff=vtol,
+        vortex_far_approximation=vtol,
+        vortex_smallest_size=vtol,
+        geo=geos,
+        symmetry_plane=symmetry_plane,
+    )
 
     for step, t_new in enumerate((0.5, 1.0, 1.5, 2.0)):
         assignment = (
@@ -346,7 +394,12 @@ def test_solver_system_rotating_motion_assignments():
         for geo, frame in zip(geos, assignment, strict=True):
             object.__setattr__(geo, "reference_frame", frame)
 
-        solver.update(t_new=t_new)
+        solver.update(
+            t_new=t_new,
+            vortex_cutoff=vtol,
+            vortex_far_approximation=vtol,
+            vortex_smallest_size=vtol,
+        )
 
         x_true = {g.label: rng.uniform(-5, 5, g.msh.n_surfaces) for g in geos}
         y = _compute_normal_rhs(
