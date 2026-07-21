@@ -918,37 +918,6 @@ static bool barnes_hut_tree_build_multipoles(
             const uint32_t i = mp_leaf_indices[ml];
             const size_t n_particles = nodes[i].particle_count;
 
-            /* Compute |Γ|-weighted centroid. */
-            real3_t center = {.x = 0, .y = 0, .z = 0};
-            real_t cx = 0, cy = 0, cz = 0;
-            real_t total_weight = 0.0;
-#pragma omp simd reduction(+ : cx, cy, cz, total_weight)
-            for (unsigned k = 0; k < n_particles; ++k)
-            {
-                const unsigned src = particle_order[nodes[i].particle_begin + k];
-                const real_t w = real3_mag(sources_values[src]);
-                cx += sources_coords[src].x * w;
-                cy += sources_coords[src].y * w;
-                cz += sources_coords[src].z * w;
-                total_weight += w;
-            }
-
-            center.x = cx;
-            center.y = cy;
-            center.z = cz;
-
-            if (total_weight > 0.0)
-            {
-                center.x /= total_weight;
-                center.y /= total_weight;
-                center.z /= total_weight;
-            }
-            else
-            {
-                center = nodes[i].center;
-            }
-            nodes[i].data.mp.center = center;
-
             /* Pack sources into the leaf buffer. */
 #pragma omp simd
             for (unsigned k = 0; k < n_particles; ++k)
@@ -963,9 +932,9 @@ static bool barnes_hut_tree_build_multipoles(
             }
 
             const bool mp_ok =
-                multipole_create(settings->order, (unsigned)leaf_buf_size, mp_slices[i], center, (unsigned)n_particles,
-                                 (const real3_t *)leaf.leaf_coords, (const real3_t *)leaf.leaf_values, leaf.leaf_cur,
-                                 leaf.leaf_nxt, &nodes[i].data.mp);
+                multipole_create(settings->order, (unsigned)leaf_buf_size, mp_slices[i], nodes[i].center,
+                                 (unsigned)n_particles, (const real3_t *)leaf.leaf_coords,
+                                 (const real3_t *)leaf.leaf_values, leaf.leaf_cur, leaf.leaf_nxt, &nodes[i].data.mp);
             /* Force gcc to keep nodes[i].kind live across the call —
              * the strict-aliasing rules can otherwise let it spill a
              * temporary into the kind slot via the inactive-union
@@ -978,6 +947,167 @@ static bool barnes_hut_tree_build_multipoles(
         }
     }
     return leaf_ok;
+}
+
+/* ------------------------------------------------------------------ */
+/* Weighted-centroid propagation                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Compute |Γ|-weighted centroids for all nodes and propagate upward.
+ *
+ * Replaces `nodes[i].center` (geometric from topo subdivision) with the
+ * source-magnitude-weighted centroid for each leaf, then propagates
+ * upward: each internal node's center becomes the weighted average of its
+ * children's centers, weighted by each child's total |Γ| sum.
+ *
+ * For leaves where all sources have zero magnitude, falls back to the
+ * arithmetic mean of particle positions (unweighted centroid).
+ * For internal nodes where all descendants have zero total weight, falls
+ * back to the uniform average of child centers.
+ *
+ * Updates `nodes[i].data.mp.center` alongside `nodes[i].center` for
+ * MULTIPOLE leaves so both are consistent.
+ *
+ * @param n_nodes         Number of nodes.
+ * @param nodes           Node array (read/write).
+ * @param particle_order  Source permutation (leaf -> source index).
+ * @param sources_coords  Source coordinates.
+ * @param sources_values  Source strengths.
+ * @param n_threads       OpenMP thread count.
+ * @param node_weights    Scratch array [n_nodes], written with each node's
+ *                        total |Γ| weight (0 for empty subtrees).
+ */
+static void barnes_hut_compute_weighted_centers(unsigned n_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                                                const unsigned CVL_ARRAY_ARG(particle_order, restrict),
+                                                const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                                                const real3_t CVL_ARRAY_ARG(sources_values, restrict),
+                                                unsigned n_threads,
+                                                real_t CVL_ARRAY_ARG(node_weights, restrict n_nodes))
+{
+    /* Pass 1 (parallel): compute |Γ|-weighted centroid for all leaves. */
+#pragma omp parallel for default(none) shared(n_nodes, nodes, particle_order, sources_coords, sources_values,          \
+                                                  node_weights) schedule(static) num_threads(n_threads)
+    for (uint32_t i = 0; i < n_nodes; ++i)
+    {
+        if (nodes[i].kind == BH_NODE_INTERNAL)
+        {
+            node_weights[i] = 0.0;
+            continue;
+        }
+
+        const unsigned begin = nodes[i].particle_begin;
+        const unsigned n_particles = nodes[i].particle_count;
+        if (n_particles == 0)
+        {
+            node_weights[i] = 0.0;
+            continue;
+        }
+        const unsigned end = begin + n_particles;
+
+        real_t cx = 0, cy = 0, cz = 0;
+        real_t total_weight = 0.0;
+
+        for (unsigned k = begin; k < end; ++k)
+        {
+            const unsigned src = particle_order[k];
+            const real_t w = real3_mag(sources_values[src]);
+            cx += sources_coords[src].x * w;
+            cy += sources_coords[src].y * w;
+            cz += sources_coords[src].z * w;
+            total_weight += w;
+        }
+
+        node_weights[i] = total_weight;
+
+        if (total_weight > 0.0)
+        {
+            nodes[i].center.x = cx / total_weight;
+            nodes[i].center.y = cy / total_weight;
+            nodes[i].center.z = cz / total_weight;
+        }
+        else
+        {
+            /* Fall back to arithmetic mean of particle positions. */
+            real_t ax = 0, ay = 0, az = 0;
+            for (unsigned k = begin; k < end; ++k)
+            {
+                const unsigned src = particle_order[k];
+                ax += sources_coords[src].x;
+                ay += sources_coords[src].y;
+                az += sources_coords[src].z;
+            }
+            const real_t inv_n = 1.0 / (real_t)n_particles;
+            nodes[i].center.x = ax * inv_n;
+            nodes[i].center.y = ay * inv_n;
+            nodes[i].center.z = az * inv_n;
+        }
+
+        /* Keep multipole leaf's mp.center in sync with node center. */
+        if (nodes[i].kind == BH_NODE_MULTIPOLE)
+        {
+            nodes[i].data.mp.center = nodes[i].center;
+        }
+    }
+
+    /* Pass 2 (sequential, reverse index order = bottom-up): propagate
+     * weighted centers through internal nodes. Children always appear
+     * after their parent in DFS pre-order, so walking backwards
+     * guarantees a node's children have already been processed. */
+    for (uint32_t i = n_nodes; i > 0;)
+    {
+        --i;
+        if (nodes[i].kind != BH_NODE_INTERNAL)
+            continue;
+
+        real_t cx = 0, cy = 0, cz = 0;
+        real_t total_weight = 0.0;
+        unsigned n_children = 0;
+
+        for (int oct = 0; oct < 8; ++oct)
+        {
+            const bh_node_t *child = nodes[i].data.internal.children[oct];
+            if (child == NULL)
+                continue;
+            n_children += 1;
+            const real_t w = node_weights[child - nodes];
+            cx += child->center.x * w;
+            cy += child->center.y * w;
+            cz += child->center.z * w;
+            total_weight += w;
+        }
+
+        node_weights[i] = total_weight;
+
+        if (total_weight > 0.0)
+        {
+            nodes[i].center.x = cx / total_weight;
+            nodes[i].center.y = cy / total_weight;
+            nodes[i].center.z = cz / total_weight;
+        }
+        else if (n_children > 0)
+        {
+            /* Uniform average of child centers (geometric fallback). */
+            nodes[i].center.x = 0;
+            nodes[i].center.y = 0;
+            nodes[i].center.z = 0;
+            for (int oct = 0; oct < 8; ++oct)
+            {
+                const bh_node_t *child = nodes[i].data.internal.children[oct];
+                if (child == NULL)
+                    continue;
+                nodes[i].center.x += child->center.x;
+                nodes[i].center.y += child->center.y;
+                nodes[i].center.z += child->center.z;
+            }
+            const real_t inv_n = 1.0 / (real_t)n_children;
+            nodes[i].center.x *= inv_n;
+            nodes[i].center.y *= inv_n;
+            nodes[i].center.z *= inv_n;
+        }
+        /* else: no children (degenerate) -> center stays as set from
+         * materialize_tree (should not happen in a valid tree). */
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1098,7 +1228,7 @@ static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node
                 if (child_slice == NULL)
                     continue;
                 multipole_t child_mp = {.order = order,
-                                        .center = child->data.mp.center,
+                                        .center = child->center,
                                         .coeffs_x = child_slice,
                                         .coeffs_y = child_slice + n_coeffs,
                                         .coeffs_z = child_slice + 2u * n_coeffs};
@@ -1284,6 +1414,16 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
         particle_order[slot] = i;
     }
 
+    /* Compute |Γ|-weighted centroids for all nodes before building
+     * multipoles — the multipole coefficients must use the weighted center
+     * as expansion origin. Reuse the dead topo scratch for per-node weight
+     * storage. */
+    {
+        real_t *node_weights = (real_t *)scratch.topo;
+        barnes_hut_compute_weighted_centers(n_topo_nodes, nodes, particle_order, sources_coords, sources_values,
+                                            n_threads, node_weights);
+    }
+
     /* --- Build multipoles for each multipole-bearing leaf. Parallelised:
      * the scratch is pre-partitioned into n_threads independent leaf
      * scratch slices; thread `t` writes only into slice `t`. --- */
@@ -1325,37 +1465,6 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
                 const uint32_t i = mp_leaf_indices[ml];
                 const size_t n_particles = nodes[i].particle_count;
 
-                /* Compute |Γ|-weighted centroid. */
-                real3_t center = {.x = 0, .y = 0, .z = 0};
-                real_t cx = 0, cy = 0, cz = 0;
-                real_t total_weight = 0.0;
-#pragma omp simd reduction(+ : cx, cy, cz, total_weight)
-                for (unsigned k = 0; k < n_particles; ++k)
-                {
-                    const unsigned src = particle_order[nodes[i].particle_begin + k];
-                    const real_t w = real3_mag(sources_values[src]);
-                    cx += sources_coords[src].x * w;
-                    cy += sources_coords[src].y * w;
-                    cz += sources_coords[src].z * w;
-                    total_weight += w;
-                }
-
-                center.x = cx;
-                center.y = cy;
-                center.z = cz;
-
-                if (total_weight > 0.0)
-                {
-                    center.x /= total_weight;
-                    center.y /= total_weight;
-                    center.z /= total_weight;
-                }
-                else
-                {
-                    center = nodes[i].center;
-                }
-                nodes[i].data.mp.center = center;
-
                 /* Pack sources into the leaf buffer. */
 #pragma omp simd
                 for (unsigned k = 0; k < n_particles; ++k)
@@ -1369,10 +1478,10 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
                     leaf.leaf_values[3u * k + 2] = sources_values[src].z;
                 }
 
-                const bool mp_ok = multipole_create(settings->order, (unsigned)leaf_buf_size, mp_slices[i], center,
-                                                    (unsigned)n_particles, (const real3_t *)leaf.leaf_coords,
-                                                    (const real3_t *)leaf.leaf_values, leaf.leaf_cur, leaf.leaf_nxt,
-                                                    &nodes[i].data.mp);
+                const bool mp_ok = multipole_create(
+                    settings->order, (unsigned)leaf_buf_size, mp_slices[i], nodes[i].center, (unsigned)n_particles,
+                    (const real3_t *)leaf.leaf_coords, (const real3_t *)leaf.leaf_values, leaf.leaf_cur, leaf.leaf_nxt,
+                    &nodes[i].data.mp);
                 /* Force gcc to keep nodes[i].kind live across the call —
                  * the strict-aliasing rules can otherwise let it spill a
                  * temporary into the kind slot via the inactive-union
@@ -1537,6 +1646,18 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
         }
         const unsigned slot = leaf->particle_begin + cnt;
         work_buffers.particle_order[slot] = i;
+    }
+
+    /* Compute |Γ|-weighted centroids for all nodes before building
+     * multipoles — the multipole coefficients must use the weighted center
+     * as expansion origin. Reuse the dead topo scratch for per-node weight
+     * storage. */
+    {
+        real_t *node_weights = (real_t *)scratch.topo;
+        const size_t n_nodes_total =
+            (size_t)count_res.n_internal + (size_t)count_res.n_multipole_leaves + (size_t)count_res.n_particle_leaves;
+        barnes_hut_compute_weighted_centers((unsigned)n_nodes_total, work_buffers.nodes, work_buffers.particle_order,
+                                            sources_coords, sources_values, n_threads, node_weights);
     }
 
     if (n_multipole_leaves > 0)

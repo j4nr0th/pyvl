@@ -565,6 +565,70 @@ int main(const int argc, const char *argv[static argc])
         free(values_big);
     }
 
+    /* 3e. Strongly non-uniform strengths: weighted centers shift toward
+     *     high-|Γ| clusters, improving far-field accuracy.
+     *     Two clusters at (±1, ±1, ±1) with 100× strength disparity. */
+    {
+        const unsigned N_CL = 200;
+        const unsigned N_STRONG = N_CL;
+        real3_t *coords_cl = (real3_t *)malloc((size_t)N_CL * sizeof(real3_t));
+        real3_t *values_cl = (real3_t *)malloc((size_t)N_CL * sizeof(real3_t));
+        uint64_t s = 12345;
+        for (unsigned i = 0; i < N_CL; ++i)
+        {
+            /* Half at (+1,+1,+1) with big values, half at (-1,-1,-1) with tiny values. */
+            const bool strong = (i < N_CL / 2);
+            const real_t cx = strong ? 1.0 : -1.0;
+            coords_cl[i].x = cx + xorshift_uniform_range(&s, -0.05, 0.05);
+            coords_cl[i].y = cx + xorshift_uniform_range(&s, -0.05, 0.05);
+            coords_cl[i].z = cx + xorshift_uniform_range(&s, -0.05, 0.05);
+            const real_t scale = strong ? 100.0 : 1.0;
+            values_cl[i].x = xorshift_uniform_range(&s, -1.0, 1.0) * scale;
+            values_cl[i].y = xorshift_uniform_range(&s, -1.0, 1.0) * scale;
+            values_cl[i].z = xorshift_uniform_range(&s, -1.0, 1.0) * scale;
+        }
+
+        barnes_hut_tree_t tree_cl;
+        TEST_ASSERT(barnes_hut_tree_build(N_CL, TEST_N_THREADS, coords_cl, values_cl, &settings, NULL, &tree_cl),
+                    "build failed for biased-strength tree");
+
+        printf("3e. biased root center: (%.4f, %.4f, %.4f)  "
+               "(geom would be ~(0,0,0), weighted shifts to strong cluster)\n",
+               tree_cl.root_center.x, tree_cl.root_center.y, tree_cl.root_center.z);
+        /* The weighted root center must be detectable as shifted toward (+1,+1,+1). */
+        TEST_ASSERT(tree_cl.root_center.x > 0.5, "weighted root center x=%.4f not shifted toward strong cluster",
+                    tree_cl.root_center.x);
+        TEST_ASSERT(tree_cl.root_center.y > 0.5, "weighted root center y=%.4f not shifted toward strong cluster",
+                    tree_cl.root_center.y);
+        TEST_ASSERT(tree_cl.root_center.z > 0.5, "weighted root center z=%.4f not shifted toward strong cluster",
+                    tree_cl.root_center.z);
+
+        /* Far-field accuracy must be within the same bound as the uniform case. */
+        {
+            real_t max_err = 0.0;
+            uint64_t seed = 0xCAFE;
+            for (unsigned j = 0; j < N_EVAL; ++j)
+            {
+                const real_t r = xorshift_uniform_range(&seed, 8.0, 12.0);
+                const real_t theta = xorshift_uniform_range(&seed, 0, 2.0 * PI);
+                const real_t phi = (real_t)acos(xorshift_uniform_range(&seed, -1.0, 1.0));
+                const real3_t pt = {.x = r * sin(phi) * cos(theta), .y = r * sin(phi) * sin(theta), .z = r * cos(phi)};
+                const real3_t approx =
+                    barnes_hut_tree_eval(&tree_cl, coords_cl, values_cl, pt, BARNES_HUT_EVAL_SETTINGS_DEFAULT);
+                const real3_t direct = direct_field(pt, coords_cl, values_cl, N_CL);
+                const real_t err = rel_error(approx, direct);
+                if (err > max_err)
+                    max_err = err;
+            }
+            printf("3e. biased far-field: max rel err = %.3e\n", max_err);
+            TEST_ASSERT(max_err < 1e-2, "biased eval error too large: %.3e", max_err);
+        }
+
+        free(tree_cl.buffer);
+        free(coords_cl);
+        free(values_cl);
+    }
+
     printf("test_barnes_hut: OK\n");
     return EXIT_SUCCESS;
 }
