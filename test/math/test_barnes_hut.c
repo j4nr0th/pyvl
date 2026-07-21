@@ -279,10 +279,11 @@ int main(const int argc, const char *argv[static argc])
         TEST_ASSERT(tree.max_depth_reached <= settings.max_depth, "max_depth exceeds cap");
         printf("tree: n_nodes=%u (internal=%u, multipole=%u, particle=%u) max_depth=%u\n", tree.n_nodes,
                tree.n_internal, tree.n_multipole_leaves, tree.n_particle_leaves, tree.max_depth_reached);
-        TEST_ASSERT(tree.n_multipole_leaves > 0, "expected at least one multipole leaf, got %u",
+        TEST_ASSERT(tree.n_multipole_leaves > 0, "expected at least one mp-bearing leaf, got %u",
                     tree.n_multipole_leaves);
+        TEST_ASSERT(tree.n_particle_leaves > 0, "expected at least one particle leaf, got %u", tree.n_particle_leaves);
 
-        /* Find a multipole leaf to evaluate. */
+        /* Find a multipole leaf to verify. */
         uint32_t multipole_leaf = UINT32_MAX;
         for (uint32_t i = 0; i < tree.n_nodes; ++i)
         {
@@ -292,7 +293,7 @@ int main(const int argc, const char *argv[static argc])
                 break;
             }
         }
-        TEST_ASSERT(multipole_leaf != UINT32_MAX, "need at least one multipole leaf with >= 5 sources");
+        TEST_ASSERT(multipole_leaf != UINT32_MAX, "need at least one multipole leaf with >= 5 particles");
 
         /* Build a direct multipole from this leaf's particles for ground truth. */
         const multipole_t *mp = &tree.nodes[multipole_leaf].data.mp;
@@ -315,7 +316,8 @@ int main(const int argc, const char *argv[static argc])
                                                 leaf_values_static, direct_cur, direct_nxt, &direct_mp);
         TEST_ASSERT(direct_ok, "direct multipole_create failed");
 
-        /* Far-field fidelity: evaluate the multipole at 10x the source radius. */
+        /* Far-field fidelity: evaluate the stored leaf multipole at 10x
+         * the source radius and compare to the directly-built multipole. */
         const real_t DISTANCE_FACTOR = 10.0;
         const real_t r = 0.1 * DISTANCE_FACTOR;
 

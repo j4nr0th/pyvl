@@ -172,7 +172,7 @@ int main(const int argc, const char *argv[static argc])
 
         /* --- Direct O(N²) timing for small N --- */
         double direct_ms = 0, speedup = 0;
-        if (n <= 10000)
+        // if (n <= 10000)
         {
             real3_t *direct_res = (real3_t *)malloc((size_t)n * sizeof(real3_t));
             if (direct_res)

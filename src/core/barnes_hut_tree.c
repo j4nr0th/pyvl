@@ -712,7 +712,6 @@ static void materialize_tree(const topo_node_t CVL_ARRAY_ARG(topo, restrict), ui
             node->data.mp.coeffs_z = cursor;
             cursor += multipole_num_coeffs(settings->order);
             mp_slices_out[next_real - 1] = node->data.mp.coeffs_x;
-            // n_multipole_slices += 1;
         }
         else
         {
@@ -1685,25 +1684,34 @@ real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_AR
                 }
             }
         }
-        else if (CVL_EXPECT_CONDITION(node->kind == BH_NODE_MULTIPOLE))
-        {
-            /* Prefetch multipole coefficients before evaluation. */
-            const multipole_t *mp = &node->data.mp;
-            CVL_PREFETCH(mp->coeffs_x, 0, 3);
-            CVL_PREFETCH(mp->coeffs_y, 0, 3);
-            CVL_PREFETCH(mp->coeffs_z, 0, 3);
-            result = real3_add(result, multipole_eval(mp, point));
-        }
         else
         {
-            /* BH_NODE_PARTICLE — direct sum over particles in this leaf. */
-            const unsigned begin = node->particle_begin;
-            const unsigned end = begin + node->particle_count;
-            for (unsigned k = begin; k < end; ++k)
+            /* BH_NODE_MULTIPOLE or BH_NODE_PARTICLE — if the leaf has a
+             * far-field multipole and the MAC accepts it, use the multipole.
+             * Otherwise fall back to direct particle sum for accuracy. */
+            real_t *slice = tree->mp_slices[idx];
+            if (slice != NULL && mac_accept(node, point, theta))
             {
-                const unsigned src = tree->particle_order[k];
-                const real3_t dr = real3_sub(point, sources_coords[src]);
-                result = real3_add(result, particle_kernel(sources_values[src], dr));
+                CVL_PREFETCH(slice, 0, 3);
+                CVL_PREFETCH(slice + n_coeffs, 0, 3);
+                CVL_PREFETCH(slice + 2u * n_coeffs, 0, 3);
+                const multipole_t mp = {.order = order,
+                                        .center = node->data.mp.center,
+                                        .coeffs_x = slice,
+                                        .coeffs_y = slice + n_coeffs,
+                                        .coeffs_z = slice + 2u * n_coeffs};
+                result = real3_add(result, multipole_eval(&mp, point));
+            }
+            else
+            {
+                const unsigned begin = node->particle_begin;
+                const unsigned end = begin + node->particle_count;
+                for (unsigned k = begin; k < end; ++k)
+                {
+                    const unsigned src = tree->particle_order[k];
+                    const real3_t dr = real3_sub(point, sources_coords[src]);
+                    result = real3_add(result, particle_kernel(sources_values[src], dr));
+                }
             }
         }
     }
