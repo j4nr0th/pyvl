@@ -30,6 +30,7 @@ list(
         src/time_dependent_vector.c
         src/referenceframeobject.c
         src/transformationplaneobject.c
+        src/barneshuobject.c
         src/methods.c
 )
 
@@ -43,6 +44,7 @@ list(
         src/time_dependent_vector.h
         src/referenceframeobject.h
         src/transformationplaneobject.h
+        src/barneshuobject.h
         src/methods.h
 )
 

@@ -1,5 +1,6 @@
 #define PY_ARRAY_UNIQUE_SYMBOL cvl
 #include "module.h"
+#include "barneshuobject.h"
 #include "geoidobject.h"
 #include "meshobject.h"
 #include "multipoleobject.h"
@@ -54,6 +55,7 @@ static int cvl_module_add_types(PyObject *mod)
         {&pyvl_transformation_plane_typespec, &state->transformation_plane_type},
         {&pyvl_mesh_typespec, &state->mesh_type},
         {&pyvl_multipole_typespec, &state->multipole_type},
+        {&pyvl_bh_tree_typespec, &state->bh_tree_type},
         {0},
     };
     for (unsigned i = 0; types_to_add[i].spec != NULL; ++i)
