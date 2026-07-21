@@ -10,6 +10,7 @@
  */
 
 #include "../../src/core/barnes_hut_tree.h"
+#include "../../src/core/cost_model.h"
 #include "../test_common.h"
 
 #include <stdint.h>
@@ -20,19 +21,21 @@
 
 enum
 {
-    N_LEVELS = 4
+    N_LEVELS = 4,
+    TEST_ORDER = 3,
+    TEST_N_THREADS = 1,
+    MAX_EVAL_N = 10000,
 };
 
-static const unsigned N_VALUES[N_LEVELS] = {1000u, 10000u, 100000u, 1000000u};
+static const unsigned N_VALUES[N_LEVELS] = {1000u, 10000u, 100000u, 1000000u}; //, 1000000u};
 static const real_t CLUSTER_RADIUS[N_LEVELS] = {0.1, 0.05, 0.02, 0.01};
 static const real_t DISTRIBUTION_R = 1.0;
 
 static void generate_clustered(uint64_t seed, unsigned n, real_t cluster_r, real_t box_r, real3_t coords[static n],
-                               real3_t values[static n])
+                               real3_t values[static n], unsigned n_clusters)
 {
     uint64_t state = seed;
-    /* 10 clusters evenly spread across the box. */
-    const unsigned n_clusters = 10;
+    /* n_clusters clusters evenly spread across the box. */
     for (unsigned i = 0; i < n; ++i)
     {
         const unsigned c = i % n_clusters;
@@ -61,8 +64,12 @@ int main(const int argc, const char *argv[static argc])
     (void)argv;
 
     const barnes_hut_settings_t settings = {
-        .order = 4, .critical_particle_count = 16, .max_depth = 24, .work_order = 0};
-    const unsigned n_threads = 1;
+        .order = TEST_ORDER,
+        .critical_particle_count = cost_model_min_sources_for_order(TEST_ORDER),
+        .max_depth = 24,
+        .work_order = 0,
+    };
+    const unsigned n_threads = TEST_N_THREADS;
 
     printf("Barnes-Hut performance\n");
     printf("=====================\n");
@@ -90,7 +97,7 @@ int main(const int argc, const char *argv[static argc])
             fprintf(stderr, "malloc failed for n=%u\n", n);
             return 1;
         }
-        generate_clustered(seed, n, CLUSTER_RADIUS[lvl], DISTRIBUTION_R, coords, values);
+        generate_clustered(seed, n, CLUSTER_RADIUS[lvl], DISTRIBUTION_R, coords, values, (unsigned)(n / log10(n) / 10));
 
         const size_t scratch_sz = barnes_hut_scratch_size(n, 1, &settings);
         const size_t required = barnes_hut_buffer_size(n, &settings);
@@ -172,13 +179,15 @@ int main(const int argc, const char *argv[static argc])
 
         /* --- Direct O(N²) timing for small N --- */
         double direct_ms = 0, speedup = 0;
-        // if (n <= 10000)
+        // if (n <= MAX_EVAL_N)
         {
-            real3_t *direct_res = (real3_t *)malloc((size_t)n * sizeof(real3_t));
+            const unsigned n_test = (n <= MAX_EVAL_N ? n : MAX_EVAL_N);
+
+            real3_t *direct_res = (real3_t *)malloc((size_t)n_test * sizeof(real3_t));
             if (direct_res)
             {
                 const double td0 = seconds_now();
-                for (unsigned i = 0; i < n; ++i)
+                for (unsigned i = 0; i < n_test; ++i)
                 {
                     real3_t res = {.x = 0, .y = 0, .z = 0};
                     for (unsigned j = 0; j < n; ++j)

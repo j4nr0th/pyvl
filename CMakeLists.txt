@@ -69,6 +69,7 @@ list(
         src/core/transformation.h
         src/core/approx_atan.h
         src/core/barnes_hut_tree.h
+        src/core/cost_model.h
 )
 
 add_library(static_cvl

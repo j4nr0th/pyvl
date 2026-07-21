@@ -46,6 +46,10 @@ add_executable(test_approx_atan2 math/test_approx_atan2.c ${TEST_COMMON_FILES})
 target_link_libraries(test_approx_atan2 PRIVATE static_cvl ${TEST_MATH_LIB})
 add_test(NAME test_approx_atan2 COMMAND test_approx_atan2 "1000")
 
+add_executable(test_cost_model math/test_cost_model.c ${TEST_COMMON_FILES})
+target_link_libraries(test_cost_model PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_cost_model COMMAND test_cost_model)
+
 add_executable(test_multipole math/test_multipole.c ${TEST_COMMON_FILES})
 target_link_libraries(test_multipole PRIVATE static_cvl ${TEST_MATH_LIB})
 add_test(NAME test_multipole COMMAND test_multipole)
