@@ -1871,6 +1871,7 @@ class BarnesHutTree:
         critical_particle_count: int = 4,
         max_depth: int = 20,
         work_order: int | None = None,
+        alpha_centroid: float = 0.5,
     ) -> Self: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
@@ -1920,6 +1921,11 @@ class BarnesHutTree:
         ...
 
     @property
+    def alpha_centroid(self) -> float:
+        """Centroid-based subdivision threshold (0.0 = disabled)."""
+        ...
+
+    @property
     def max_depth_setting(self) -> int:
         """Maximum depth cap configured at build time."""
         ...
@@ -1933,6 +1939,7 @@ class BarnesHutTree:
         critical_particle_count: int = 4,
         max_depth: int = 20,
         work_order: int | None = None,
+        alpha_centroid: float = 0.5,
         n_threads: int = 1,
     ) -> BarnesHutTree:
         """Build a Barnes-Hut tree from source arrays and return a new tree.
@@ -1972,11 +1979,21 @@ class BarnesHutTree:
         targets: npt.ArrayLike,
         /,
         *,
-        theta: float = 0.0,
+        theta: float = 0.3,
         n_threads: int | None = None,
         out: npt.NDArray[np.double] | None = None,
     ) -> npt.NDArray[np.double]:
         """Evaluate the tree at one or more target points.
+
+        The **multipole acceptance criterion (MAC)** controls when a cell's
+        multipole is used instead of descending to its children.
+
+        - ``theta <= 0``: **neighbour criterion**. A cell's multipole is
+          accepted when the eval point is outside its 3\u00d73\u00d73
+          neighbourhood. Safe for all distributions.
+        - ``theta > 0``: **opening-angle criterion**. A cell's multipole is
+          accepted when ``half_size / distance < theta``. Smaller values
+          force deeper descent (more accurate, slower).
 
         Parameters
         ----------
@@ -1984,9 +2001,14 @@ class BarnesHutTree:
             Points at which to evaluate. All leading dimensions are preserved in the
             output.
 
-        theta : float, default 0.0
-            Opening angle for the multipole acceptance criterion.
-            ``<= 0`` (default) uses the neighbour criterion.
+        theta : float, default 0.3
+            Multipole acceptance criterion.
+            Recommended values:
+             - ``0.3`` — far-field optimum (similar accuracy to neighbour
+               criterion, 2-10\u00d7 faster eval).
+             - ``0.01`` — high mid-field accuracy for clustered sources
+               (forces near-direct evaluation, ~100\u00d7 slower).
+             - ``<= 0`` — neighbour criterion (safest, moderate speed).
 
         n_threads : int or None, default None
             OpenMP thread count. ``None`` uses the value passed to ``build()``.

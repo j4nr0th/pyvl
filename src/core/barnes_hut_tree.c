@@ -120,13 +120,19 @@ static inline unsigned resolve_work_order(const barnes_hut_settings_t *settings)
  *   - `multipole_threshold` — leaves with n > this become MULTIPOLE leaves.
  *   - `subdivide_threshold` — leaves with n > this AND depth < max_depth subdivide.
  *
- * The thresholds encode the cost model: approximating n > (P+1)^3 particles
- * with one multipole of order P is cheaper than n direct 1/r² evaluations,
- * and subdividing is worth it only when the multipole would represent a
- * large cluster (n >> (P+1)^3).
+ * The thresholds control two different things:
+ *   - `multipole_threshold` — sources in a leaf > this → compress to multipole.
+ *   - `subdivide_threshold` — sources in a leaf > this AND depth < max_depth
+ *     → split the cell into 8 children.
+ *
+ * The subdivision threshold uses octant-factor 8 (one child per octant):
+ * a leaf is subdivided when it has more than critical\cdot 8 particles,
+ * so each child receives roughly critical particles on average.  This gives
+ * deeper trees with smaller cells, improving mid-field accuracy at modest
+ * build-cost increase.
  *
  * :math:`\mathrm{mp\_threshold} = \max(1, \mathrm{critical\_particle\_count})`
- * :math:`\mathrm{subdivide\_threshold} = \mathrm{critical\_particle\_count} \cdot (P + 1)^3`
+ * :math:`\mathrm{subdivide\_threshold} = \mathrm{critical\_particle\_count} \cdot 8`
  */
 static unsigned multipole_threshold(const barnes_hut_settings_t *settings)
 {
@@ -135,11 +141,10 @@ static unsigned multipole_threshold(const barnes_hut_settings_t *settings)
 
 static unsigned subdivide_threshold(const barnes_hut_settings_t *settings)
 {
-    const unsigned p1 = settings->order + 1;
-    /* (P+1)^3 fits in 64-bit for any realistic P (P+1 <= 1024 fits easily). */
-    const uint64_t num = (uint64_t)settings->critical_particle_count * (uint64_t)p1 * (uint64_t)p1 * (uint64_t)p1;
-    const unsigned threshold = (unsigned)num;
-    return threshold < 1u ? 1u : threshold;
+    /* Octree splits into 8 children — subdivide when a leaf has more than
+     * 8× the critical count, so each child gets ~critical on average. */
+    const uint64_t num = (uint64_t)settings->critical_particle_count * 8u;
+    return (unsigned)(num < 1u ? 1u : num);
 }
 
 /**
@@ -159,6 +164,23 @@ static inline bool should_be_multipole(uint32_t n, const barnes_hut_settings_t *
     return n > multipole_threshold(settings);
 }
 
+/**
+ * @brief Decide whether a source at @p pos triggers centroid-based subdivision
+ *        of the cell at @p center with half-size @p half_size.
+ *
+ * Subdivides when |pos - center| > alpha_centroid * half_size.
+ * The default 0.0 disables this criterion.
+ */
+static inline bool should_subdivide_centroid(const real3_t pos, const real3_t center, real_t half_size,
+                                             const barnes_hut_settings_t *settings)
+{
+    if (settings->alpha_centroid <= 0.0)
+        return false;
+    const real3_t diff = real3_sub(pos, center);
+    const real_t dist = real3_mag(diff);
+    return dist > settings->alpha_centroid * half_size;
+}
+
 /* ------------------------------------------------------------------ */
 /* Validation                                                         */
 /* ------------------------------------------------------------------ */
@@ -172,6 +194,8 @@ static bool settings_valid(const barnes_hut_settings_t *settings)
     if (settings->critical_particle_count < 1)
         return false;
     if (settings->max_depth < 1)
+        return false;
+    if (settings->alpha_centroid < 0.0)
         return false;
     return true;
 }
@@ -294,8 +318,9 @@ barnes_hut_count_res_t barnes_hut_count_pass(unsigned n_sources,
         /* Landed in a leaf — increment count. */
         topo[node_idx].particle_count += 1;
 
-        /* Subdivide if threshold exceeded. */
-        if (should_subdivide(topo[node_idx].particle_count, depth, settings))
+        /* Subdivide if count or centroid threshold exceeded. */
+        if (should_subdivide(topo[node_idx].particle_count, depth, settings) ||
+            should_subdivide_centroid(p, topo[node_idx].center, topo[node_idx].half_size, settings))
         {
             topo[node_idx].is_internal = 1;
             for (int k = 0; k < 8; ++k)
@@ -383,8 +408,6 @@ size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *s
     if (n_sources == 0 || !settings_valid(settings))
         return 0;
 
-    const unsigned work_order = resolve_work_order(settings);
-
     /* Pessimistic upper bound on node count: n_sources leaves + ~ n_sources/7
      * internal nodes. We add a small constant for alignment slack. */
     const size_t max_nodes = (size_t)n_sources + (size_t)((n_sources + 6u) / 7u) + 16u;
@@ -392,10 +415,8 @@ size_t barnes_hut_buffer_size(unsigned n_sources, const barnes_hut_settings_t *s
     const size_t particle_order_bytes = (size_t)n_sources * sizeof(unsigned);
     /* Worst case: every node carries a multipole. */
     const size_t multipole_coeffs_bytes = max_nodes * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t);
-    const size_t shift_exp_bytes = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
-    const size_t pse_bytes = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
 
-    return nodes_bytes + particle_order_bytes + multipole_coeffs_bytes + shift_exp_bytes + pse_bytes;
+    return nodes_bytes + particle_order_bytes + multipole_coeffs_bytes;
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,6 +436,8 @@ barnes_hut_scratch_sizes_t barnes_hut_size_scratch(unsigned n_sources, const bar
      *   4. leaf_cur, leaf_nxt  — 2 * leaf_buf_size * sizeof(real_t) per thread
      *   5. leaf_coords         — n_sources * 3 * sizeof(real_t) per thread
      *   6. leaf_values         — n_sources * 3 * sizeof(real_t) per thread
+     *   7. shift_exp           — 3 * (work_order+1)^2 * sizeof(real_t) per thread
+     *   8. pse                 — 2 * n_coeffs(work_order) * sizeof(real_t) per thread
      */
     const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
     const size_t source_leaf_topo_bytes = (size_t)n_sources * sizeof(uint32_t);
@@ -427,6 +450,10 @@ barnes_hut_scratch_sizes_t barnes_hut_size_scratch(unsigned n_sources, const bar
     const size_t leaf_coords_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
     const size_t leaf_values_per_thread = (size_t)n_sources * 3u * sizeof(real_t);
 
+    const unsigned work_order = resolve_work_order(settings);
+    const size_t size_shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
+    const size_t size_pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
+
     return (barnes_hut_scratch_sizes_t){
         .size_topo = topo_bytes,
         .size_source_leaf_topo = source_leaf_topo_bytes,
@@ -434,6 +461,8 @@ barnes_hut_scratch_sizes_t barnes_hut_size_scratch(unsigned n_sources, const bar
         .size_leaf_buf_per_thread = leaf_buf_per_thread,
         .size_leaf_coords_per_thread = leaf_coords_per_thread,
         .size_leaf_values_per_thread = leaf_values_per_thread,
+        .size_shift_exp_per_thread = size_shift_exp_per_thread,
+        .size_pse_per_thread = size_pse_per_thread,
     };
 }
 
@@ -445,9 +474,11 @@ size_t barnes_hut_total_scratch_size(barnes_hut_scratch_sizes_t sizes, unsigned 
     const size_t leaf_buf_total = sizes.size_leaf_buf_per_thread * (size_t)n_threads;
     const size_t leaf_coords_total = sizes.size_leaf_coords_per_thread * (size_t)n_threads;
     const size_t leaf_values_total = sizes.size_leaf_values_per_thread * (size_t)n_threads;
+    const size_t shift_exp_total = sizes.size_shift_exp_per_thread * (size_t)n_threads;
+    const size_t pse_total = sizes.size_pse_per_thread * (size_t)n_threads;
 
     return sizes.size_topo + sizes.size_source_leaf_topo + sizes.size_source_leaf_real + leaf_buf_total +
-           leaf_coords_total + leaf_values_total;
+           leaf_coords_total + leaf_values_total + shift_exp_total + pse_total;
 }
 
 // /**
@@ -522,7 +553,7 @@ size_t barnes_hut_scratch_size(unsigned n_sources, unsigned n_threads, const bar
  *
  * The partition order follows `barnes_hut_scratch_sizes_t`:
  *   topo | source_leaf_topo | source_leaf_real | leaf_cur | leaf_nxt
- *   | leaf_coords | leaf_values
+ *   | leaf_coords | leaf_values | shift_exp | pse
  */
 barnes_hut_scratch_t barnes_hut_scratch_partition(unsigned n_thread_partitions, void *scratch_buffer,
                                                   barnes_hut_scratch_sizes_t scratch_sizes)
@@ -532,6 +563,8 @@ barnes_hut_scratch_t barnes_hut_scratch_partition(unsigned n_thread_partitions, 
     const size_t s_leaf_real = scratch_sizes.size_source_leaf_real;
     const size_t s_coords = scratch_sizes.size_leaf_coords_per_thread * n_thread_partitions;
     const size_t s_values = scratch_sizes.size_leaf_values_per_thread * n_thread_partitions;
+    const size_t s_shift_exp = scratch_sizes.size_shift_exp_per_thread * n_thread_partitions;
+    const size_t s_pse = scratch_sizes.size_pse_per_thread * n_thread_partitions;
     /* size_leaf_buf_per_thread covers leaf_cur + leaf_nxt combined per thread.
      * Each individual buffer (leaf_cur or leaf_nxt) is half that per thread. */
     const size_t leaf_buf_each = scratch_sizes.size_leaf_buf_per_thread / 2;
@@ -554,6 +587,10 @@ barnes_hut_scratch_t barnes_hut_scratch_partition(unsigned n_thread_partitions, 
     bp += s_coords;
     out.leaf_values = (real_t *)bp;
     bp += s_values;
+    out.shift_exp = (real_t *)bp;
+    bp += s_shift_exp;
+    out.pse = (real_t *)bp;
+    bp += s_pse;
     out.n_thread_partitions = n_thread_partitions;
     return out;
 }
@@ -589,13 +626,10 @@ barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
     const unsigned n_particle = count_pass_res.n_particle_leaves;
     const unsigned n_total = n_internal + n_multipole + n_particle;
 
-    const unsigned work_order = resolve_work_order(settings);
     const size_t nodes_bytes = (size_t)n_total * sizeof(bh_node_t);
     const size_t particle_order_bytes = (size_t)n_sources * sizeof(unsigned);
     const size_t multipole_coeffs_bytes =
         (size_t)(n_internal + n_multipole) * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t);
-    const size_t shift_exp_bytes = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
-    const size_t pse_bytes = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
     const size_t topo_to_real_bytes = (size_t)n_total * sizeof(uint32_t);
     const size_t mp_slices_bytes = (size_t)n_total * sizeof(real_t *);
 
@@ -603,8 +637,6 @@ barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
         .nodes_bytes = nodes_bytes,
         .particle_order_bytes = particle_order_bytes,
         .multipole_coeffs_bytes = multipole_coeffs_bytes,
-        .shift_exp_bytes = shift_exp_bytes,
-        .pse_bytes = pse_bytes,
         .topo_to_real_bytes = topo_to_real_bytes,
         .mp_slices_bytes = mp_slices_bytes,
     };
@@ -618,8 +650,8 @@ barnes_hut_work_sizes_t barnes_hut_size_work_buffer(unsigned n_sources,
  */
 size_t barnes_hut_total_work_size(barnes_hut_work_sizes_t sizes)
 {
-    return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.shift_exp_bytes +
-           sizes.pse_bytes + sizes.topo_to_real_bytes + sizes.mp_slices_bytes;
+    return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.topo_to_real_bytes +
+           sizes.mp_slices_bytes;
 }
 
 /* ------------------------------------------------------------------ */
@@ -857,10 +889,6 @@ static barnes_hut_work_t partition_work_buffer(barnes_hut_work_sizes_t work_size
     bp += work_sizes.particle_order_bytes;
     real_t *multipole_coeffs = (real_t *)bp;
     bp += work_sizes.multipole_coeffs_bytes;
-    real_t *shift_exp = (real_t *)bp;
-    bp += work_sizes.shift_exp_bytes;
-    real_t *pse = (real_t *)bp;
-    bp += work_sizes.pse_bytes;
     uint32_t *topo_to_real = (uint32_t *)bp;
     bp += work_sizes.topo_to_real_bytes;
     real_t **mp_slices = (real_t **)bp;
@@ -869,8 +897,6 @@ static barnes_hut_work_t partition_work_buffer(barnes_hut_work_sizes_t work_size
         .nodes = nodes,
         .particle_order = particle_order,
         .multipole_coeffs = multipole_coeffs,
-        .shift_exp = shift_exp,
-        .pse = pse,
         .topo_to_real = topo_to_real,
         .mp_slices = mp_slices,
     };
@@ -950,21 +976,18 @@ static bool barnes_hut_tree_build_multipoles(
 }
 
 /* ------------------------------------------------------------------ */
-/* Weighted-centroid propagation                                       */
+/* Leaf centroid computation                                          */
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Compute |Γ|-weighted centroids for all nodes and propagate upward.
+ * @brief Compute |Γ|-weighted centroids for all leaf nodes.
  *
- * Replaces `nodes[i].center` (geometric from topo subdivision) with the
- * source-magnitude-weighted centroid for each leaf, then propagates
- * upward: each internal node's center becomes the weighted average of its
- * children's centers, weighted by each child's total |Γ| sum.
+ * Replaces each leaf's geometric center (set from topo subdivision) with
+ * the source-magnitude-weighted centroid.  Internal-node centroids are
+ * computed later in the upward sweep (see `upward_sweep_level`).
  *
  * For leaves where all sources have zero magnitude, falls back to the
- * arithmetic mean of particle positions (unweighted centroid).
- * For internal nodes where all descendants have zero total weight, falls
- * back to the uniform average of child centers.
+ * geometric center (which is fine: if all |Γ| = 0 the field is zero).
  *
  * Updates `nodes[i].data.mp.center` alongside `nodes[i].center` for
  * MULTIPOLE leaves so both are consistent.
@@ -975,34 +998,23 @@ static bool barnes_hut_tree_build_multipoles(
  * @param sources_coords  Source coordinates.
  * @param sources_values  Source strengths.
  * @param n_threads       OpenMP thread count.
- * @param node_weights    Scratch array [n_nodes], written with each node's
- *                        total |Γ| weight (0 for empty subtrees).
  */
-static void barnes_hut_compute_weighted_centers(unsigned n_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
-                                                const unsigned CVL_ARRAY_ARG(particle_order, restrict),
-                                                const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
-                                                const real3_t CVL_ARRAY_ARG(sources_values, restrict),
-                                                unsigned n_threads,
-                                                real_t CVL_ARRAY_ARG(node_weights, restrict n_nodes))
+static void barnes_hut_compute_leaf_centers(unsigned n_nodes, bh_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                                            const unsigned CVL_ARRAY_ARG(particle_order, restrict),
+                                            const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+                                            const real3_t CVL_ARRAY_ARG(sources_values, restrict), unsigned n_threads)
 {
-    /* Pass 1 (parallel): compute |Γ|-weighted centroid for all leaves. */
-#pragma omp parallel for default(none) shared(n_nodes, nodes, particle_order, sources_coords, sources_values,          \
-                                                  node_weights) schedule(static) num_threads(n_threads)
+#pragma omp parallel for default(none) shared(n_nodes, nodes, particle_order, sources_coords, sources_values)          \
+    schedule(static) num_threads(n_threads)
     for (uint32_t i = 0; i < n_nodes; ++i)
     {
         if (nodes[i].kind == BH_NODE_INTERNAL)
-        {
-            node_weights[i] = 0.0;
             continue;
-        }
 
         const unsigned begin = nodes[i].particle_begin;
         const unsigned n_particles = nodes[i].particle_count;
         if (n_particles == 0)
-        {
-            node_weights[i] = 0.0;
             continue;
-        }
         const unsigned end = begin + n_particles;
 
         real_t cx = 0, cy = 0, cz = 0;
@@ -1018,95 +1030,19 @@ static void barnes_hut_compute_weighted_centers(unsigned n_nodes, bh_node_t CVL_
             total_weight += w;
         }
 
-        node_weights[i] = total_weight;
-
         if (total_weight > 0.0)
         {
             nodes[i].center.x = cx / total_weight;
             nodes[i].center.y = cy / total_weight;
             nodes[i].center.z = cz / total_weight;
         }
-        else
-        {
-            /* Fall back to arithmetic mean of particle positions. */
-            real_t ax = 0, ay = 0, az = 0;
-            for (unsigned k = begin; k < end; ++k)
-            {
-                const unsigned src = particle_order[k];
-                ax += sources_coords[src].x;
-                ay += sources_coords[src].y;
-                az += sources_coords[src].z;
-            }
-            const real_t inv_n = 1.0 / (real_t)n_particles;
-            nodes[i].center.x = ax * inv_n;
-            nodes[i].center.y = ay * inv_n;
-            nodes[i].center.z = az * inv_n;
-        }
+        /* else: all-zero strength — geometric center is fine, keep it. */
 
         /* Keep multipole leaf's mp.center in sync with node center. */
         if (nodes[i].kind == BH_NODE_MULTIPOLE)
         {
             nodes[i].data.mp.center = nodes[i].center;
         }
-    }
-
-    /* Pass 2 (sequential, reverse index order = bottom-up): propagate
-     * weighted centers through internal nodes. Children always appear
-     * after their parent in DFS pre-order, so walking backwards
-     * guarantees a node's children have already been processed. */
-    for (uint32_t i = n_nodes; i > 0;)
-    {
-        --i;
-        if (nodes[i].kind != BH_NODE_INTERNAL)
-            continue;
-
-        real_t cx = 0, cy = 0, cz = 0;
-        real_t total_weight = 0.0;
-        unsigned n_children = 0;
-
-        for (int oct = 0; oct < 8; ++oct)
-        {
-            const bh_node_t *child = nodes[i].data.internal.children[oct];
-            if (child == NULL)
-                continue;
-            n_children += 1;
-            const real_t w = node_weights[child - nodes];
-            cx += child->center.x * w;
-            cy += child->center.y * w;
-            cz += child->center.z * w;
-            total_weight += w;
-        }
-
-        node_weights[i] = total_weight;
-
-        if (total_weight > 0.0)
-        {
-            nodes[i].center.x = cx / total_weight;
-            nodes[i].center.y = cy / total_weight;
-            nodes[i].center.z = cz / total_weight;
-        }
-        else if (n_children > 0)
-        {
-            /* Uniform average of child centers (geometric fallback). */
-            nodes[i].center.x = 0;
-            nodes[i].center.y = 0;
-            nodes[i].center.z = 0;
-            for (int oct = 0; oct < 8; ++oct)
-            {
-                const bh_node_t *child = nodes[i].data.internal.children[oct];
-                if (child == NULL)
-                    continue;
-                nodes[i].center.x += child->center.x;
-                nodes[i].center.y += child->center.y;
-                nodes[i].center.z += child->center.z;
-            }
-            const real_t inv_n = 1.0 / (real_t)n_children;
-            nodes[i].center.x *= inv_n;
-            nodes[i].center.y *= inv_n;
-            nodes[i].center.z *= inv_n;
-        }
-        /* else: no children (degenerate) -> center stays as set from
-         * materialize_tree (should not happen in a valid tree). */
     }
 }
 
@@ -1163,8 +1099,10 @@ static void compute_depth_ranges(unsigned n_nodes, const bh_node_t CVL_ARRAY_ARG
  * @param n_coeffs      Number of coefficients per component.
  * @param mp_slices     Per-node multipole slice pointers.
  * @param work_order    Work order for add_shift.
- * @param shift_exp     Shift expansion scratch.
- * @param pse           Polynomial scratch.
+ * @param shift_exp     Shift expansion scratch (per-thread regions inside).
+ * @param pse           Polynomial scratch (per-thread regions inside).
+ * @param shift_stride  Per-thread byte stride in shift_exp.
+ * @param pse_stride    Per-thread byte stride in pse.
  * @param particle_order  Source-index order array.
  * @param sources_coords  Source coordinates.
  * @param sources_values  Source strengths.
@@ -1175,19 +1113,87 @@ static void compute_depth_ranges(unsigned n_nodes, const bh_node_t CVL_ARRAY_ARG
 static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node_t CVL_ARRAY_ARG(nodes, restrict),
                                unsigned order, size_t n_coeffs, real_t *CVL_ARRAY_ARG(mp_slices, restrict),
                                unsigned work_order, real_t CVL_ARRAY_ARG(shift_exp, restrict),
-                               real_t CVL_ARRAY_ARG(pse, restrict),
+                               real_t CVL_ARRAY_ARG(pse, restrict), size_t shift_stride, size_t pse_stride,
                                const unsigned CVL_ARRAY_ARG(particle_order, restrict),
                                const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
                                const real3_t CVL_ARRAY_ARG(sources_values, restrict),
                                const barnes_hut_scratch_t *scratch, size_t leaf_stride, unsigned n_threads)
 {
 #pragma omp parallel for default(none)                                                                                 \
-    shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, particle_order,      \
-               sources_coords, sources_values, scratch, leaf_stride) schedule(dynamic, 16) num_threads(n_threads)
+    shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, shift_stride,        \
+               pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride) schedule(dynamic, 16) \
+    num_threads(n_threads)
     for (uint32_t i = depth_start; i < depth_end; ++i)
     {
         if (nodes[i].kind != BH_NODE_INTERNAL)
             continue;
+
+        /* --------------------------------------------------------------- */
+        /* Step 1: Compute |Γ|-weighted centroid from children.            */
+        /* --------------------------------------------------------------- */
+        {
+            real_t cx = 0, cy = 0, cz = 0;
+            real_t total_weight = 0.0;
+            unsigned n_children = 0;
+
+            for (int oct = 0; oct < 8; ++oct)
+            {
+                const bh_node_t *child = nodes[i].data.internal.children[oct];
+                if (child == NULL)
+                    continue;
+                n_children += 1;
+                /* Weight = |first coefficient| for MULTIPOLE/INTERNAL (first
+                 * coeff = Σ|Γ|) or Σ|Γ_i| from particle data. */
+                real_t w;
+                if (child->kind == BH_NODE_PARTICLE)
+                {
+                    w = 0.0;
+                    for (unsigned k = child->particle_begin; k < child->particle_begin + child->particle_count; ++k)
+                    {
+                        const unsigned src = particle_order[k];
+                        w += real3_mag(sources_values[src]);
+                    }
+                }
+                else
+                {
+                    /* INTERNAL or MULTIPOLE child: first coefficient = total vector. */
+                    real_t *cs = mp_slices[child - nodes];
+                    if (cs == NULL)
+                        continue;
+                    w = real3_mag((real3_t){.x = cs[0], .y = cs[n_coeffs], .z = cs[2u * n_coeffs]});
+                }
+                cx += child->center.x * w;
+                cy += child->center.y * w;
+                cz += child->center.z * w;
+                total_weight += w;
+            }
+
+            if (total_weight > 0.0)
+            {
+                nodes[i].center.x = cx / total_weight;
+                nodes[i].center.y = cy / total_weight;
+                nodes[i].center.z = cz / total_weight;
+            }
+            else if (n_children > 0)
+            {
+                /* Uniform average of child centers (geometric fallback). */
+                real_t ax = 0, ay = 0, az = 0;
+                for (int oct = 0; oct < 8; ++oct)
+                {
+                    const bh_node_t *child = nodes[i].data.internal.children[oct];
+                    if (child == NULL)
+                        continue;
+                    ax += child->center.x;
+                    ay += child->center.y;
+                    az += child->center.z;
+                }
+                const real_t inv_n = 1.0 / (real_t)n_children;
+                nodes[i].center.x = ax * inv_n;
+                nodes[i].center.y = ay * inv_n;
+                nodes[i].center.z = az * inv_n;
+            }
+            /* else: no children (degenerate) — geometric center stays. */
+        }
 
         /* Zero the internal node's slice and prepare a multipole_t. */
         real_t *slice = mp_slices[i];
@@ -1198,10 +1204,12 @@ static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node
                                          .coeffs_y = slice + n_coeffs,
                                          .coeffs_z = slice + 2u * n_coeffs};
 
-        /* Per-thread scratch for multipole_update. */
+        /* Per-thread scratch for multipole_update and multipole_add_shift. */
         const int tid = omp_get_thread_num();
         real_t *particle_cur = scratch->leaf_cur + (size_t)tid * leaf_stride;
         real_t *particle_nxt = scratch->leaf_nxt + (size_t)tid * leaf_stride;
+        real_t *my_shift_exp = shift_exp + (size_t)tid * shift_stride;
+        real_t *my_pse = pse + (size_t)tid * pse_stride;
 
         for (int oct = 0; oct < 8; ++oct)
         {
@@ -1232,7 +1240,7 @@ static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node
                                         .coeffs_x = child_slice,
                                         .coeffs_y = child_slice + n_coeffs,
                                         .coeffs_z = child_slice + 2u * n_coeffs};
-                multipole_add_shift(&child_mp, &internal_mp, work_order, shift_exp, pse);
+                multipole_add_shift(&child_mp, &internal_mp, work_order, my_shift_exp, my_pse);
             }
         }
     }
@@ -1261,12 +1269,11 @@ static void upward_sweep_level(unsigned depth_start, unsigned depth_end, bh_node
  * @return Populated tree handle (views into caller buffers, no allocation).
  */
 static barnes_hut_tree_t barnes_hut_tree_complete(
-    const barnes_hut_count_res_t count_res, const unsigned n_sources, const unsigned n_threads,
-    const barnes_hut_settings_t *settings, const barnes_hut_work_t work_buffers, unsigned work_order,
-    const real3_t CVL_ARRAY_ARG(sources_coords, restrict), const real3_t CVL_ARRAY_ARG(sources_values, restrict),
-    bh_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned CVL_ARRAY_ARG(particle_order, restrict),
-    real_t CVL_ARRAY_ARG(multipole_coeffs, restrict), real_t *CVL_ARRAY_ARG(mp_slices, restrict),
-    const barnes_hut_scratch_t *scratch)
+    const barnes_hut_count_res_t count_res, const unsigned n_sources, const barnes_hut_settings_t *settings,
+    unsigned work_order, const real3_t CVL_ARRAY_ARG(sources_coords, restrict),
+    const real3_t CVL_ARRAY_ARG(sources_values, restrict), bh_node_t CVL_ARRAY_ARG(nodes, restrict),
+    unsigned CVL_ARRAY_ARG(particle_order, restrict), real_t CVL_ARRAY_ARG(multipole_coeffs, restrict),
+    real_t *CVL_ARRAY_ARG(mp_slices, restrict), const barnes_hut_scratch_t *scratch)
 {
     const unsigned n_internal = count_res.n_internal;
     const unsigned n_multipole = count_res.n_multipole_leaves;
@@ -1276,12 +1283,17 @@ static barnes_hut_tree_t barnes_hut_tree_complete(
     const unsigned order = settings->order;
     const size_t n_coeffs = multipole_num_coeffs(order);
 
-    real_t *shift_exp = work_buffers.shift_exp;
-    real_t *pse = work_buffers.pse;
+    real_t *shift_exp = scratch->shift_exp;
+    real_t *pse = scratch->pse;
 
     /* Per-thread scratch stride for multipole_update. */
     const size_t leaf_stride =
         (3u * n_coeffs > multipole_scratch_size(order)) ? (3u * n_coeffs) : multipole_scratch_size(order);
+
+    /* Per-thread stride for shift_exp and pse (sized for n_threads in the
+     * work buffer — each thread writes its own region). */
+    const size_t shift_stride = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
+    const size_t pse_stride = 2u * multipole_num_coeffs(work_order);
 
     /* Build depth-range table for slice-based iteration (avoids O(all-nodes)
      * scan at each depth level — only the internal node at each depth is
@@ -1293,7 +1305,8 @@ static barnes_hut_tree_t barnes_hut_tree_complete(
     for (unsigned d = max_depth;; --d)
     {
         upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse,
-                           particle_order, sources_coords, sources_values, scratch, leaf_stride, n_threads);
+                           shift_stride, pse_stride, particle_order, sources_coords, sources_values, scratch,
+                           leaf_stride, scratch->n_thread_partitions);
         if (d == 0)
             break;
     }
@@ -1371,8 +1384,6 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
     bh_node_t *nodes = work_buffers.nodes;
     unsigned *particle_order = work_buffers.particle_order;
     real_t *multipole_coeffs = work_buffers.multipole_coeffs;
-    real_t *shift_exp = work_buffers.shift_exp;
-    real_t *pse = work_buffers.pse;
 
     /* --- Allocate the count-pass-output-sized residual scratch through the
      * allocator. `topo_to_real` maps each topo node to its bh_node_t index;
@@ -1414,15 +1425,11 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
         particle_order[slot] = i;
     }
 
-    /* Compute |Γ|-weighted centroids for all nodes before building
+    /* Compute |-weighted centroids for leaves before building
      * multipoles — the multipole coefficients must use the weighted center
-     * as expansion origin. Reuse the dead topo scratch for per-node weight
-     * storage. */
-    {
-        real_t *node_weights = (real_t *)scratch.topo;
-        barnes_hut_compute_weighted_centers(n_topo_nodes, nodes, particle_order, sources_coords, sources_values,
-                                            n_threads, node_weights);
-    }
+     * as expansion origin.  Internal-node centroids are computed during
+     * the upward sweep. */
+    barnes_hut_compute_leaf_centers(n_topo_nodes, nodes, particle_order, sources_coords, sources_values, n_threads);
 
     /* --- Build multipoles for each multipole-bearing leaf. Parallelised:
      * the scratch is pre-partitioned into n_threads independent leaf
@@ -1510,11 +1517,16 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads,
     unsigned depth_start[256], depth_end[256];
     compute_depth_ranges(n_topo_nodes, nodes, max_depth, depth_start, depth_end);
 
+    /* Per-thread stride for shift_exp and pse (sized for n_threads in scratch). */
+    const size_t shift_stride = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
+    const size_t pse_stride = 2u * multipole_num_coeffs(work_order);
+
     /* --- Upward sweep: aggregate all children into internal nodes. --- */
     for (unsigned d = max_depth;; --d)
     {
-        upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse,
-                           particle_order, sources_coords, sources_values, &scratch, leaf_stride, n_threads);
+        upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order,
+                           scratch.shift_exp, scratch.pse, shift_stride, pse_stride, particle_order, sources_coords,
+                           sources_values, &scratch, leaf_stride, n_threads);
         if (d == 0)
             break;
     }
@@ -1648,16 +1660,15 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
         work_buffers.particle_order[slot] = i;
     }
 
-    /* Compute |Γ|-weighted centroids for all nodes before building
+    /* Compute |-weighted centroids for leaves before building
      * multipoles — the multipole coefficients must use the weighted center
-     * as expansion origin. Reuse the dead topo scratch for per-node weight
-     * storage. */
+     * as expansion origin.  Internal-node centroids are computed during
+     * the upward sweep. */
     {
-        real_t *node_weights = (real_t *)scratch.topo;
         const size_t n_nodes_total =
             (size_t)count_res.n_internal + (size_t)count_res.n_multipole_leaves + (size_t)count_res.n_particle_leaves;
-        barnes_hut_compute_weighted_centers((unsigned)n_nodes_total, work_buffers.nodes, work_buffers.particle_order,
-                                            sources_coords, sources_values, n_threads, node_weights);
+        barnes_hut_compute_leaf_centers((unsigned)n_nodes_total, work_buffers.nodes, work_buffers.particle_order,
+                                        sources_coords, sources_values, n_threads);
     }
 
     if (n_multipole_leaves > 0)
@@ -1684,10 +1695,9 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads,
             goto cleanup;
     }
 
-    *out =
-        barnes_hut_tree_complete(count_res, n_sources, n_threads, settings, work_buffers, resolve_work_order(settings),
-                                 sources_coords, sources_values, work_buffers.nodes, work_buffers.particle_order,
-                                 work_buffers.multipole_coeffs, work_buffers.mp_slices, &scratch);
+    *out = barnes_hut_tree_complete(count_res, n_sources, settings, resolve_work_order(settings), sources_coords,
+                                    sources_values, work_buffers.nodes, work_buffers.particle_order,
+                                    work_buffers.multipole_coeffs, work_buffers.mp_slices, &scratch);
     out->buffer = (uint8_t *)work_buffer;
     out->buffer_size = total_work_size;
     work_buffer = NULL; /* ownership transferred to out */

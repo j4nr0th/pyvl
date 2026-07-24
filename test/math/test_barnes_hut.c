@@ -119,21 +119,21 @@ int main(const int argc, const char *argv[static argc])
 
     {
         const barnes_hut_settings_t settings = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const size_t sz = barnes_hut_buffer_size(0, &settings);
         TEST_ASSERT(sz == 0, "buffer_size for n_sources=0 must be 0, got %zu", sz);
     }
 
     {
         const barnes_hut_settings_t settings = {
-            .order = 0, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = 0, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const size_t sz = barnes_hut_buffer_size(10, &settings);
         TEST_ASSERT(sz == 0, "buffer_size for order=0 must be 0, got %zu", sz);
     }
 
     {
         const barnes_hut_settings_t settings = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const size_t sz = barnes_hut_buffer_size(100, &settings);
         TEST_ASSERT(sz > 0, "buffer_size for n=100 must be positive, got %zu", sz);
         printf("buffer_size(n=100, order=4) = %zu bytes\n", sz);
@@ -142,14 +142,14 @@ int main(const int argc, const char *argv[static argc])
     {
         /* n_threads == 0 must be rejected by scratch_size. */
         const barnes_hut_settings_t good = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const size_t scratch = barnes_hut_scratch_size(100, 0, &good);
         TEST_ASSERT(scratch == 0, "scratch_size for n_threads=0 must be 0, got %zu", scratch);
     }
 
     {
         const barnes_hut_settings_t settings = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const barnes_hut_scratch_sizes_t scratch_sizes = barnes_hut_size_scratch(N_SOURCES, &settings);
         const size_t scratch_sz = barnes_hut_total_scratch_size(scratch_sizes, TEST_N_THREADS);
         TEST_ASSERT(scratch_sz > 0, "scratch_size for n=100 must be positive, got %zu", scratch_sz);
@@ -173,7 +173,7 @@ int main(const int argc, const char *argv[static argc])
     {
         /* barnes_hut_size_work_buffer works with minimal (valid) count_res. */
         const barnes_hut_settings_t settings = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         const barnes_hut_count_res_t minimal = {
             .n_internal = 1, .n_multipole_leaves = 1, .n_particle_leaves = 1, .max_depth = 1};
         const barnes_hut_work_sizes_t work_sizes = barnes_hut_size_work_buffer(N_SOURCES, &settings, minimal);
@@ -184,7 +184,7 @@ int main(const int argc, const char *argv[static argc])
     /* Invalid-input error paths for insert. */
     {
         const barnes_hut_settings_t settings = {
-            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         real3_t coords[N_SOURCES];
         real3_t values[N_SOURCES];
         generate_sources(0x12345ULL, N_SOURCES, coords, values);
@@ -236,7 +236,7 @@ int main(const int argc, const char *argv[static argc])
     /* ========== Stage 2: insert pass ========== */
 
     const barnes_hut_settings_t settings = {
-        .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+        .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
 
     /* Build a tree once and inspect it. */
     {
@@ -266,7 +266,7 @@ int main(const int argc, const char *argv[static argc])
         }
 
         const barnes_hut_settings_t settings = {
-            .order = 4, .critical_particle_count = 8, .max_depth = 20, .work_order = 0};
+            .order = 4, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
 
         barnes_hut_tree_t tree;
         const bool ok = barnes_hut_tree_build(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, &tree);
@@ -627,6 +627,54 @@ int main(const int argc, const char *argv[static argc])
         free(tree_cl.buffer);
         free(coords_cl);
         free(values_cl);
+    }
+
+    /* --- Test 4: symmetry test --- */
+    {
+        /* Create 7 sources symmetric about origin:
+         * one at (0,0,0) and pairs at ±0.02 on each axis. All Γ = (1,0,0). */
+        enum
+        {
+            N_SYM = 7
+        };
+        real3_t coords_sym[N_SYM] = {
+            {.x = 0.0, .y = 0.0, .z = 0.0},   {.x = 0.02, .y = 0.0, .z = 0.0},  {.x = -0.02, .y = 0.0, .z = 0.0},
+            {.x = 0.0, .y = 0.02, .z = 0.0},  {.x = 0.0, .y = -0.02, .z = 0.0}, {.x = 0.0, .y = 0.0, .z = 0.02},
+            {.x = 0.0, .y = 0.0, .z = -0.02},
+        };
+        real3_t values_sym[N_SYM];
+        for (unsigned i = 0; i < N_SYM; ++i)
+            values_sym[i] = (real3_t){.x = 1.0, .y = 0.0, .z = 0.0};
+
+        const barnes_hut_settings_t sym_settings = {
+            .order = 4, .critical_particle_count = 4, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
+
+        barnes_hut_tree_t tree_sym;
+        TEST_ASSERT(
+            barnes_hut_tree_build(N_SYM, TEST_N_THREADS, coords_sym, values_sym, &sym_settings, NULL, &tree_sym),
+            "symmetry build failed");
+
+        /* Evaluate at symmetric pairs along each axis at r = 0.12. */
+        const real3_t pairs[6] = {
+            {.x = -0.12, .y = 0, .z = 0}, {.x = 0.12, .y = 0, .z = 0},  {.x = 0, .y = -0.12, .z = 0},
+            {.x = 0, .y = 0.12, .z = 0},  {.x = 0, .y = 0, .z = -0.12}, {.x = 0, .y = 0, .z = 0.12},
+        };
+
+        const barnes_hut_eval_settings_t neig = {.theta = 0.0};
+        printf("4.  BH symmetry (symmetric source distribution):\n");
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const int n = axis * 2, p = n + 1;
+            const real3_t a_n = barnes_hut_tree_eval(&tree_sym, coords_sym, values_sym, pairs[n], neig);
+            const real3_t a_p = barnes_hut_tree_eval(&tree_sym, coords_sym, values_sym, pairs[p], neig);
+            const real_t diff_x = fabs(a_n.x - a_p.x);
+            const real_t abs_max = fmax(fabs(a_n.x), fabs(a_p.x));
+            const real_t rel_diff = diff_x / (abs_max > 1e-30 ? abs_max : 1.0);
+            printf("  axis %c:  BH(-)=%.6f  BH(+)=%.6f  rel_diff=%.2e\n", "xyz"[axis], a_n.x, a_p.x, rel_diff);
+            /* With symmetric sources, BH at ±r must agree to machine precision. */
+            TEST_ASSERT(rel_diff < 1e-10, "axis %c: BH symmetry violation: %.6f vs %.6f", "xyz"[axis], a_n.x, a_p.x);
+        }
+        free(tree_sym.buffer);
     }
 
     printf("test_barnes_hut: OK\n");

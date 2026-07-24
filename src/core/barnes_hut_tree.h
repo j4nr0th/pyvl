@@ -11,12 +11,15 @@
  *
  * The tree is built into a single caller-provided persistent buffer that the
  * kernel partitions into nodes | particle_order | multipole_coeffs |
- * shift_exp | pse | topo_to_real | mp_slices. Only the first three regions
- * form the output tree; the remaining regions are transient scratch used
- * during the build and discarded after barnes_hut_tree_insert /
- * barnes_hut_tree_build returns. A separate caller-provided scratch buffer
- * holds all the input-sized transient scratch (topo array, source-leaf maps,
- * per-thread multipole build scratch). Nothing is allocated by the build
+ * topo_to_real | mp_slices. The output tree lives in the first three regions;
+ * the remaining regions are transient scratch used during the build and
+ * discarded after barnes_hut_tree_insert / barnes_hut_tree_build returns. A
+ * separate caller-provided scratch buffer holds all the input-sized transient
+ * scratch (topo array, source-leaf maps, per-thread multipole build scratch,
+ * per-thread shift_exp and pse). Nothing is allocated by the build
+ *
+ * Default eval theta = 0.3 (opening-angle criterion).  See
+ * `barnes_hut_eval_settings_t` for tuning recommendations.
  * except through an optional allocator callback that handles residual
  * fragments; the typical configuration passes NULL to use libc only when
  * really needed.
@@ -59,6 +62,8 @@ typedef struct
     real_t *leaf_nxt;             /**< Per-thread multipole build scratch (next). */
     real_t *leaf_coords;          /**< Per-thread source-coordinate scratch. */
     real_t *leaf_values;          /**< Per-thread source-values scratch. */
+    real_t *shift_exp;            /**< Base of per-thread shift_exp regions. */
+    real_t *pse;                  /**< Base of per-thread pse regions. */
 } barnes_hut_scratch_t;
 
 /**
@@ -82,6 +87,11 @@ typedef struct
     unsigned critical_particle_count; /**< Minimum number of sources before a leaf becomes a multipole cell. */
     unsigned max_depth;               /**< Maximum octree depth (>= 1). */
     unsigned work_order;              /**< Internal expansion order for work buffers. */
+    real_t alpha_centroid;            /**< Centroid-based subdivision threshold (0.0 = disabled).
+                                           When > 0, a leaf is subdivided if any source is more than
+                                           `alpha_centroid * half_size` from the cell geometric center.
+                                           This guarantees sources are tightly clustered around the cell
+                                           center, improving multipole convergence.  Default 0.0. */
 } barnes_hut_settings_t;
 
 /**
@@ -141,18 +151,38 @@ typedef struct
  * @brief Settings for tree evaluation.
  *
  * Members:
- *  - `theta` — opening angle @f$ \theta @f$. When `<= 0` (default), the
- *    neighbour criterion is used: the multipole of a cell is accepted
- *    whenever the target point lies outside the cell's 3×3×3 neighbourhood.
- *    When `> 0`, the opening-angle criterion applies: a cell's multipole is
- *    accepted whenever `half_size / distance < theta`.
+ *  - `theta` — multipole acceptance criterion (MAC).
+ *    - `<= 0` (default): **neighbour criterion**.  A cell's multipole is
+ *      accepted whenever the target point lies outside the cell's 3×3×3
+ *      neighbourhood (i.e.
+ *      :math:`|\Delta x| > 2h \lor |\Delta y| > 2h \lor |\Delta z| > 2h`,
+ *      where :math:`h` is the cell half-size).  This is the safest setting
+ *      for general use — it never accepts a multipole for a target inside
+ *      or immediately adjacent to the cell.
+ *    - `> 0`: **opening-angle criterion**.  A cell's multipole is accepted
+ *      whenever :math:`h / d < \theta`, where :math:`d` is the distance
+ *      to the cell center.  Smaller values force deeper descent (more
+ *      accurate, slower).
+ *
+ *      Recommended values:
+ *      - ``0.3`` — far-field optimum (similar accuracy to neighbour
+ *        criterion, :math:`2\!-\!10\times` faster eval).
+ *      - ``0.01`` — high mid-field accuracy for clustered sources
+ *        (forces near-direct evaluation, :math:`100\!-\!300\times` slower).
+ *      - ``0.1`` — moderate accuracy at modest speed cost.
+ *
+ *      The multipole expansion of :math:`1/|r|^2` converges only when the
+ *      eval point is outside the source bounding sphere.  For mid-field
+ *      targets inside or just outside the source cloud, use a small
+ *      opening angle (\< 0.03) or the neighbour criterion to force the
+ *      evaluator down to small-enough cells.
  */
 typedef struct
 {
     double theta;
 } barnes_hut_eval_settings_t;
 
-#define BARNES_HUT_EVAL_SETTINGS_DEFAULT ((barnes_hut_eval_settings_t){.theta = 0.0})
+#define BARNES_HUT_EVAL_SETTINGS_DEFAULT ((barnes_hut_eval_settings_t){.theta = 0.3})
 
 /**
  * @brief Run the sequential count pass to determine tree topology.
@@ -182,6 +212,8 @@ typedef struct
     size_t size_leaf_buf_per_thread;
     size_t size_leaf_coords_per_thread;
     size_t size_leaf_values_per_thread;
+    size_t size_shift_exp_per_thread; /**< shift_exp bytes per thread */
+    size_t size_pse_per_thread;       /**< pse bytes per thread */
 } barnes_hut_scratch_sizes_t;
 
 /**
@@ -241,8 +273,6 @@ typedef struct
     size_t nodes_bytes;            /**< Bytes for the @c bh_node_t array. */
     size_t particle_order_bytes;   /**< Bytes for the particle permutation array. */
     size_t multipole_coeffs_bytes; /**< Bytes for multipole coefficient storage. */
-    size_t shift_exp_bytes;        /**< Bytes for shift-expansion scratch. */
-    size_t pse_bytes;              /**< Bytes for PSE (point-spread) scratch. */
     size_t topo_to_real_bytes;     /**< Bytes for topology-to-real-node index map. */
     size_t mp_slices_bytes;        /**< Bytes for multipole slice pointers. */
 } barnes_hut_work_sizes_t;
@@ -277,8 +307,6 @@ typedef struct
     bh_node_t *nodes;         /**< Pointer to the @c bh_node_t array. */
     unsigned *particle_order; /**< Pointer to the particle-order permutation. */
     real_t *multipole_coeffs; /**< Pointer to multipole coefficient storage. */
-    real_t *shift_exp;        /**< Pointer to shift-expansion scratch space. */
-    real_t *pse;              /**< Pointer to PSE scratch space. */
     uint32_t *topo_to_real;   /**< Pointer to the topology-to-real-node index map. */
     real_t **mp_slices;       /**< Pointer to the multipole slice-pointer array. */
 } barnes_hut_work_t;

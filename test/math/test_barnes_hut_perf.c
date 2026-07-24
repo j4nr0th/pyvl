@@ -63,12 +63,11 @@ int main(const int argc, const char *argv[static argc])
     (void)argc;
     (void)argv;
 
-    const barnes_hut_settings_t settings = {
-        .order = TEST_ORDER,
-        .critical_particle_count = cost_model_min_sources_for_order(TEST_ORDER),
-        .max_depth = 24,
-        .work_order = 0,
-    };
+    const barnes_hut_settings_t settings = {.order = TEST_ORDER,
+                                            .critical_particle_count = cost_model_min_sources_for_order(TEST_ORDER),
+                                            .max_depth = 24,
+                                            .work_order = 0,
+                                            .alpha_centroid = 0.0};
     const unsigned n_threads = TEST_N_THREADS;
 
     printf("Barnes-Hut performance\n");

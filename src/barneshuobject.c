@@ -86,7 +86,8 @@ static inline unsigned resolve_py_work_order(Py_ssize_t work_order_py)
  */
 
 PyDoc_STRVAR(pyvl_bh_tree_type_docstring,
-             "BarnesHutTree(order=4, critical_particle_count=4, max_depth=20, work_order=None)\n"
+             "BarnesHutTree(order=4, critical_particle_count=4, max_depth=20, work_order=None, "
+             "alpha_centroid=0.5)\n"
              "Barnes-Hut octree for fast far-field induction from vortex particles.\n"
              "\n"
              "The tree partitions a set of vortex sources into an octree and\n"
@@ -116,6 +117,10 @@ PyDoc_STRVAR(pyvl_bh_tree_type_docstring,
              "    Maximum octree depth.\n"
              "work_order : int or None, default None\n"
              "    Internal expansion order for multipole shifting (``None`` = use *order*).\n"
+             "alpha_centroid : float, default 0.5\n"
+             "    Centroid-based subdivision threshold (0.0 = disabled).  When > 0, a leaf is\n"
+             "    subdivided if any source is more than ``alpha_centroid * half_size`` from\n"
+             "    the geometric center, guaranteeing tightly clustered sources in each cell.\n"
              "\n"
              "See Also\n"
              "--------\n"
@@ -141,9 +146,11 @@ static PyObject *pyvl_bh_tree_new(PyTypeObject *type, PyObject *args, PyObject *
     self->built = false;
 
     Py_ssize_t order = 4, critical = 4, max_depth = 20, work_order = -1;
-    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|nnnn",
-                                     (char *[5]){"order", "critical_particle_count", "max_depth", "work_order", NULL},
-                                     &order, &critical, &max_depth, &work_order))
+    double alpha_centroid = 0.5;
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "|nnnnd",
+            (char *[6]){"order", "critical_particle_count", "max_depth", "work_order", "alpha_centroid", NULL}, &order,
+            &critical, &max_depth, &work_order, &alpha_centroid))
     {
         Py_DECREF(self);
         return NULL;
@@ -168,11 +175,19 @@ static PyObject *pyvl_bh_tree_new(PyTypeObject *type, PyObject *args, PyObject *
         return NULL;
     }
 
+    if (alpha_centroid < 0.0)
+    {
+        PyErr_SetString(PyExc_ValueError, "alpha_centroid must be >= 0.");
+        Py_DECREF(self);
+        return NULL;
+    }
+
     self->tree.settings = (barnes_hut_settings_t){
         .order = (unsigned)order,
         .critical_particle_count = (unsigned)critical,
         .max_depth = (unsigned)max_depth,
         .work_order = resolve_py_work_order(work_order),
+        .alpha_centroid = (real_t)alpha_centroid,
     };
 
     return (PyObject *)self;
@@ -301,6 +316,12 @@ static PyObject *pyvl_bh_tree_get_order(PyObject *self, void *Py_UNUSED(closure)
     return PyLong_FromUnsignedLong(this->tree.settings.order);
 }
 
+static PyObject *pyvl_bh_tree_get_alpha_centroid(PyObject *self, void *Py_UNUSED(closure))
+{
+    const PyVL_BarnesHutObject *this = (const PyVL_BarnesHutObject *)self;
+    return PyFloat_FromDouble((double)this->tree.settings.alpha_centroid);
+}
+
 static PyObject *pyvl_bh_tree_get_critical_particle_count(PyObject *self, void *Py_UNUSED(closure))
 {
     const PyVL_BarnesHutObject *this = (const PyVL_BarnesHutObject *)self;
@@ -355,6 +376,11 @@ static PyGetSetDef pyvl_bh_tree_getset[] = {
         .doc = "int : Multipole order used by the tree.",
     },
     {
+        .name = "alpha_centroid",
+        .get = pyvl_bh_tree_get_alpha_centroid,
+        .doc = "float : Centroid-based subdivision threshold (0.0 = disabled).",
+    },
+    {
         .name = "critical_particle_count",
         .get = pyvl_bh_tree_get_critical_particle_count,
         .doc = "int : Base subdivision threshold.",
@@ -376,7 +402,7 @@ static PyGetSetDef pyvl_bh_tree_getset[] = {
  */
 
 PyDoc_STRVAR(pyvl_bh_tree_build_doc, "build(sources_coords, sources_values, /, order=4, critical_particle_count=4, "
-                                     "max_depth=20, work_order=None, n_threads=1)\n"
+                                     "max_depth=20, work_order=None, alpha_centroid=0.5, n_threads=1)\n"
                                      "Build a Barnes-Hut tree from source arrays and return a new tree.\n"
                                      "\n"
                                      "Parameters\n"
@@ -393,6 +419,8 @@ PyDoc_STRVAR(pyvl_bh_tree_build_doc, "build(sources_coords, sources_values, /, o
                                      "    Maximum tree depth.\n"
                                      "work_order : int or None, default None\n"
                                      "    Internal order for multipole shifting (\\'\\'None\\'\\' = use *order*).\n"
+                                     "alpha_centroid : float, default 0.5\n"
+                                     "    Centroid-based subdivision threshold (0.0 = disabled).\n"
                                      "n_threads : int, default 1\n"
                                      "    OpenMP thread count.\n"
                                      "\n"
@@ -421,6 +449,7 @@ static PyObject *pyvl_bh_tree_build(PyTypeObject *type, PyObject *const *args, c
 
     PyObject *coords_obj, *values_obj;
     Py_ssize_t order = 4, critical = 4, max_depth = 20, work_order = -1, n_threads = 1;
+    double alpha_centroid = 0.5;
     if (parse_arguments_check(
             (cpyutl_argument_t[]){
                 {.type = CPYARG_TYPE_PYTHON, .p_val = (void *)&coords_obj},
@@ -429,6 +458,7 @@ static PyObject *pyvl_bh_tree_build(PyTypeObject *type, PyObject *const *args, c
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &critical, .kwname = "critical_particle_count", .optional = true},
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &max_depth, .kwname = "max_depth", .optional = true},
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &work_order, .kwname = "work_order", .optional = true},
+                {.type = CPYARG_TYPE_DOUBLE, .p_val = &alpha_centroid, .kwname = "alpha_centroid", .optional = true},
                 {.type = CPYARG_TYPE_SSIZE, .p_val = &n_threads, .kwname = "n_threads", .optional = true},
                 {0},
             },
@@ -449,6 +479,11 @@ static PyObject *pyvl_bh_tree_build(PyTypeObject *type, PyObject *const *args, c
     if (max_depth < 1)
     {
         PyErr_SetString(PyExc_ValueError, "max_depth must be >= 1.");
+        return NULL;
+    }
+    if (alpha_centroid < 0.0)
+    {
+        PyErr_SetString(PyExc_ValueError, "alpha_centroid must be >= 0.");
         return NULL;
     }
     if (n_threads < 1)
@@ -498,6 +533,7 @@ static PyObject *pyvl_bh_tree_build(PyTypeObject *type, PyObject *const *args, c
         .critical_particle_count = (unsigned)critical,
         .max_depth = (unsigned)max_depth,
         .work_order = resolve_py_work_order(work_order),
+        .alpha_centroid = (real_t)alpha_centroid,
     };
 
     const bool ok =
@@ -527,7 +563,7 @@ static PyObject *pyvl_bh_tree_build(PyTypeObject *type, PyObject *const *args, c
  * ----------------------------------------------------------------
  */
 
-PyDoc_STRVAR(pyvl_bh_tree_eval_doc, "eval(targets, /, *, theta=0.0, n_threads=None, out=None)\n"
+PyDoc_STRVAR(pyvl_bh_tree_eval_doc, "eval(targets, /, *, theta=0.3, n_threads=None, out=None)\n"
                                     "Evaluate the tree at one or more target points.\n"
                                     "\n"
                                     "Parameters\n"
@@ -535,9 +571,14 @@ PyDoc_STRVAR(pyvl_bh_tree_eval_doc, "eval(targets, /, *, theta=0.0, n_threads=No
                                     "targets : (..., 3) array_like\n"
                                     "    Points at which to evaluate.  All leading dimensions are\n"
                                     "    preserved in the output.\n"
-                                    "theta : float, default 0.0\n"
-                                    "    Opening angle for the multipole acceptance criterion.\n"
-                                    "    ``<= 0`` (default) uses the neighbour criterion.\n"
+                                    "theta : float, default 0.3\n"
+                                    "    Multipole acceptance criterion (MAC).\n"
+                                    "    ``<= 0``  neighbour criterion: accept cell when eval point is\n"
+                                    "       outside 3x3x3 neighbourhood (safest, moderate speed).\n"
+                                    "    ``> 0``   opening-angle criterion: accept when\n"
+                                    "       ``half_size / distance < theta``.\n"
+                                    "       Recommended: 0.3 (far-field, fast), 0.01 (mid-field,\n"
+                                    "       slow but accurate).\n"
                                     "n_threads : int or None, default None\n"
                                     "    OpenMP thread count.  ``None`` uses the value passed to\n"
                                     "    ``build()`` (default ``1``).\n"
@@ -549,6 +590,10 @@ PyDoc_STRVAR(pyvl_bh_tree_eval_doc, "eval(targets, /, *, theta=0.0, n_threads=No
                                     "-------\n"
                                     "(..., 3) ndarray\n"
                                     "    Induced vector at each target point.\n"
+                                    "\n"
+                                    "See Also\n"
+                                    "--------\n"
+                                    "BarnesHutTree.build : Construct and populate a tree.\n"
                                     "\n"
                                     "Examples\n"
                                     "--------\n"
@@ -578,7 +623,7 @@ static PyObject *pyvl_bh_tree_eval(PyObject *self, PyTypeObject *defining_class,
     }
 
     PyObject *targets_obj;
-    double theta = 0.0;
+    double theta = 0.3;
     Py_ssize_t n_threads = -1; // -1 means "use self->n_threads"
     PyArrayObject *out = NULL;
     if (parse_arguments_check(
