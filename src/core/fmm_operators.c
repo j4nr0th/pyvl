@@ -28,117 +28,25 @@ size_t local_expansion_m2l_scratch_size(unsigned work_order)
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal: multiply polynomial by a quadratic form.                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * @brief Multiply polynomial @p a by the quadratic form
- *        @c qc + qlx*x + qly*y + qlz*z + qx*x^2 + qy*y^2 + qz*z^2,
- *        writing the result to @p b.
- *
- * Each monomial (p,q,r) of degree d contributes to:
- *   - itself            (× qc)
- *   - (p+1, q, r)       (× qlx)   [degree d+1]
- *   - (p, q+1, r)       (× qly)
- *   - (p, q, r+1)       (× qlz)
- *   - (p+2, q, r)       (× qx)    [degree d+2]
- *   - (p, q+2, r)       (× qy)
- *   - (p, q, r+2)       (× qz)
- *
- * @param a         Input polynomial (dense, multipole_num_coeffs layout).
- * @param b         Output polynomial (zeroed then written).
- * @param qx        Coefficient of x^2.
- * @param qy        Coefficient of y^2.
- * @param qz        Coefficient of z^2.
- * @param qlx       Coefficient of x.
- * @param qly       Coefficient of y.
- * @param qlz       Coefficient of z.
- * @param qc        Constant coefficient.
- * @param max_order Maximum polynomial order.
- */
-static void multipole_poly_mul_quadratic(const real_t *a, real_t *b, real_t qx, real_t qy, real_t qz, real_t qlx,
-                                         real_t qly, real_t qlz, real_t qc, unsigned max_order)
-{
-    const size_t n_coeffs = multipole_num_coeffs(max_order);
-    for (size_t i = 0; i < n_coeffs; ++i)
-    {
-        b[i] = 0.0;
-    }
-
-    for (unsigned deg = 0; deg <= max_order; ++deg)
-    {
-        for (unsigned p = 0; p <= deg; ++p)
-        {
-            for (unsigned q = 0; q <= deg - p; ++q)
-            {
-                const unsigned r = deg - p - q;
-                const size_t idx = multipole_coeff_index(deg, p, q, r);
-                const real_t c = a[idx];
-                if (c == 0.0)
-                    continue;
-
-                /* Constant term. */
-                b[idx] += qc * c;
-
-                /* Linear terms (degree + 1). */
-                if (deg < max_order)
-                {
-                    b[multipole_coeff_index(deg + 1, p + 1, q, r)] += qlx * c;
-                    b[multipole_coeff_index(deg + 1, p, q + 1, r)] += qly * c;
-                    b[multipole_coeff_index(deg + 1, p, q, r + 1)] += qlz * c;
-                }
-
-                /* Quadratic terms (degree + 2). */
-                if (deg + 1 < max_order)
-                {
-                    b[multipole_coeff_index(deg + 2, p + 2, q, r)] += qx * c;
-                    b[multipole_coeff_index(deg + 2, p, q + 2, r)] += qy * c;
-                    b[multipole_coeff_index(deg + 2, p, q, r + 2)] += qz * c;
-                }
-            }
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ */
 /* Internal: accumulate a polynomial into a local expansion.          */
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Scale a polynomial and accumulate it into a local expansion's
- *        coefficient arrays at the appropriate orders.
+ * @brief Thin wrapper around @ref multipole_add_poly_to_order for
+ *        local expansion targets.
  *
- * Mirrors @ref multipole_add_poly_to_order but targets a local_expansion_t.
- *
- * @param poly      Polynomial coefficients (dense, multipole_num_coeffs layout).
- * @param out_order Maximum order to accumulate (orders 0..out_order).
- * @param scale     Scalar multiplier.
- * @param cx        x-component multiplier.
- * @param cy        y-component multiplier.
- * @param cz        z-component multiplier.
- * @param out       Target local expansion (accumulated, not overwritten).
+ * Creates a temporary multipole_t view over the local expansion's
+ * coefficient arrays so the shared polynomial helper can be reused.
  */
-static void local_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
-                                    const real_t cy, const real_t cz, const local_expansion_t *out)
+static inline void local_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
+                                           const real_t cy, const real_t cz, const local_expansion_t *out)
 {
-    for (unsigned deg = 0; deg <= out_order; ++deg)
-    {
-        for (unsigned p = 0; p <= deg; ++p)
-        {
-            for (unsigned q = 0; q <= deg - p; ++q)
-            {
-                const unsigned r = deg - p - q;
-                const size_t poly_idx = multipole_coeff_index(deg, p, q, r);
-                const real_t c = poly[poly_idx];
-                if (c == 0.0)
-                    continue;
-                const size_t out_idx = multipole_coeff_index(out_order, p, q, r);
-                out->coeffs_x[out_idx] += scale * cx * c;
-                out->coeffs_y[out_idx] += scale * cy * c;
-                out->coeffs_z[out_idx] += scale * cz * c;
-            }
-        }
-    }
+    const multipole_t mp_view = {
+        .coeffs_x = out->coeffs_x,
+        .coeffs_y = out->coeffs_y,
+        .coeffs_z = out->coeffs_z,
+    };
+    multipole_add_poly_to_order(poly, out_order, scale, cx, cy, cz, &mp_view);
 }
 
 /* ------------------------------------------------------------------ */

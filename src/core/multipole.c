@@ -164,6 +164,50 @@ CVL_INTERNAL void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t l
     }
 }
 
+CVL_INTERNAL void multipole_poly_mul_quadratic(const real_t *a, real_t *b, real_t qx, real_t qy, real_t qz, real_t qlx,
+                                               real_t qly, real_t qlz, real_t qc, unsigned max_order)
+{
+    const size_t n_coeffs = multipole_num_coeffs(max_order);
+    for (size_t i = 0; i < n_coeffs; ++i)
+    {
+        b[i] = 0.0;
+    }
+
+    for (unsigned deg = 0; deg <= max_order; ++deg)
+    {
+        for (unsigned p = 0; p <= deg; ++p)
+        {
+            for (unsigned q = 0; q <= deg - p; ++q)
+            {
+                const unsigned r = deg - p - q;
+                const size_t idx = multipole_coeff_index(deg, p, q, r);
+                const real_t c = a[idx];
+                if (c == 0.0)
+                    continue;
+
+                /* Constant term. */
+                b[idx] += qc * c;
+
+                /* Linear terms (degree + 1). */
+                if (deg < max_order)
+                {
+                    b[multipole_coeff_index(deg + 1, p + 1, q, r)] += qlx * c;
+                    b[multipole_coeff_index(deg + 1, p, q + 1, r)] += qly * c;
+                    b[multipole_coeff_index(deg + 1, p, q, r + 1)] += qlz * c;
+                }
+
+                /* Quadratic terms (degree + 2). */
+                if (deg + 1 < max_order)
+                {
+                    b[multipole_coeff_index(deg + 2, p + 2, q, r)] += qx * c;
+                    b[multipole_coeff_index(deg + 2, p, q + 2, r)] += qy * c;
+                    b[multipole_coeff_index(deg + 2, p, q, r + 2)] += qz * c;
+                }
+            }
+        }
+    }
+}
+
 void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned work_order,
                          real_t CVL_ARRAY_ARG(shift_exp, restrict), real_t CVL_ARRAY_ARG(pse, restrict))
 {
@@ -321,7 +365,7 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
     // Fill output field-by-field. We do NOT use `*out = this` and do NOT
     // memcpy a struct: both let gcc ignore the active-union rules and
     // spill through `out`'s neighbours (the `kind` slot of the
-    // containing bh_node_t in particular). When `out` aliases a tagged
+    // containing octree_node_t in particular). When `out` aliases a tagged
     // union member previously written as the other branch, strict
     // aliasing permits the compiler to reorder writes as if `out` were
     // fully uninitialised.

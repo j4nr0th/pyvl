@@ -43,6 +43,7 @@ Algorithms for computing vortex-induced velocities.
 
     induction
     multipole
+    octree
     fmm_operators
     fmm_tree
     barnes_hut_tree

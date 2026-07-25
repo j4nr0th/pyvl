@@ -11,6 +11,7 @@
 
 #include "../../src/core/barnes_hut_tree.h"
 #include "../../src/core/cost_model.h"
+#include "../../src/core/octree.h"
 #include "../test_common.h"
 
 #include <stdint.h>
@@ -98,8 +99,8 @@ int main(const int argc, const char *argv[static argc])
         }
         generate_clustered(seed, n, CLUSTER_RADIUS[lvl], DISTRIBUTION_R, coords, values, (unsigned)(n / log10(n) / 10));
 
-        const size_t scratch_sz = barnes_hut_scratch_size(n, 1, &settings);
-        const size_t required = barnes_hut_buffer_size(n, &settings);
+        const size_t scratch_sz = octree_scratch_size(n, 1, &settings);
+        const size_t required = octree_buffer_size(n, &settings);
         if (required == 0 || scratch_sz == 0)
         {
             fprintf(stderr, "sizing returned 0 for n=%u\n", n);

@@ -60,3 +60,13 @@ The following polynomial-manipulation helpers are defined as
     :math:`l_c + l_x x + l_y y + l_z z`, writing the result to
     :math:`b`.  Used by M2M (``multipole_add_shift``) and L2L
     (``local_expansion_shift``) where the denominator factor is linear.
+
+.. c:function:: void multipole_poly_mul_quadratic(const real_t *a, real_t *b, \
+        real_t qx, real_t qy, real_t qz, real_t qlx, real_t qly, real_t qlz, \
+        real_t qc, unsigned max_order)
+
+    Multiply the polynomial :math:`a` by the quadratic form
+    :math:`q_c + q_{lx} x + q_{ly} y + q_{lz} z + q_x x^2 + q_y y^2 + q_z z^2`,
+    writing the result to :math:`b`.  Used by M2L (``multipole_to_local``)
+    where the denominator factor :math:`2\mathbf{R}'\cdot\mathbf{r}' + r'^2`
+    is quadratic.

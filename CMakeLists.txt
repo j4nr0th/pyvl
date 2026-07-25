@@ -58,6 +58,7 @@ list(
         src/core/transformation.c
         src/core/approx_atan.c
         src/core/multipole.c
+        src/core/octree.c
         src/core/barnes_hut_tree.c
         src/core/fmm_operators.c
         src/core/fmm_tree.c
@@ -72,6 +73,7 @@ list(
         src/core/flow_solver.h
         src/core/transformation.h
         src/core/approx_atan.h
+        src/core/octree.h
         src/core/barnes_hut_tree.h
         src/core/cost_model.h
         src/core/fmm_operators.h

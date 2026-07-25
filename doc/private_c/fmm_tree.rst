@@ -17,35 +17,21 @@ true O(N) FMM using local expansions.
 Build Pipeline
 --------------
 
-The tree is built through a sequence of passes (mirroring
-:ref:`barnes_hut_tree <pyvl.private_c.barnes_hut_tree>`):
+The first 8 build stages are shared with the :ref:`octree foundation
+<pyvl.private_c.octree>` — no layout descriptor or wrapper functions
+are involved; the shared pipeline operates on ``octree_node_t *``
+directly.
 
-1. **Count pass** — builds an octree topology from source coordinates
-   and counts internal nodes, multipole leaves, and particle leaves.
-   Reuses the same ``topo_node_t`` count logic as the Barnes-Hut tree.
+1. **Count pass** → :c:func:`octree_count_pass`
+2. **Materialise** → :c:func:`octree_materialize`
+3. **Descend** → :c:func:`octree_descend`
+4. **Metadata** → :c:func:`octree_compute_metadata`
+5. **Fill** → :c:func:`octree_fill_particle_order`
+6. **Centroids** → :c:func:`octree_compute_leaf_centers`
+7. **P2M** → :c:func:`octree_build_leaf_multipoles`
+8. **M2M** → :c:func:`octree_upward_sweep_level` (depth loop)
 
-2. **Materialise** — walks the topology array in DFS pre-order, creating
-   ``fmm_node_t`` entries, handing out multipole coefficient slices from
-   a flat arena, and resolving child pointers.
-
-3. **Descend** — assigns each source particle to its leaf node (OpenMP
-   parallel, atomic leaf-count increments).
-
-4. **Metadata** — computes ``particle_begin`` prefix sums for the
-   ``particle_order[]`` permutation and assigns each leaf a unique
-   ``leaf_id``.
-
-5. **Fill** — populates ``particle_order[]`` so each leaf's sources are
-   contiguous (OpenMP parallel, atomic capture).
-
-6. **Centroids** — replaces leaf geometric centres with :math:`|\Gamma|`-
-   weighted centroids for better multipole convergence.
-
-7. **P2M** — builds multipole expansions for each multipole-bearing leaf
-   via ``multipole_create`` (OpenMP parallel with per-thread scratch).
-
-8. **M2M** — upward sweep: aggregates child multipoles into each internal
-   node via ``multipole_add_shift`` (OpenMP parallel per depth level).
+Then the FMM-specific stages:
 
 9. **Interaction lists** — for each leaf, classifies every other leaf
    as V-list (well-separated: :math:`|\Delta\mathbf{c}| \ge 3\max(h_a, h_b)`)
@@ -55,10 +41,26 @@ The tree is built through a sequence of passes (mirroring
     expansions at each leaf, then propagates local expansions downward
     from parents to children.
 
+Sizing
+------
+
+* Scratch buffer: use the canonical :c:func:`octree_scratch_size` /
+  :c:func:`octree_size_scratch` / :c:func:`octree_total_scratch_size`.
+  The old ``fmm_size_scratch``, ``fmm_scratch_size``, and
+  ``fmm_buffer_size`` wrappers have been removed.
+
+* Work buffer: the FMM tree adds extra regions (leaf indices, local
+  coefficients, local slice pointers, interaction list CSR) beyond the
+  common ``octree_base_work_sizes_t``.  Use the FMM-specific
+  :c:func:`fmm_size_work_buffer` and :c:func:`fmm_total_work_size`.
+
+* Count pass: :c:func:`octree_count_pass` (``fmm_count_pass`` removed).
+
+
 Evaluation
 ----------
 
-Two evaluation modes are available:
+Two evaluation modes are available (controlled by ``eval_settings.mode``):
 
 - **Tree-code mode** (``FMM_EVAL_TREE_CODE``): descends to the target's
   leaf, sums V-list multipoles via ``multipole_eval`` for the far-field,
@@ -70,13 +72,30 @@ Two evaluation modes are available:
   the same near-field direct sum.  This is a single L2P call per target
   instead of one ``multipole_eval`` per V-list entry, giving O(N) scaling.
 
+Comparison with Barnes-Hut
+--------------------------
+
++-----------------------------------+-------------------------------------------+
+| Barnes-Hut                        | FMM                                       |
++===================================+===========================================+
+| Per-target tree walk with MAC     | Precomputed V-list; one L2P or per-V-list |
+|                                   | multipole_eval per target                 |
++-----------------------------------+-------------------------------------------+
+| O(N log N) eval for most distros  | O(N log N) tree-code, O(N) FMM mode       |
++-----------------------------------+-------------------------------------------+
+| No extra storage beyond nodes and  | Interaction lists + local expansions      |
+| multipole coefficients            | (CSR + coefficient arena)                 |
++-----------------------------------+-------------------------------------------+
+| Simple, single-pass eval          | Two passes: build lists then evaluate     |
++-----------------------------------+-------------------------------------------+
+
 Memory Layout
 -------------
 
 The tree is stored in a single caller-provided persistent buffer
 partitioned (in order) into:
 
-- ``nodes`` — ``fmm_node_t`` array
+- ``nodes`` — ``octree_node_t`` array
 - ``particle_order`` — source-index permutation
 - ``multipole_coeffs`` — flat arena for multipole coefficients
 - ``topo_to_real`` — count-pass topology index to node index map
@@ -87,7 +106,7 @@ partitioned (in order) into:
 - V-list CSR (offsets + indices)
 - Near-field CSR (offsets + indices)
 
-A separate transient scratch buffer (sourced from input parameters alone)
+A separate transient scratch buffer (sized by :c:func:`octree_scratch_size`)
 holds build-time temporaries including the topology array and per-thread
 multipole-build scratch.
 
@@ -95,3 +114,8 @@ Data Structures
 ---------------
 
 .. c:autodoc:: fmm_tree.h
+
+   The ``fmm_node_t``, ``fmm_node_kind_t``, and ``FMM_NODE_*`` constants
+   have been **removed** — use ``octree_node_t`` and
+   ``OCTREE_NODE_INTERNAL`` / ``OCTREE_NODE_PARTICLE`` /
+   ``OCTREE_NODE_MULTIPOLE`` directly.

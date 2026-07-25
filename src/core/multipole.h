@@ -71,6 +71,28 @@ CVL_INTERNAL void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t l
                                             unsigned max_order);
 
 /**
+ * @brief Multiply polynomial @p a by the quadratic form
+ *        qc + qlx*x + qly*y + qlz*z + qx*x^2 + qy*y^2 + qz*z^2,
+ *        writing the result to @p b.
+ *
+ * Used by M2L (multipole_to_local) where the denominator factor is
+ * (2 R'\cdot r' + r'^2).
+ *
+ * @param a         Input polynomial (dense, multipole_num_coeffs layout).
+ * @param b         Output polynomial (zeroed then written).
+ * @param qx        Coefficient of x^2.
+ * @param qy        Coefficient of y^2.
+ * @param qz        Coefficient of z^2.
+ * @param qlx       Coefficient of x.
+ * @param qly       Coefficient of y.
+ * @param qlz       Coefficient of z.
+ * @param qc        Constant coefficient.
+ * @param max_order Maximum polynomial order.
+ */
+CVL_INTERNAL void multipole_poly_mul_quadratic(const real_t *a, real_t *b, real_t qx, real_t qy, real_t qz, real_t qlx,
+                                               real_t qly, real_t qlz, real_t qc, unsigned max_order);
+
+/**
  * @brief Returns the size of one temporary scratch buffer needed by multipole_create.
  *
  * The scratch is a flat array of at least (order + 1)^3 elements.
