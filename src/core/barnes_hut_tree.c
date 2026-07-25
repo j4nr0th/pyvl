@@ -8,46 +8,6 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* Default allocator (libc malloc/free fallback)                      */
-/* ------------------------------------------------------------------ */
-
-static void *bh_default_allocate(void *state, size_t size)
-{
-    (void)state;
-    return malloc(size);
-}
-static void bh_default_deallocate(void *state, void *ptr)
-{
-    (void)state;
-    free(ptr);
-}
-static void *bh_default_reallocate(void *state, void *ptr, size_t new_size)
-{
-    (void)state;
-    return realloc(ptr, new_size);
-}
-static const allocator_t BH_DEFAULT_ALLOCATOR = {
-    .allocate = bh_default_allocate,
-    .deallocate = bh_default_deallocate,
-    .reallocate = bh_default_reallocate,
-    .state = NULL,
-};
-
-static inline const allocator_t *bh_allocator(const allocator_t *allocator)
-{
-    return allocator ? allocator : &BH_DEFAULT_ALLOCATOR;
-}
-static inline void *bh_alloc(const allocator_t *allocator, size_t size)
-{
-    return bh_allocator(allocator)->allocate(bh_allocator(allocator)->state, size);
-}
-static inline void bh_free(const allocator_t *allocator, void *ptr)
-{
-    if (ptr)
-        bh_allocator(allocator)->deallocate(bh_allocator(allocator)->state, ptr);
-}
-
-/* ------------------------------------------------------------------ */
 /* Work buffer partition helper                                       */
 /* ------------------------------------------------------------------ */
 
@@ -68,78 +28,90 @@ static barnes_hut_work_t partition_work_buffer(octree_base_work_sizes_t work_siz
 }
 
 /* ------------------------------------------------------------------ */
-/* Insert pass                                                        */
+/* Staged build helpers                                               */
+/* ------------------------------------------------------------------ */
+
+size_t barnes_hut_scratch_size(unsigned n_sources, const barnes_hut_settings_t *settings, unsigned n_threads)
+{
+    return octree_scratch_size(n_sources, n_threads, (const octree_settings_t *)settings);
+}
+
+bool barnes_hut_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_sources, unsigned n_threads,
+                                const real3_t sources_coords[restrict n_sources],
+                                const barnes_hut_settings_t settings[restrict], octree_count_t *out_count,
+                                octree_scratch_t *out_scratch)
+{
+    if (scratch_buffer == NULL || out_count == NULL || out_scratch == NULL)
+        return false;
+    if (n_sources == 0 || settings == NULL || sources_coords == NULL)
+        return false;
+
+    const octree_scratch_sizes_t sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
+    if (scratch_size < octree_total_scratch_size(sz, n_threads))
+        return false;
+
+    *out_scratch = octree_scratch_partition(n_threads, scratch_buffer, sz);
+    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
+    memset(out_scratch->topo, 0, topo_bytes);
+
+    *out_count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings, out_scratch->topo,
+                                   out_scratch->source_leaf_topo);
+    return true;
+}
+
+size_t barnes_hut_work_size(unsigned n_sources, const barnes_hut_settings_t *settings, const octree_count_t *count)
+{
+    if (count == NULL || count->n_internal + count->n_multipole_leaves + count->n_particle_leaves == 0)
+        return 0;
+    const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, *count);
+    return octree_total_work_size(ws);
+}
+
+/* ------------------------------------------------------------------ */
+/* Insert pass (pre-counted, pre-partitioned scratch)                 */
 /* ------------------------------------------------------------------ */
 
 bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                             const real3_t sources_values[restrict n_sources],
-                            const barnes_hut_settings_t settings[restrict], void *scratch_buffer, size_t scratch_size,
-                            const allocator_t *allocator, void *buffer, size_t buffer_size, barnes_hut_tree_t *out)
+                            const barnes_hut_settings_t settings[restrict], const octree_count_t *count,
+                            const octree_scratch_t *scratch, const allocator_t *allocator, void *buffer,
+                            size_t buffer_size, barnes_hut_tree_t *out)
 {
-    (void)allocator;
-    if (!buffer || !out || !scratch_buffer)
+    if (!buffer || !out || !scratch || !count)
         return false;
     if (n_sources == 0 || settings == NULL || sources_coords == NULL || sources_values == NULL)
         return false;
 
-    const octree_scratch_sizes_t scratch_sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
-    if (scratch_size < octree_total_scratch_size(scratch_sz, n_threads))
-        return false;
-    const octree_scratch_t scratch = octree_scratch_partition(n_threads, scratch_buffer, scratch_sz);
-    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
-    memset(scratch.topo, 0, topo_bytes);
-
-    const octree_count_t count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings,
-                                                   scratch.topo, scratch.source_leaf_topo);
-    const unsigned n_topo = count.n_internal + count.n_multipole_leaves + count.n_particle_leaves;
+    const unsigned n_topo = count->n_internal + count->n_multipole_leaves + count->n_particle_leaves;
     if (n_topo == 0)
         return false;
 
-    const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, count);
+    const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, *count);
     if (buffer_size < octree_total_work_size(ws))
         return false;
     const barnes_hut_work_t work = partition_work_buffer(ws, buffer);
 
     /* Shared pipeline. */
-    octree_materialize(scratch.topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
+    octree_materialize(scratch->topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
                        work.multipole_coeffs, work.mp_slices, n_threads);
-    octree_descend(n_sources, sources_coords, n_topo, work.nodes, scratch.source_leaf_real, n_threads);
+    octree_descend(n_sources, sources_coords, work.nodes, scratch->source_leaf_real, n_threads);
 
-    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count.max_depth, NULL, NULL);
+    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL);
 
-    octree_fill_particle_order(n_sources, scratch.source_leaf_real, work.nodes, work.particle_order, n_threads);
+    octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
 
     if (n_mp > 0)
     {
         if (!octree_build_leaf_multipoles(n_topo, work.nodes, work.particle_order, sources_coords, sources_values,
-                                          (const octree_settings_t *)settings, scratch, n_sources, n_threads,
+                                          (const octree_settings_t *)settings, *scratch, n_sources, n_threads,
                                           work.mp_slices, n_mp, allocator))
             return false;
     }
 
-    /* Upward sweep. */
-    {
-        const unsigned order = settings->order;
-        const size_t n_coeffs = multipole_num_coeffs(order);
-        const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
-        const size_t leaf_stride = octree_leaf_stride(order);
-        const size_t shift_stride = octree_shift_stride(work_order);
-        const size_t pse_stride = octree_pse_stride(work_order);
-
-        unsigned depth_start[256], depth_end[256];
-        octree_compute_depth_ranges(n_topo, work.nodes, count.max_depth, depth_start, depth_end);
-
-        for (unsigned d = count.max_depth;; --d)
-        {
-            octree_upward_sweep_level(depth_start[d], depth_end[d], work.nodes, order, n_coeffs, work.mp_slices,
-                                      work_order, scratch.shift_exp, scratch.pse, shift_stride, pse_stride,
-                                      work.particle_order, sources_coords, sources_values, &scratch, leaf_stride,
-                                      n_threads);
-            if (d == 0)
-                break;
-        }
-    }
+    /* Upward sweep (M2M). */
+    octree_run_upward_sweep(n_topo, work.nodes, count->max_depth, (const octree_settings_t *)settings, work.mp_slices,
+                            scratch, work.particle_order, sources_coords, sources_values, n_threads);
 
     /* Populate tree handle. */
     out->settings = *settings;
@@ -147,10 +119,10 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_
     out->root_half_size = work.nodes[0].half_size;
     out->n_sources = n_sources;
     out->n_nodes = n_topo;
-    out->n_internal = count.n_internal;
+    out->n_internal = count->n_internal;
     out->n_multipole_leaves = n_mp;
-    out->n_particle_leaves = count.n_particle_leaves;
-    out->max_depth_reached = count.max_depth;
+    out->n_particle_leaves = count->n_particle_leaves;
+    out->max_depth_reached = count->max_depth;
     out->buffer = (uint8_t *)buffer;
     out->buffer_size = buffer_size;
     out->nodes = work.nodes;
@@ -166,107 +138,52 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads, const real3_t
                            const barnes_hut_settings_t settings[restrict], const allocator_t *allocator,
                            barnes_hut_tree_t *out)
 {
-    void *scratch_buffer = NULL, *work_buffer = NULL;
+    void *scratch_buffer = NULL;
     bool ret = false;
 
     if (!out || n_sources == 0 || settings == NULL || sources_coords == NULL || sources_values == NULL)
         return false;
 
-    /* Scratch: size, allocate, partition. */
-    const octree_scratch_sizes_t scratch_sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
-    const size_t needed_scratch = octree_total_scratch_size(scratch_sz, n_threads);
+    /* 1. Size scratch. */
+    const size_t needed_scratch = barnes_hut_scratch_size(n_sources, settings, n_threads);
     if (needed_scratch == 0)
         return false;
 
-    scratch_buffer = bh_alloc(allocator, needed_scratch);
+    /* 2. Allocate scratch. */
+    scratch_buffer = octree_alloc(allocator, needed_scratch);
     if (!scratch_buffer)
         return false;
 
-    const octree_scratch_t scratch = octree_scratch_partition(n_threads, scratch_buffer, scratch_sz);
-    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
-    memset(scratch.topo, 0, topo_bytes);
+    /* 3. Prepare scratch (partition + count). */
+    octree_count_t count;
+    octree_scratch_t scratch;
+    if (!barnes_hut_prepare_scratch(scratch_buffer, needed_scratch, n_sources, n_threads, sources_coords, settings,
+                                    &count, &scratch))
+        goto cleanup;
 
-    /* Count pass. */
-    const octree_count_t count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings,
-                                                   scratch.topo, scratch.source_leaf_topo);
+    /* 4. Size work buffer. */
+    const size_t total_work_size = barnes_hut_work_size(n_sources, settings, &count);
+    if (total_work_size == 0)
+        goto cleanup;
 
-    /* Work buffer: size and allocate. */
-    const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, count);
-    const size_t total_work_size = octree_total_work_size(ws);
-    work_buffer = bh_alloc(allocator, total_work_size);
+    /* 5. Allocate work buffer. */
+    void *work_buffer = octree_alloc(allocator, total_work_size);
     if (!work_buffer)
         goto cleanup;
 
-    /* Delegate to insert logic (count already done). */
-    /* We reuse barnes_hut_tree_insert by pretending scratch is fresh. Actually
-     * insert re-runs count pass which is wasteful.  Inline pipeline instead: */
-    const unsigned n_topo = count.n_internal + count.n_multipole_leaves + count.n_particle_leaves;
-    if (n_topo == 0)
+    /* 6. Full pipeline (insert). */
+    if (!barnes_hut_tree_insert(n_sources, n_threads, sources_coords, sources_values, settings, &count, &scratch,
+                                allocator, work_buffer, total_work_size, out))
+    {
+        octree_free(allocator, work_buffer);
         goto cleanup;
-
-    const barnes_hut_work_t work = partition_work_buffer(ws, work_buffer);
-
-    octree_materialize(scratch.topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
-                       work.multipole_coeffs, work.mp_slices, n_threads);
-    octree_descend(n_sources, sources_coords, n_topo, work.nodes, scratch.source_leaf_real, n_threads);
-
-    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count.max_depth, NULL, NULL);
-
-    octree_fill_particle_order(n_sources, scratch.source_leaf_real, work.nodes, work.particle_order, n_threads);
-    octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
-
-    if (n_mp > 0)
-    {
-        if (!octree_build_leaf_multipoles(n_topo, work.nodes, work.particle_order, sources_coords, sources_values,
-                                          (const octree_settings_t *)settings, scratch, n_sources, n_threads,
-                                          work.mp_slices, n_mp, allocator))
-            goto cleanup;
     }
 
-    {
-        const unsigned order = settings->order;
-        const size_t n_coeffs = multipole_num_coeffs(order);
-        const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
-        const size_t leaf_stride = octree_leaf_stride(order);
-        const size_t shift_stride = octree_shift_stride(work_order);
-        const size_t pse_stride = octree_pse_stride(work_order);
-
-        unsigned depth_start[256], depth_end[256];
-        octree_compute_depth_ranges(n_topo, work.nodes, count.max_depth, depth_start, depth_end);
-
-        for (unsigned d = count.max_depth;; --d)
-        {
-            octree_upward_sweep_level(depth_start[d], depth_end[d], work.nodes, order, n_coeffs, work.mp_slices,
-                                      work_order, scratch.shift_exp, scratch.pse, shift_stride, pse_stride,
-                                      work.particle_order, sources_coords, sources_values, &scratch, leaf_stride,
-                                      n_threads);
-            if (d == 0)
-                break;
-        }
-    }
-
-    out->settings = *settings;
-    out->root_center = work.nodes[0].center;
-    out->root_half_size = work.nodes[0].half_size;
-    out->n_sources = n_sources;
-    out->n_nodes = n_topo;
-    out->n_internal = count.n_internal;
-    out->n_multipole_leaves = n_mp;
-    out->n_particle_leaves = count.n_particle_leaves;
-    out->max_depth_reached = count.max_depth;
-    out->buffer = (uint8_t *)work_buffer;
-    out->buffer_size = total_work_size;
-    out->nodes = work.nodes;
-    out->particle_order = work.particle_order;
-    out->multipole_coeffs = work.multipole_coeffs;
-    out->mp_slices = work.mp_slices;
-
-    work_buffer = NULL; /* ownership transferred */
     ret = true;
 
 cleanup:
-    bh_free(allocator, work_buffer);
-    bh_free(allocator, scratch_buffer);
+    /* 7. Release scratch. */
+    octree_free(allocator, scratch_buffer);
     return ret;
 }
 
@@ -309,14 +226,6 @@ size_t barnes_hut_tree_memory_bytes(const barnes_hut_tree_t *tree)
 /* ------------------------------------------------------------------ */
 /* Particle kernel and MAC                                            */
 /* ------------------------------------------------------------------ */
-
-static inline real3_t particle_kernel(real3_t gamma, real3_t r_vec)
-{
-    const real_t r2 = real3_dot(r_vec, r_vec);
-    if (r2 < 1e-30)
-        return (real3_t){.x = 0, .y = 0, .z = 0};
-    return real3_mul1(gamma, 1.0 / r2);
-}
 
 /**
  * @brief Multipole Acceptance Criterion (MAC).

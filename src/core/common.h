@@ -357,6 +357,19 @@ static inline int geo_id_compare(const geo_id_t id1, const geo_id_t id2)
     return -1;
 }
 
+/** @brief Kernel function: Γ/|r|².
+ *
+ * Returns @p gamma scaled by 1/|r_vec|², with zero at the origin.
+ * Used by both Barnes-Hut and FMM tree-code evaluation.
+ */
+static inline real3_t particle_kernel(real3_t gamma, real3_t r_vec)
+{
+    const real_t r2 = real3_dot(r_vec, r_vec);
+    if (r2 < 1e-30)
+        return (real3_t){.x = 0, .y = 0, .z = 0};
+    return real3_mul1(gamma, 1.0 / r2);
+}
+
 typedef struct
 {
     void *(*allocate)(void *state, size_t size);

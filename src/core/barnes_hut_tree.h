@@ -80,14 +80,51 @@ typedef struct
 } barnes_hut_work_t;
 
 /* ------------------------------------------------------------------ */
-/* Build                                                              */
+/* Staged build API                                                   */
+/*                                                                   */
+/*  1. barnes_hut_scratch_size()  →  total scratch bytes             */
+/*  2. caller allocates scratch                                      */
+/*  3. barnes_hut_prepare_scratch()  →  count + partitioned scratch  */
+/*  4. barnes_hut_work_size()  →  total work bytes                   */
+/*  5. caller allocates work buffer                                  */
+/*  6. barnes_hut_tree_insert()  →  full pipeline into tree handle   */
+/*  7. caller (or build) releases scratch buffer                     */
+/*                                                                   */
+/*  barnes_hut_tree_build() does all seven steps internally.         */
 /* ------------------------------------------------------------------ */
 
+/** @brief Total scratch buffer bytes needed for count + build. */
+size_t barnes_hut_scratch_size(unsigned n_sources, const barnes_hut_settings_t *settings, unsigned n_threads);
+
+/**
+ * @brief Partition scratch buffer, zero topo, run count pass.
+ *
+ * @param scratch_buffer  Buffer of at least @ref barnes_hut_scratch_size bytes.
+ * @param scratch_size    Size of scratch_buffer.
+ * @param n_sources       Number of source particles.
+ * @param n_threads       OpenMP thread count.
+ * @param sources_coords  Source positions.
+ * @param settings        Tree settings.
+ * @param out_count       Filled with node counts from the pass.
+ * @param out_scratch     Filled with partitioned scratch view.
+ * @return true on success.
+ */
+bool barnes_hut_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_sources, unsigned n_threads,
+                                const real3_t sources_coords[restrict n_sources],
+                                const barnes_hut_settings_t settings[restrict], octree_count_t *out_count,
+                                octree_scratch_t *out_scratch);
+
+/** @brief Total work buffer bytes needed given a finished count pass. */
+size_t barnes_hut_work_size(unsigned n_sources, const barnes_hut_settings_t *settings, const octree_count_t *count);
+
+/** @brief Insert pass — takes pre-counted, pre-partitioned scratch + pre-sized work buffer. */
 bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                             const real3_t sources_values[restrict n_sources],
-                            const barnes_hut_settings_t settings[restrict], void *scratch_buffer, size_t scratch_size,
-                            const allocator_t *allocator, void *buffer, size_t buffer_size, barnes_hut_tree_t *out);
+                            const barnes_hut_settings_t settings[restrict], const octree_count_t *count,
+                            const octree_scratch_t *scratch, const allocator_t *allocator, void *buffer,
+                            size_t buffer_size, barnes_hut_tree_t *out);
 
+/** @brief Allocate + build in one call. */
 bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                            const real3_t sources_values[restrict n_sources],
                            const barnes_hut_settings_t settings[restrict], const allocator_t *allocator,

@@ -9,51 +9,6 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* Default allocator (libc malloc/free fallback)                      */
-/* ------------------------------------------------------------------ */
-
-static void *fmm_default_allocate(void *state, size_t size)
-{
-    (void)state;
-    return malloc(size);
-}
-static void fmm_default_deallocate(void *state, void *ptr)
-{
-    (void)state;
-    free(ptr);
-}
-static void *fmm_default_reallocate(void *state, void *ptr, size_t new_size)
-{
-    (void)state;
-    return realloc(ptr, new_size);
-}
-static const allocator_t FMM_DEFAULT_ALLOCATOR = {
-    .allocate = fmm_default_allocate,
-    .deallocate = fmm_default_deallocate,
-    .reallocate = fmm_default_reallocate,
-    .state = NULL,
-};
-
-static inline const allocator_t *fmm_allocator(const allocator_t *allocator)
-{
-    return allocator ? allocator : &FMM_DEFAULT_ALLOCATOR;
-}
-
-static inline void *fmm_alloc(const allocator_t *allocator, size_t size)
-{
-    const allocator_t *a = fmm_allocator(allocator);
-    return a->allocate(a->state, size);
-}
-
-static inline void fmm_free(const allocator_t *allocator, void *ptr)
-{
-    if (ptr == NULL)
-        return;
-    const allocator_t *a = fmm_allocator(allocator);
-    a->deallocate(a->state, ptr);
-}
-
-/* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -112,25 +67,39 @@ size_t fmm_total_work_size(fmm_work_sizes_t sizes)
  * @param out_vlist_count  Output total V-list entries written.
  * @param out_nflist_count Output total near-field entries written.
  */
-static void fmm_compute_interaction_lists(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(nodes, restrict),
-                                          unsigned n_leaves,
+static bool fmm_compute_interaction_lists(const octree_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned n_leaves,
                                           const unsigned CVL_ARRAY_ARG(leaf_indices, restrict n_leaves),
                                           unsigned CVL_ARRAY_ARG(vlist_offsets, restrict n_leaves + 1),
                                           unsigned CVL_ARRAY_ARG(vlist_indices, restrict), size_t vlist_capacity,
                                           unsigned CVL_ARRAY_ARG(nflist_offsets, restrict n_leaves + 1),
                                           unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
-                                          size_t *out_vlist_count, size_t *out_nflist_count)
+                                          size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads)
 {
-    (void)n_nodes;
-    size_t vlist_total = 0;
-    size_t nflist_total = 0;
+    if (n_leaves == 0)
+    {
+        vlist_offsets[0] = nflist_offsets[0] = 0;
+        *out_vlist_count = *out_nflist_count = 0;
+        return true;
+    }
 
+    /*
+     * Two-pass CSR construction:
+     *   Pass 1 (parallel) — count per-leaf V-list and near-field entries.
+     *   Pass 2 (serial)   — prefix-sum to build global CSR offsets.
+     *   Pass 3 (parallel) — fill index arrays using precomputed offsets.
+     *
+     * This avoids a critical section on shared counters while keeping
+     * the distance computations simple.
+     */
+
+    /* Pass 1: count per-leaf entries (parallel, writes to vlist_offsets/nflist_offsets). */
+#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets)            \
+    schedule(static) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         const unsigned idx_a = leaf_indices[li];
         const octree_node_t *node_a = &nodes[idx_a];
-        vlist_offsets[li] = (unsigned)vlist_total;
-        nflist_offsets[li] = (unsigned)nflist_total;
+        unsigned vcnt = 0, nfcnt = 0;
 
         for (unsigned lj = 0; lj < n_leaves; ++lj)
         {
@@ -143,26 +112,65 @@ static void fmm_compute_interaction_lists(unsigned n_nodes, const octree_node_t 
             const real_t dist = real3_mag(diff);
             const real_t max_h = (node_a->half_size > node_b->half_size) ? node_a->half_size : node_b->half_size;
 
-            /* V-list criterion: |center_diff| >= 3 * max(half_a, half_b). */
             if (dist >= 3.0 * max_h - 1e-12)
-            {
-                if (vlist_total < vlist_capacity)
-                    vlist_indices[vlist_total] = lj;
-                vlist_total++;
-            }
+                vcnt++;
             else
-            {
-                if (nflist_total < nflist_capacity)
-                    nflist_indices[nflist_total] = lj;
-                nflist_total++;
-            }
+                nfcnt++;
         }
+        vlist_offsets[li] = vcnt;
+        nflist_offsets[li] = nfcnt;
+    }
+
+    /* Pass 2: prefix-sum to build CSR offsets (serial). */
+    size_t vlist_total = 0, nflist_total = 0;
+    for (unsigned li = 0; li < n_leaves; ++li)
+    {
+        const unsigned vcnt = vlist_offsets[li];
+        const unsigned nfcnt = nflist_offsets[li];
+        vlist_offsets[li] = (unsigned)vlist_total;
+        nflist_offsets[li] = (unsigned)nflist_total;
+        vlist_total += vcnt;
+        nflist_total += nfcnt;
     }
     vlist_offsets[n_leaves] = (unsigned)vlist_total;
     nflist_offsets[n_leaves] = (unsigned)nflist_total;
 
+    /* Check capacity before writing indices. */
+    if (vlist_total > vlist_capacity || nflist_total > nflist_capacity)
+        return false;
+
+    /* Pass 3: fill index arrays (parallel). */
+#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices,             \
+                                                  nflist_offsets, nflist_indices, vlist_total, nflist_total)           \
+    schedule(static) num_threads(n_threads)
+    for (unsigned li = 0; li < n_leaves; ++li)
+    {
+        unsigned vi = vlist_offsets[li];
+        unsigned nfi = nflist_offsets[li];
+
+        for (unsigned lj = 0; lj < n_leaves; ++lj)
+        {
+            if (li == lj)
+                continue;
+            const unsigned idx_b = leaf_indices[lj];
+            const unsigned idx_a = leaf_indices[li];
+            const octree_node_t *node_a = &nodes[idx_a];
+            const octree_node_t *node_b = &nodes[idx_b];
+
+            const real3_t diff = real3_sub(node_a->center, node_b->center);
+            const real_t dist = real3_mag(diff);
+            const real_t max_h = (node_a->half_size > node_b->half_size) ? node_a->half_size : node_b->half_size;
+
+            if (dist >= 3.0 * max_h - 1e-12)
+                vlist_indices[vi++] = lj;
+            else
+                nflist_indices[nfi++] = lj;
+        }
+    }
+
     *out_vlist_count = vlist_total;
     *out_nflist_count = nflist_total;
+    return true;
 }
 
 /**
@@ -382,14 +390,6 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, octree_node_t CVL_ARRAY_ARG
 /* Particle kernel                                                    */
 /* ------------------------------------------------------------------ */
 
-static inline real3_t fmm_particle_kernel(real3_t gamma, real3_t r_vec)
-{
-    const real_t r2 = real3_dot(r_vec, r_vec);
-    if (r2 < 1e-30)
-        return (real3_t){.x = 0, .y = 0, .z = 0};
-    return real3_mul1(gamma, 1.0 / r2);
-}
-
 /* ------------------------------------------------------------------ */
 /* Tree-code evaluation (single point)                                */
 /* ------------------------------------------------------------------ */
@@ -475,7 +475,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
         for (unsigned kk = 0; kk < tree->n_sources; ++kk)
         {
             const real3_t dr = real3_sub(point, sources_coords[kk]);
-            result = real3_add(result, fmm_particle_kernel(sources_values[kk], dr));
+            result = real3_add(result, particle_kernel(sources_values[kk], dr));
         }
     }
 
@@ -493,7 +493,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
             {
                 const unsigned src = tree->particle_order[kk];
                 const real3_t dr = real3_sub(point, sources_coords[src]);
-                result = real3_add(result, fmm_particle_kernel(sources_values[src], dr));
+                result = real3_add(result, particle_kernel(sources_values[src], dr));
             }
         }
 
@@ -507,7 +507,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
             {
                 const unsigned src = tree->particle_order[kk];
                 const real3_t dr = real3_sub(point, sources_coords[src]);
-                result = real3_add(result, fmm_particle_kernel(sources_values[src], dr));
+                result = real3_add(result, particle_kernel(sources_values[src], dr));
             }
         }
     }
@@ -595,140 +595,93 @@ static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsig
 }
 
 /* ------------------------------------------------------------------ */
-/* fmm_tree_build (convenience — allocates internally)                */
+/* Staged build helpers                                               */
 /* ------------------------------------------------------------------ */
 
-bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
-                    const real3_t sources_values[restrict n_sources], const fmm_settings_t settings[restrict],
-                    const allocator_t *allocator, fmm_tree_t *out)
+size_t fmm_scratch_size(unsigned n_sources, const fmm_settings_t *settings, unsigned n_threads)
 {
-    void *scratch_buffer = NULL, *work_buffer = NULL;
-    bool ret = false;
+    return octree_scratch_size(n_sources, n_threads, (const octree_settings_t *)settings);
+}
 
-    if (!out || n_sources == 0 || settings == NULL || sources_coords == NULL || sources_values == NULL)
+bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_sources, unsigned n_threads,
+                         const real3_t sources_coords[restrict n_sources], const fmm_settings_t settings[restrict],
+                         octree_count_t *out_count, octree_scratch_t *out_scratch)
+{
+    if (scratch_buffer == NULL || out_count == NULL || out_scratch == NULL)
+        return false;
+    if (n_sources == 0 || settings == NULL || sources_coords == NULL)
         return false;
 
-    /* Scratch. */
-    const size_t needed_scratch = octree_scratch_size(n_sources, n_threads, (const octree_settings_t *)settings);
-    if (needed_scratch == 0)
-        return false;
-    scratch_buffer = fmm_alloc(allocator, needed_scratch);
-    if (!scratch_buffer)
+    const octree_scratch_sizes_t sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
+    if (scratch_size < octree_total_scratch_size(sz, n_threads))
         return false;
 
-    const octree_scratch_sizes_t scratch_sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
-    const octree_scratch_t scratch = octree_scratch_partition(n_threads, scratch_buffer, scratch_sz);
+    *out_scratch = octree_scratch_partition(n_threads, scratch_buffer, sz);
     const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
-    memset(scratch.topo, 0, topo_bytes);
+    memset(out_scratch->topo, 0, topo_bytes);
 
-    /* Count pass. */
-    const octree_count_t count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings,
-                                                   scratch.topo, scratch.source_leaf_topo);
+    *out_count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings, out_scratch->topo,
+                                   out_scratch->source_leaf_topo);
+    return true;
+}
 
-    /* Work buffer. */
-    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, count);
-    const size_t total_work_size = fmm_total_work_size(ws);
-    work_buffer = fmm_alloc(allocator, total_work_size);
-    if (!work_buffer)
-        goto cleanup;
-
-    /* Build pipeline. */
-    if (!fmm_tree_insert(n_sources, n_threads, sources_coords, sources_values, settings, scratch_buffer, needed_scratch,
-                         allocator, work_buffer, total_work_size, out))
-        goto cleanup;
-
-    out->buffer = (uint8_t *)work_buffer;
-    out->buffer_size = total_work_size;
-    work_buffer = NULL; /* ownership transferred */
-    ret = true;
-
-cleanup:
-    fmm_free(allocator, work_buffer);
-    fmm_free(allocator, scratch_buffer);
-    return ret;
+size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count)
+{
+    if (count == NULL || count->n_internal + count->n_multipole_leaves + count->n_particle_leaves == 0)
+        return 0;
+    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count);
+    return fmm_total_work_size(ws);
 }
 
 /* ------------------------------------------------------------------ */
-/* fmm_tree_insert (pre-allocated buffers)                            */
+/* fmm_tree_insert (pre-counted, pre-partitioned scratch)             */
 /* ------------------------------------------------------------------ */
 
 bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                      const real3_t sources_values[restrict n_sources], const fmm_settings_t settings[restrict],
-                     void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, void *buffer,
-                     size_t buffer_size, fmm_tree_t *out)
+                     const octree_count_t *count, const octree_scratch_t *scratch, const allocator_t *allocator,
+                     void *buffer, size_t buffer_size, fmm_tree_t *out)
 {
-    uint32_t *mp_leaf_indices = NULL;
     bool ret = false;
 
-    if (!buffer || !out || !scratch_buffer)
+    if (!buffer || !out || !scratch || !count)
         return false;
     if (n_sources == 0 || settings == NULL)
         return false;
 
-    /* Partition scratch. */
-    const octree_scratch_sizes_t scratch_sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
-    if (scratch_size < octree_total_scratch_size(scratch_sz, n_threads))
-        return false;
-    const octree_scratch_t scratch = octree_scratch_partition(n_threads, scratch_buffer, scratch_sz);
-    const size_t topo_bytes = (8u * (size_t)n_sources + 1u) * sizeof(topo_node_t);
-    memset(scratch.topo, 0, topo_bytes);
-
-    /* Count pass. */
-    const octree_count_t count = octree_count_pass(n_sources, sources_coords, (const octree_settings_t *)settings,
-                                                   scratch.topo, scratch.source_leaf_topo);
-
-    const unsigned n_topo = count.n_internal + count.n_multipole_leaves + count.n_particle_leaves;
+    const unsigned n_topo = count->n_internal + count->n_multipole_leaves + count->n_particle_leaves;
     if (n_topo == 0)
         return false;
 
     /* Size work buffer and validate. */
-    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, count);
+    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count);
     if (buffer_size < fmm_total_work_size(ws))
         return false;
 
-    const unsigned n_leaves = count.n_multipole_leaves + count.n_particle_leaves;
+    const unsigned n_leaves = count->n_multipole_leaves + count->n_particle_leaves;
     const fmm_work_t work = fmm_partition_work(ws, buffer, n_leaves);
 
     /* === Shared pipeline stages === */
-    octree_materialize(scratch.topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
+    octree_materialize(scratch->topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
                        work.multipole_coeffs, work.mp_slices, n_threads);
-    octree_descend(n_sources, sources_coords, n_topo, work.nodes, scratch.source_leaf_real, n_threads);
+    octree_descend(n_sources, sources_coords, work.nodes, scratch->source_leaf_real, n_threads);
 
-    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count.max_depth, NULL, NULL);
+    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL);
 
-    octree_fill_particle_order(n_sources, scratch.source_leaf_real, work.nodes, work.particle_order, n_threads);
+    octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
 
     if (n_mp > 0)
     {
         if (!octree_build_leaf_multipoles(n_topo, work.nodes, work.particle_order, sources_coords, sources_values,
-                                          (const octree_settings_t *)settings, scratch, n_sources, n_threads,
+                                          (const octree_settings_t *)settings, *scratch, n_sources, n_threads,
                                           work.mp_slices, n_mp, allocator))
             goto cleanup;
     }
 
     /* Upward sweep (M2M). */
-    {
-        const unsigned order = settings->order;
-        const size_t n_coeffs = multipole_num_coeffs(order);
-        const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
-        const size_t leaf_stride = octree_leaf_stride(order);
-        const size_t shift_stride = octree_shift_stride(work_order);
-        const size_t pse_stride = octree_pse_stride(work_order);
-
-        unsigned depth_start[256], depth_end[256];
-        octree_compute_depth_ranges(n_topo, work.nodes, count.max_depth, depth_start, depth_end);
-
-        for (unsigned d = count.max_depth;; --d)
-        {
-            octree_upward_sweep_level(depth_start[d], depth_end[d], work.nodes, order, n_coeffs, work.mp_slices,
-                                      work_order, scratch.shift_exp, scratch.pse, shift_stride, pse_stride,
-                                      work.particle_order, sources_coords, sources_values, &scratch, leaf_stride,
-                                      n_threads);
-            if (d == 0)
-                break;
-        }
-    }
+    octree_run_upward_sweep(n_topo, work.nodes, count->max_depth, (const octree_settings_t *)settings, work.mp_slices,
+                            scratch, work.particle_order, sources_coords, sources_values, n_threads);
 
     /* === FMM-specific stages === */
 
@@ -737,9 +690,10 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         fmm_build_leaf_index_map(n_topo, work.nodes, work.leaf_indices);
 
         size_t vlist_count = 0, nflist_count = 0;
-        fmm_compute_interaction_lists(n_topo, work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets,
-                                      work.vlist_indices, work.vlist_capacity, work.nflist_offsets, work.nflist_indices,
-                                      work.nflist_capacity, &vlist_count, &nflist_count);
+        if (!fmm_compute_interaction_lists(
+                work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets, work.vlist_indices, work.vlist_capacity,
+                work.nflist_offsets, work.nflist_indices, work.nflist_capacity, &vlist_count, &nflist_count, n_threads))
+            goto cleanup;
 
         out->leaf_indices = work.leaf_indices;
         out->vlist_offsets = work.vlist_offsets;
@@ -751,15 +705,14 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         out->n_leaves = n_leaves;
     }
 
-    /* M2L + L2L. */
+    /* M2L (multipole-to-local). */
     {
         const unsigned order = settings->order;
         const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
 
         fmm_assign_local_slices(n_topo, work.nodes, order, work.local_coeffs, work.local_slices);
         fmm_m2l_sweep(n_topo, work.nodes, n_leaves, work.leaf_indices, order, work_order, work.mp_slices,
-                      work.local_slices, work.vlist_offsets, work.vlist_indices, &scratch, n_threads);
-        fmm_downward_l2l_sweep(n_topo, work.nodes, order, work_order, work.local_slices, &scratch, n_threads);
+                      work.local_slices, work.vlist_offsets, work.vlist_indices, scratch, n_threads);
 
         out->local_coeffs = work.local_coeffs;
         out->local_slices = work.local_slices;
@@ -771,10 +724,10 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
     out->root_half_size = work.nodes[0].half_size;
     out->n_sources = n_sources;
     out->n_nodes = n_topo;
-    out->n_internal = count.n_internal;
+    out->n_internal = count->n_internal;
     out->n_multipole_leaves = n_mp;
-    out->n_particle_leaves = count.n_particle_leaves;
-    out->max_depth_reached = count.max_depth;
+    out->n_particle_leaves = count->n_particle_leaves;
+    out->max_depth_reached = count->max_depth;
     out->buffer = (uint8_t *)buffer;
     out->buffer_size = buffer_size;
     out->nodes = work.nodes;
@@ -785,7 +738,63 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
     ret = true;
 
 cleanup:
-    fmm_free(allocator, mp_leaf_indices);
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* fmm_tree_build (convenience — allocates internally)                */
+/* ------------------------------------------------------------------ */
+
+bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
+                    const real3_t sources_values[restrict n_sources], const fmm_settings_t settings[restrict],
+                    const allocator_t *allocator, fmm_tree_t *out)
+{
+    void *scratch_buffer = NULL;
+    bool ret = false;
+
+    if (!out || n_sources == 0 || settings == NULL || sources_coords == NULL || sources_values == NULL)
+        return false;
+
+    /* 1. Size scratch. */
+    const size_t needed_scratch = fmm_scratch_size(n_sources, settings, n_threads);
+    if (needed_scratch == 0)
+        return false;
+
+    /* 2. Allocate scratch. */
+    scratch_buffer = octree_alloc(allocator, needed_scratch);
+    if (!scratch_buffer)
+        return false;
+
+    /* 3. Prepare scratch (partition + count). */
+    octree_count_t count;
+    octree_scratch_t scratch;
+    if (!fmm_prepare_scratch(scratch_buffer, needed_scratch, n_sources, n_threads, sources_coords, settings, &count,
+                             &scratch))
+        goto cleanup;
+
+    /* 4. Size work buffer. */
+    const size_t total_work_size = fmm_work_size(n_sources, settings, &count);
+    if (total_work_size == 0)
+        goto cleanup;
+
+    /* 5. Allocate work buffer. */
+    void *work_buffer = octree_alloc(allocator, total_work_size);
+    if (!work_buffer)
+        goto cleanup;
+
+    /* 6. Full pipeline (insert). */
+    if (!fmm_tree_insert(n_sources, n_threads, sources_coords, sources_values, settings, &count, &scratch, allocator,
+                         work_buffer, total_work_size, out))
+    {
+        octree_free(allocator, work_buffer);
+        goto cleanup;
+    }
+
+    ret = true;
+
+cleanup:
+    /* 7. Release scratch. */
+    octree_free(allocator, scratch_buffer);
     return ret;
 }
 

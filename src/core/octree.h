@@ -171,6 +171,35 @@ static inline size_t octree_pse_stride(unsigned work_order)
 /* Count pass                                                       */
 /* ================================================================ */
 
+/* ================================================================ */
+/* Default allocator (shared across tree methods)                    */
+/* ================================================================ */
+
+extern const allocator_t CVL_DEFAULT_ALLOCATOR;
+
+static inline const allocator_t *octree_resolve_allocator(const allocator_t *allocator)
+{
+    return allocator ? allocator : &CVL_DEFAULT_ALLOCATOR;
+}
+
+static inline void *octree_alloc(const allocator_t *allocator, size_t size)
+{
+    const allocator_t *a = octree_resolve_allocator(allocator);
+    return a->allocate(a->state, size);
+}
+
+static inline void octree_free(const allocator_t *allocator, void *ptr)
+{
+    if (ptr == NULL)
+        return;
+    const allocator_t *a = octree_resolve_allocator(allocator);
+    a->deallocate(a->state, ptr);
+}
+
+/* ================================================================ */
+/* Count pass                                                       */
+/* ================================================================ */
+
 octree_count_t octree_count_pass(unsigned n_sources, const real3_t sources_coords[restrict n_sources],
                                  const octree_settings_t *settings, topo_node_t *topo, uint32_t *source_leaf);
 
@@ -200,8 +229,8 @@ void octree_materialize(const topo_node_t topo[restrict], uint32_t n_topo_nodes,
                         uint32_t topo_to_real[restrict n_topo_nodes], octree_node_t *nodes, real_t *multipole_coeffs,
                         real_t *mp_slices[restrict n_topo_nodes], unsigned n_threads);
 
-void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_sources], uint32_t n_nodes,
-                    octree_node_t *nodes, unsigned *source_leaf_real, unsigned n_threads);
+void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_sources], octree_node_t *nodes,
+                    unsigned *source_leaf_real, unsigned n_threads);
 
 unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigned max_depth,
                                  unsigned depth_start[restrict], unsigned depth_end[restrict]);
@@ -229,5 +258,28 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                                const unsigned particle_order[restrict], const real3_t sources_coords[restrict],
                                const real3_t sources_values[restrict], const octree_scratch_t *scratch,
                                size_t leaf_stride, unsigned n_threads);
+
+/**
+ * @brief Run the complete upward sweep (M2M), bottom-to-top.
+ *
+ * Iterates from @p max_depth down to 0, aggregating child multipoles
+ * (or particle sources) into each internal node via @ref octree_upward_sweep_level.
+ *
+ * @param n_nodes          Number of nodes.
+ * @param nodes            Node array.
+ * @param max_depth        Maximum tree depth.
+ * @param settings         Tree settings (order, work_order).
+ * @param mp_slices        Per-node multipole coefficient slices.
+ * @param scratch          Scratch buffer (per-thread shift_exp/pse/leaf buffers).
+ * @param particle_order   Source → leaf particle ordering.
+ * @param sources_coords   Source coordinates.
+ * @param sources_values   Source strengths.
+ * @param n_threads        Number of OpenMP threads.
+ */
+void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], unsigned max_depth,
+                             const octree_settings_t settings[restrict], real_t **restrict mp_slices,
+                             const octree_scratch_t *scratch, const unsigned particle_order[restrict],
+                             const real3_t sources_coords[restrict], const real3_t sources_values[restrict],
+                             unsigned n_threads);
 
 /* OCTREE_H */

@@ -48,8 +48,9 @@ The build stages are:
 8. **M2M** — upward sweep: aggregates child multipoles into each internal
    node via :c:func:`multipole_add_shift`.
 
-The FMM tree adds three extra stages (interaction lists, M2L, L2L) on
-top of this shared base.
+The FMM tree adds two extra stages (interaction lists, M2L) on
+top of this shared base.  The L2L stage was removed during refactoring
+— it was dead code because M2L is done at leaf level only.
 
 The unified node type
 ---------------------
@@ -81,9 +82,10 @@ The old separate ``bh_node_t`` / ``fmm_node_t`` types and their
 removed — use ``octree_node_t`` and ``OCTREE_NODE_*`` directly
 everywhere.
 
-The old ``barnes_hut_*`` / ``fmm_*`` wrapper functions for sizing
-and counting have been removed — use the ``octree_*`` functions
-below directly.
+The BH and FMM tree modules provide **staged build wrappers** that
+encapsulate the two-pass protocol and expose the sizing and count
+functions :ref:`barnes_hut_tree <pyvl.private_c.barnes_hut_tree>` and
+:ref:`fmm_tree <pyvl.private_c.fmm_tree>`.
 
 
 Buffer-passing API
@@ -100,23 +102,32 @@ allocated internally.  The two-tier buffer strategy:
   coefficient storage, and (for FMM) interaction lists and local
   expansions.
 
-Typical usage (two-pass build)::
+The BH and FMM tree modules provide **staged build wrappers** that
+encapsulate the two-pass protocol — see
+:ref:`barnes_hut_tree <pyvl.private_c.barnes_hut_tree>` and
+:ref:`fmm_tree <pyvl.private_c.fmm_tree>` for details.
 
-    // 1. Count pass — learn topology size
-    octree_scratch_t scratch = octree_scratch_partition(n_threads, scratch_buf,
-                                octree_size_scratch(n_sources, settings));
-    memset(scratch.topo, 0, (8*n_sources+1) * sizeof(topo_node_t));
-    octree_count_t count = octree_count_pass(n_sources, coords, settings,
-                             scratch.topo, scratch.source_leaf_topo);
+Typical usage with the staged wrappers::
 
-    // 2. Size, allocate, and insert
-    octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, settings, count);
-    void *work = malloc(octree_total_work_size(ws));
-    octree_materialize(scratch.topo, ..., work, ...);
-    octree_descend(...); octree_compute_metadata(...);
-    octree_fill_particle_order(...); octree_compute_leaf_centers(...);
-    octree_build_leaf_multipoles(...);
-    // ... upward sweep, then BH/FMM-specific stages
+    // 1. Size scratch
+    size_t scratch_sz = method_scratch_size(n, settings, n_threads);
+    // 2. Allocate scratch
+    void *scratch = malloc(scratch_sz);
+    // 3. Prepare scratch + count pass
+    octree_count_t count;
+    octree_scratch_t sview;
+    method_prepare_scratch(scratch, scratch_sz, n, n_threads, coords,
+                           settings, &count, &sview);
+    // 4. Size work buffer
+    size_t work_sz = method_work_size(n, settings, &count);
+    // 5. Allocate work buffer
+    void *work = malloc(work_sz);
+    // 6. Full pipeline
+    method_tree_t tree;
+    method_tree_insert(n, n_threads, coords, values, settings,
+                       &count, &sview, allocator, work, work_sz, &tree);
+    // 7. Free scratch, keep work buffer
+    free(scratch);
 
 
 Sizing API (canonical)
@@ -175,10 +186,10 @@ Relationship to BH and FMM trees
 | Shared stages       | Count, materialise, descend, metadata, fill,  | (same 8 shared stages)                     |
 |                     | centroids, P2M, M2M                           |                                            |
 +---------------------+-----------------------------------------------+--------------------------------------------+
-| FMM-specific stages | —                                             | Interaction lists, M2L, L2L                |
+| FMM-specific stages | --                                            | Interaction lists, M2L                     |
 +---------------------+-----------------------------------------------+--------------------------------------------+
-| Evaluation          | Tree walk with MAC (opening-angle or neighbour)| Tree-code mode per V-list, or FMM mode     |
-|                     | criterion)                                    | (precomputed local expansions)             |
+| Evaluation          | Tree walk with MAC (opening-angle or          | Tree-code mode per V-list, or              |
+|                     | neighbour criterion)                          | FMM mode (local expansions)                |
 +---------------------+-----------------------------------------------+--------------------------------------------+
-| Sizing API          | ``octree_*`` (`barnes_hut_*` wrappers removed)| ``octree_*`` for scratch; ``fmm_size_work_buffer`` for FMM-specific work layout |
+| Sizing API          | ``barnes_hut_*`` staged wrappers              | ``fmm_*`` staged wrappers                  |
 +---------------------+-----------------------------------------------+--------------------------------------------+

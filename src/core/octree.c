@@ -2,6 +2,8 @@
 
 #include <omp.h>
 
+#include <assert.h>
+
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -44,6 +46,32 @@ static inline bool should_subdivide_centroid(real3_t pos, real3_t center, real_t
     const real3_t diff = real3_sub(pos, center);
     return real3_mag(diff) > s->alpha_centroid * half_size;
 }
+
+/* ================================================================ */
+/* Default allocator implementation                                 */
+/* ================================================================ */
+
+static void *cvl_default_allocate(void *state, size_t size)
+{
+    (void)state;
+    return malloc(size);
+}
+static void cvl_default_deallocate(void *state, void *ptr)
+{
+    (void)state;
+    free(ptr);
+}
+static void *cvl_default_reallocate(void *state, void *ptr, size_t new_size)
+{
+    (void)state;
+    return realloc(ptr, new_size);
+}
+const allocator_t CVL_DEFAULT_ALLOCATOR = {
+    .allocate = cvl_default_allocate,
+    .deallocate = cvl_default_deallocate,
+    .reallocate = cvl_default_reallocate,
+    .state = NULL,
+};
 
 static inline bool settings_valid(const octree_settings_t *s)
 {
@@ -113,7 +141,9 @@ octree_count_t octree_count_pass(unsigned n_sources, const real3_t sources_coord
             int32_t child = topo[node_idx].children[oct];
             if (child < 0)
             {
-                child = (int32_t)next_node++;
+                child = (int32_t)next_node;
+                assert(next_node < 8u * n_sources + 1u);
+                next_node++;
                 topo[child] = (topo_node_t){
                     .children = {-1, -1, -1, -1, -1, -1, -1, -1},
                     .particle_count = 0,
@@ -148,7 +178,9 @@ octree_count_t octree_count_pass(unsigned n_sources, const real3_t sources_coord
                 int32_t child = topo[node_idx].children[oct];
                 if (child < 0)
                 {
-                    child = (int32_t)next_node++;
+                    child = (int32_t)next_node;
+                    assert(next_node < 8u * n_sources + 1u);
+                    next_node++;
                     topo[child] = (topo_node_t){
                         .children = {-1, -1, -1, -1, -1, -1, -1, -1},
                         .particle_count = 0,
@@ -405,10 +437,9 @@ void octree_materialize(const topo_node_t topo[restrict], uint32_t n_topo_nodes,
 /* Descend                                                          */
 /* ================================================================ */
 
-void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_sources], uint32_t n_nodes,
-                    octree_node_t *nodes, unsigned *source_leaf_real, unsigned n_threads)
+void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_sources], octree_node_t *nodes,
+                    unsigned *source_leaf_real, unsigned n_threads)
 {
-    (void)n_nodes;
 #pragma omp parallel for default(none) shared(n_sources, sources_coords, nodes, source_leaf_real) schedule(static)     \
     num_threads(n_threads)
     for (unsigned i = 0; i < n_sources; ++i)
@@ -748,5 +779,32 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                 multipole_add_shift(&child_mp, &internal_mp, work_order, my_shift_exp, my_pse);
             }
         }
+    }
+}
+
+void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], unsigned max_depth,
+                             const octree_settings_t settings[restrict], real_t **restrict mp_slices,
+                             const octree_scratch_t *scratch, const unsigned particle_order[restrict],
+                             const real3_t sources_coords[restrict], const real3_t sources_values[restrict],
+                             unsigned n_threads)
+{
+    const unsigned order = settings->order;
+    const size_t n_coeffs = multipole_num_coeffs(order);
+    const unsigned work_order = octree_resolve_work_order(settings);
+    const size_t leaf_stride = octree_leaf_stride(order);
+    const size_t shift_stride = octree_shift_stride(work_order);
+    const size_t pse_stride = octree_pse_stride(work_order);
+
+    assert(max_depth <= 255 && "octree_run_upward_sweep: max_depth exceeds hardcoded depth_start/depth_end[256]");
+    unsigned depth_start[256], depth_end[256];
+    octree_compute_depth_ranges(n_nodes, nodes, max_depth, depth_start, depth_end);
+
+    for (unsigned d = max_depth;; --d)
+    {
+        octree_upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order,
+                                  scratch->shift_exp, scratch->pse, shift_stride, pse_stride, particle_order,
+                                  sources_coords, sources_values, scratch, leaf_stride, n_threads);
+        if (d == 0)
+            break;
     }
 }

@@ -109,14 +109,48 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
 size_t fmm_total_work_size(fmm_work_sizes_t sizes);
 
 /* ------------------------------------------------------------------ */
-/* Build                                                              */
+/* Staged build API                                                   */
+/*                                                                   */
+/*  1. fmm_scratch_size()  →  total scratch bytes                    */
+/*  2. caller allocates scratch                                      */
+/*  3. fmm_prepare_scratch()  →  count + partitioned scratch         */
+/*  4. fmm_work_size()  →  total work bytes                          */
+/*  5. caller allocates work buffer                                  */
+/*  6. fmm_tree_insert()  →  full pipeline into tree handle          */
+/*  7. caller (or build) releases scratch buffer                     */
+/*                                                                   */
+/*  fmm_tree_build() does all seven steps internally.                */
 /* ------------------------------------------------------------------ */
 
+/** @brief Total scratch buffer bytes needed for count + build. */
+size_t fmm_scratch_size(unsigned n_sources, const fmm_settings_t *settings, unsigned n_threads);
+
+/**
+ * @brief Partition scratch buffer, zero topo, run count pass.
+ *
+ * @param scratch_buffer  Buffer of at least @ref fmm_scratch_size bytes.
+ * @param n_sources       Number of source particles.
+ * @param n_threads       OpenMP thread count.
+ * @param sources_coords  Source positions.
+ * @param settings        Tree settings.
+ * @param out_count       Filled with node counts from the pass.
+ * @param out_scratch     Filled with partitioned scratch view.
+ * @return true on success.
+ */
+bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_sources, unsigned n_threads,
+                         const real3_t sources_coords[restrict n_sources], const fmm_settings_t settings[restrict],
+                         octree_count_t *out_count, octree_scratch_t *out_scratch);
+
+/** @brief Total work buffer bytes needed given a finished count pass. */
+size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count);
+
+/** @brief Insert pass — takes pre-counted, pre-partitioned scratch + pre-sized work buffer. */
 bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                      const real3_t sources_values[restrict n_sources], const fmm_settings_t settings[restrict],
-                     void *scratch_buffer, size_t scratch_size, const allocator_t *allocator, void *buffer,
-                     size_t buffer_size, fmm_tree_t *out);
+                     const octree_count_t *count, const octree_scratch_t *scratch, const allocator_t *allocator,
+                     void *buffer, size_t buffer_size, fmm_tree_t *out);
 
+/** @brief Allocate + build in one call. */
 bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                     const real3_t sources_values[restrict n_sources], const fmm_settings_t settings[restrict],
                     const allocator_t *allocator, fmm_tree_t *out);

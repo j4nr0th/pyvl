@@ -182,52 +182,71 @@ int main(const int argc, const char *argv[static argc])
         TEST_ASSERT(required > 0, "size for minimal count_res must be >0, got %zu", required);
     }
 
-    /* Invalid-input error paths for insert. */
+    /* Staged API: error paths for prepare + insert. */
     {
         const barnes_hut_settings_t settings = {
             .order = TEST_ORDER, .critical_particle_count = 8, .max_depth = 20, .work_order = 0, .alpha_centroid = 0.0};
         real3_t coords[N_SOURCES];
         real3_t values[N_SOURCES];
         generate_sources(0x12345ULL, N_SOURCES, coords, values);
-        const size_t scratch_sz = octree_scratch_size(N_SOURCES, TEST_N_THREADS, &settings);
+        const size_t scratch_sz = barnes_hut_scratch_size(N_SOURCES, &settings, TEST_N_THREADS);
         const size_t required = octree_buffer_size(N_SOURCES, &settings);
         void *scratch = malloc(scratch_sz);
         void *buffer = malloc(required);
         TEST_ASSERT(scratch && buffer, "scratch/buffer malloc failed");
+
+        /* prepare_scratch error paths. */
+        octree_count_t cnt;
+        octree_scratch_t sview;
+        TEST_ASSERT(
+            !barnes_hut_prepare_scratch(NULL, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview),
+            "prepare must fail for NULL scratch_buffer");
+        TEST_ASSERT(
+            !barnes_hut_prepare_scratch(scratch, scratch_sz, 0, TEST_N_THREADS, coords, &settings, &cnt, &sview),
+            "prepare must fail for n_sources=0");
+        TEST_ASSERT(
+            !barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, NULL, &settings, &cnt, &sview),
+            "prepare must fail for NULL sources_coords");
+        TEST_ASSERT(
+            !barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, NULL, &cnt, &sview),
+            "prepare must fail for NULL settings");
+        TEST_ASSERT(
+            !barnes_hut_prepare_scratch(scratch, 16, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview),
+            "prepare must fail for too-small scratch");
+
+        /* Insert error paths with valid count + scratch partition. */
+        barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview);
         barnes_hut_tree_t tree;
 
-        TEST_ASSERT(!barnes_hut_tree_insert(0, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz, NULL,
-                                            buffer, required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(0, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL, buffer,
+                                            required, &tree),
                     "insert must fail for n_sources=0");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, NULL, values, &settings, scratch, scratch_sz,
-                                            NULL, buffer, required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, NULL, values, &settings, &cnt, &sview, NULL,
+                                            buffer, required, &tree),
                     "insert must fail for NULL sources_coords");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, NULL, &settings, scratch, scratch_sz,
-                                            NULL, buffer, required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, NULL, &settings, &cnt, &sview, NULL,
+                                            buffer, required, &tree),
                     "insert must fail for NULL sources_values");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, NULL, scratch, scratch_sz, NULL,
-                                            buffer, required, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, NULL, &cnt, &sview, NULL, buffer,
+                                            required, &tree),
                     "insert must fail for NULL settings");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, scratch_sz,
-                                            NULL, buffer, required, &tree),
-                    "insert must fail for NULL scratch_buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, 0, NULL,
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, &sview, NULL,
                                             buffer, required, &tree),
-                    "insert must fail for scratch_size=0");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, 16, NULL,
+                    "insert must fail for NULL count");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, NULL, NULL,
                                             buffer, required, &tree),
-                    "insert must fail for too-small scratch");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
-                                            NULL, NULL, required, &tree),
+                    "insert must fail for NULL scratch");
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
+                                            NULL, required, &tree),
                     "insert must fail for NULL buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
-                                            NULL, buffer, 0, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
+                                            buffer, 0, &tree),
                     "insert must fail for buffer_size=0");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
-                                            NULL, buffer, 16, &tree),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
+                                            buffer, 16, &tree),
                     "insert must fail for too-small buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
-                                            NULL, buffer, required, NULL),
+        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
+                                            buffer, required, NULL),
                     "insert must fail for NULL out");
 
         free(scratch);
@@ -399,14 +418,17 @@ int main(const int argc, const char *argv[static argc])
         void *scratch = malloc(scratch_sz);
         TEST_ASSERT(scratch != NULL, "scratch malloc failed");
 
-        const octree_scratch_t bh_scratch = octree_scratch_partition(TEST_N_THREADS, scratch, scratch_sizes);
+        /* Prepare scratch + count via the staged API. */
+        octree_count_t cnt;
+        octree_scratch_t sview;
+        barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview);
 
         /* Insert test with custom allocator. */
-        const size_t required = octree_buffer_size(N_SOURCES, &settings);
+        const size_t required = barnes_hut_work_size(N_SOURCES, &settings, &cnt);
         void *buffer = malloc(required);
         TEST_ASSERT(buffer != NULL, "buffer malloc failed");
         barnes_hut_tree_t tree;
-        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, scratch, scratch_sz,
+        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview,
                                            &my_allocator, buffer, required, &tree),
                     "insert with custom allocator failed");
         TEST_ASSERT(state.total_alloc_count > 0, "custom allocator was not used for any allocation");

@@ -123,8 +123,30 @@ int main(const int argc, const char *argv[static argc])
 
         barnes_hut_tree_t tree;
         const double t0 = seconds_now();
+        /* Use staged API: prepare scratch + count, size work, then insert. */
+        octree_count_t cnt;
+        octree_scratch_t sview;
+        if (!barnes_hut_prepare_scratch(scratch, scratch_sz, n, 1, coords, &settings, &cnt, &sview))
+        {
+            fprintf(stderr, "prepare_scratch failed for n=%u\n", n);
+            free(scratch);
+            free(buffer);
+            free(coords);
+            free(values);
+            return 1;
+        }
+        const size_t work_needed = barnes_hut_work_size(n, &settings, &cnt);
+        if (work_needed > required)
+        {
+            fprintf(stderr, "work_size changed: was %zu now %zu\n", required, work_needed);
+            free(scratch);
+            free(buffer);
+            free(coords);
+            free(values);
+            return 1;
+        }
         const bool ok =
-            barnes_hut_tree_insert(n, 1, coords, values, &settings, scratch, scratch_sz, NULL, buffer, required, &tree);
+            barnes_hut_tree_insert(n, 1, coords, values, &settings, &cnt, &sview, NULL, buffer, required, &tree);
         const double t1 = seconds_now();
         if (!ok)
         {
