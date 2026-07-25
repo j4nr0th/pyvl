@@ -20,6 +20,56 @@ typedef struct
  */
 size_t multipole_num_coeffs(unsigned order);
 
+/* ------------------------------------------------------------------ */
+/* Internal polynomial helpers (shared with fmm_operators.c).          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Linear index of monomial (p,q,r) inside tetrahedral block @p m.
+ *
+ * Coefficients are stored in tetrahedral blocks: block k contains all
+ * monomials x^p y^q z^r with p+q+r <= k.  This helper returns the linear
+ * index of monomial (p,q,r) inside block @p m, ignoring the vector-component
+ * offset.
+ *
+ * @param m Block (order) index.
+ * @param p x-degree.
+ * @param q y-degree.
+ * @param r z-degree.
+ * @return Linear index into a single-component coefficient array.
+ */
+CVL_INTERNAL size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r);
+
+/**
+ * @brief Scale a polynomial and accumulate it into a multipole's coefficient
+ *        arrays at the appropriate orders.
+ *
+ * @param poly      Polynomial coefficients (dense, @p multipole_num_coeffs layout).
+ * @param out_order Maximum order to accumulate (orders 0..out_order).
+ * @param scale     Scalar multiplier.
+ * @param cx        x-component multiplier.
+ * @param cy        y-component multiplier.
+ * @param cz        z-component multiplier.
+ * @param out       Target multipole expansion (accumulated, not overwritten).
+ */
+CVL_INTERNAL void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
+                                              const real_t cy, const real_t cz, const multipole_t *out);
+
+/**
+ * @brief Multiply polynomial @p a by the linear form lc + lx*x + ly*y + lz*z,
+ *        writing the result to @p b.
+ *
+ * @param a         Input polynomial (dense, @p multipole_num_coeffs layout).
+ * @param b         Output polynomial (must be zeroed or will be overwritten).
+ * @param lx        Coefficient of x.
+ * @param ly        Coefficient of y.
+ * @param lz        Coefficient of z.
+ * @param lc        Constant coefficient.
+ * @param max_order Maximum polynomial order.
+ */
+CVL_INTERNAL void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, real_t ly, real_t lz, real_t lc,
+                                            unsigned max_order);
+
 /**
  * @brief Returns the size of one temporary scratch buffer needed by multipole_create.
  *

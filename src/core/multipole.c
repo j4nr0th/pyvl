@@ -84,7 +84,7 @@ void multipole_update(const multipole_t *multipole, const real3_t center, const 
         }
     }
 }
-static size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r)
+CVL_INTERNAL size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r)
 {
     // Coefficients are stored in tetrahedral blocks: block k contains all monomials
     // x^p y^q z^r with p + q + r <= k, ordered by the same nested loops used in
@@ -108,8 +108,8 @@ static size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned
     return idx;
 }
 
-static void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
-                                        const real_t cy, const real_t cz, const multipole_t *out)
+CVL_INTERNAL void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, const real_t cx,
+                                              const real_t cy, const real_t cz, const multipole_t *out)
 {
     for (unsigned deg = 0; deg <= out_order; ++deg)
     {
@@ -131,8 +131,8 @@ static void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, 
     }
 }
 
-static void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, real_t ly, real_t lz, real_t lc,
-                                      unsigned max_order)
+CVL_INTERNAL void multipole_poly_mul_linear(const real_t *a, real_t *b, real_t lx, real_t ly, real_t lz, real_t lc,
+                                            unsigned max_order)
 {
     const size_t n_coeffs = multipole_num_coeffs(max_order);
     for (size_t i = 0; i < n_coeffs; ++i)

@@ -33,3 +33,30 @@ Data Structure
 --------------
 
 .. c:autodoc:: multipole.h
+
+
+Internal Helpers
+----------------
+
+The following polynomial-manipulation helpers are defined as
+``CVL_INTERNAL`` functions shared with ``fmm_operators.c``:
+
+.. c:function:: size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r)
+
+    Linear index of monomial :math:`x^p y^q z^r` inside tetrahedral
+    block of order :math:`m`.  Used by M2M and M2L operators for
+    coefficient lookup.
+
+.. c:function:: void multipole_add_poly_to_order(const real_t *poly, unsigned out_order, real_t scale, \
+        const real_t cx, const real_t cy, const real_t cz, const multipole_t *out)
+
+    Scale a dense polynomial and accumulate its coefficients into a
+    multipole expansion at the appropriate tetrahedral indices.
+
+.. c:function:: void multipole_poly_mul_linear(const real_t *a, real_t *b, \
+        real_t lx, real_t ly, real_t lz, real_t lc, unsigned max_order)
+
+    Multiply the polynomial :math:`a` by the linear form
+    :math:`l_c + l_x x + l_y y + l_z z`, writing the result to
+    :math:`b`.  Used by M2M (``multipole_add_shift``) and L2L
+    (``local_expansion_shift``) where the denominator factor is linear.

@@ -75,3 +75,16 @@ add_test(NAME test_bh_accuracy COMMAND test_bh_accuracy)
 target_compile_options(test_bh_accuracy PRIVATE -O3 -flto=auto)
 set_property(TARGET test_bh_accuracy PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 set_tests_properties(test_bh_accuracy PROPERTIES TIMEOUT 180)
+
+add_executable(test_fmm_operators math/test_fmm_operators.c ${TEST_COMMON_FILES})
+target_link_libraries(test_fmm_operators PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_fmm_operators COMMAND test_fmm_operators)
+
+add_executable(test_fmm_tree math/test_fmm_tree.c ${TEST_COMMON_FILES})
+target_link_libraries(test_fmm_tree PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_fmm_tree COMMAND test_fmm_tree)
+
+add_executable(test_fmm_accuracy math/test_fmm_accuracy.c ${TEST_COMMON_FILES})
+target_link_libraries(test_fmm_accuracy PRIVATE static_cvl ${TEST_MATH_LIB})
+add_test(NAME test_fmm_accuracy COMMAND test_fmm_accuracy)
+set_tests_properties(test_fmm_accuracy PROPERTIES TIMEOUT 120)

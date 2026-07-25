@@ -43,6 +43,8 @@ Algorithms for computing vortex-induced velocities.
 
     induction
     multipole
+    fmm_operators
+    fmm_tree
     barnes_hut_tree
     approx_atan
     cost_model

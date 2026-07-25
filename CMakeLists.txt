@@ -59,6 +59,8 @@ list(
         src/core/approx_atan.c
         src/core/multipole.c
         src/core/barnes_hut_tree.c
+        src/core/fmm_operators.c
+        src/core/fmm_tree.c
 )
 
 list(
@@ -72,12 +74,16 @@ list(
         src/core/approx_atan.h
         src/core/barnes_hut_tree.h
         src/core/cost_model.h
+        src/core/fmm_operators.h
+        src/core/fmm_tree.h
 )
 
 add_library(static_cvl
         ${CVL_CORE_SOURCE_FILES}
         ${CVL_CORE_HEADER_FILES}
         src/core/multipole.c
+        src/core/fmm_operators.c
+        src/core/fmm_tree.c
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_link_libraries(static_cvl PUBLIC OpenMP::OpenMP_C)
