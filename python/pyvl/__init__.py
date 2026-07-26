@@ -12,6 +12,7 @@ from pyvl import postprocess as postprocess
 # C types
 from pyvl.cvl import INVALID_ID as INVALID_ID
 from pyvl.cvl import BarnesHutTree as BarnesHutTree
+from pyvl.cvl import FMMTree as FMMTree
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Mesh as Mesh
 from pyvl.cvl import Multipole as Multipole

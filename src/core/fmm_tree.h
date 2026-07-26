@@ -60,6 +60,8 @@ typedef struct
     size_t local_coeffs_bytes;
     size_t local_slices_bytes;
     size_t interaction_lists_bytes;
+    size_t m2l_shift_exp_bytes; /**< Per-thread shift_exp scratch for M2L sweep. */
+    size_t m2l_pse_bytes;       /**< Per-thread pse scratch for M2L sweep.       */
 } fmm_work_sizes_t;
 
 /* ------------------------------------------------------------------ */
@@ -105,7 +107,7 @@ typedef struct
 /* ------------------------------------------------------------------ */
 
 fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t settings[restrict],
-                                      fmm_count_res_t count_pass_res);
+                                      fmm_count_res_t count_pass_res, unsigned n_threads);
 size_t fmm_total_work_size(fmm_work_sizes_t sizes);
 
 /* ------------------------------------------------------------------ */
@@ -142,7 +144,8 @@ bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_s
                          octree_count_t *out_count, octree_scratch_t *out_scratch);
 
 /** @brief Total work buffer bytes needed given a finished count pass. */
-size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count);
+size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count,
+                     unsigned n_threads);
 
 /** @brief Insert pass — takes pre-counted, pre-partitioned scratch + pre-sized work buffer. */
 bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],

@@ -17,7 +17,7 @@
 /* ------------------------------------------------------------------ */
 
 fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t settings[restrict],
-                                      fmm_count_res_t count_pass_res)
+                                      fmm_count_res_t count_pass_res, unsigned n_threads)
 {
     const unsigned n_total =
         count_pass_res.n_internal + count_pass_res.n_multipole_leaves + count_pass_res.n_particle_leaves;
@@ -25,6 +25,10 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
         octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, count_pass_res);
     const unsigned n_leaves = count_pass_res.n_multipole_leaves + count_pass_res.n_particle_leaves;
     const size_t max_per_list = n_leaves > 0 ? (size_t)n_leaves * (size_t)(n_leaves - 1) : 1u;
+    const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
+    const size_t shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
+    const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
+
     return (fmm_work_sizes_t){
         .nodes_bytes = base.nodes_bytes,
         .particle_order_bytes = base.particle_order_bytes,
@@ -36,6 +40,8 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
                               multipole_num_coeffs(settings->order) * sizeof(real_t),
         .local_slices_bytes = (size_t)n_total * sizeof(real_t *),
         .interaction_lists_bytes = ((size_t)n_leaves + 1) * sizeof(unsigned) * 4 + max_per_list * sizeof(unsigned) * 2,
+        .m2l_shift_exp_bytes = (size_t)n_threads * shift_exp_per_thread,
+        .m2l_pse_bytes = (size_t)n_threads * pse_per_thread,
     };
 }
 
@@ -43,7 +49,7 @@ size_t fmm_total_work_size(fmm_work_sizes_t sizes)
 {
     return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.topo_to_real_bytes +
            sizes.mp_slices_bytes + sizes.leaf_indices_bytes + sizes.local_coeffs_bytes + sizes.local_slices_bytes +
-           sizes.interaction_lists_bytes;
+           sizes.interaction_lists_bytes + sizes.m2l_shift_exp_bytes + sizes.m2l_pse_bytes;
 }
 
 /**
@@ -269,14 +275,17 @@ static void fmm_m2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(no
                           unsigned order, unsigned work_order, real_t *const *restrict mp_slices,
                           real_t *const *restrict local_slices,
                           unsigned CVL_ARRAY_ARG(vlist_offsets, restrict n_leaves + 1),
-                          unsigned CVL_ARRAY_ARG(vlist_indices, restrict), const octree_scratch_t *scratch,
+                          unsigned CVL_ARRAY_ARG(vlist_indices, restrict), real_t *work_shift_exp, real_t *work_pse,
                           unsigned n_threads)
 {
     const size_t n_coeffs = multipole_num_coeffs(order);
+    const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
+    const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
 
-#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, order, work_order, mp_slices,             \
-                                                  local_slices, vlist_offsets, vlist_indices, scratch, n_coeffs)       \
-    schedule(dynamic, 16) num_threads(n_threads)
+#pragma omp parallel for default(none)                                                                                 \
+    shared(n_leaves, leaf_indices, nodes, order, work_order, mp_slices, local_slices, vlist_offsets, vlist_indices,    \
+               work_shift_exp, work_pse, n_coeffs, shift_per_thread, pse_per_thread) schedule(dynamic, 16)             \
+    num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         const unsigned ni = leaf_indices[li];
@@ -291,9 +300,8 @@ static void fmm_m2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(no
                                          .coeffs_z = local_slice + 2u * n_coeffs};
 
         const int tid = omp_get_thread_num();
-        real_t *my_shift_exp =
-            scratch->shift_exp + (size_t)tid * 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
-        real_t *my_pse = scratch->pse + (size_t)tid * 2u * multipole_num_coeffs(work_order);
+        real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
+        real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
 
         const unsigned v_start = vlist_offsets[li];
         const unsigned v_end = vlist_offsets[li + 1];
@@ -311,77 +319,6 @@ static void fmm_m2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(no
                                     .coeffs_y = mp_slice + n_coeffs,
                                     .coeffs_z = mp_slice + 2u * n_coeffs};
             multipole_to_local(&mp, (local_expansion_t *)&local, work_order, my_shift_exp, my_pse);
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/* L2L downward sweep                                                 */
-/* ------------------------------------------------------------------ */
-
-/**
- * @brief Run the L2L (local-to-local) downward sweep.
- *
- * Iterates over all internal nodes (depth-first pre-order, so parents
- * before children), and for each internal node that has a local expansion,
- * shifts it to each non-NULL child.
- *
- * @param n_nodes        Number of nodes.
- * @param nodes          Node array.
- * @param order          Local expansion order.
- * @param work_order     Internal work order for L2L shift.
- * @param local_slices   Per-node local coefficient slices.
- * @param scratch        Scratch buffer (per-thread shift_exp/pse).
- * @param n_threads      Number of OpenMP threads.
- */
-static void fmm_downward_l2l_sweep(unsigned n_nodes, octree_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
-                                   unsigned order, unsigned work_order, real_t *const *restrict local_slices,
-                                   const octree_scratch_t *scratch, unsigned n_threads)
-{
-    const size_t n_coeffs = multipole_num_coeffs(order);
-
-    /* Nodes are in DFS pre-order, so parents always have lower indices
-     * than their children.  A single parallel-for over all internal nodes
-     * is safe because each node writes only to its own children (distinct
-     * cache lines).  Parallelise at depth level for locality. */
-#pragma omp parallel for default(none) shared(n_nodes, nodes, order, work_order, n_coeffs, local_slices, scratch)      \
-    schedule(static, 64) num_threads(n_threads)
-    for (uint32_t i = 0; i < n_nodes; ++i)
-    {
-        if (nodes[i].kind != OCTREE_NODE_INTERNAL)
-            continue;
-
-        real_t *parent_slice = local_slices[i];
-        if (parent_slice == NULL)
-            continue;
-
-        const local_expansion_t parent_local = {.order = order,
-                                                .center = nodes[i].center,
-                                                .coeffs_x = parent_slice,
-                                                .coeffs_y = parent_slice + n_coeffs,
-                                                .coeffs_z = parent_slice + 2u * n_coeffs};
-
-        const int tid = omp_get_thread_num();
-        real_t *my_shift_exp =
-            scratch->shift_exp + (size_t)tid * 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
-        real_t *my_pse = scratch->pse + (size_t)tid * 2u * multipole_num_coeffs(work_order);
-
-        for (int k = 0; k < 8; ++k)
-        {
-            octree_node_t *child = nodes[i].data.internal.children[k];
-            if (child == NULL)
-                continue;
-            const uint32_t ci = (uint32_t)(child - nodes);
-            real_t *child_slice = local_slices[ci];
-            if (child_slice == NULL)
-                continue;
-
-            local_expansion_t child_local = {.order = order,
-                                             .center = child->center,
-                                             .coeffs_x = child_slice,
-                                             .coeffs_y = child_slice + n_coeffs,
-                                             .coeffs_z = child_slice + 2u * n_coeffs};
-            local_expansion_shift(&parent_local, &child_local, work_order, my_shift_exp, my_pse);
         }
     }
 }
@@ -553,6 +490,8 @@ typedef struct
     unsigned *nflist_offsets;
     unsigned *nflist_indices;
     size_t nflist_capacity;
+    real_t *m2l_shift_exp; /**< Per-thread shift_exp scratch for M2L sweep. */
+    real_t *m2l_pse;       /**< Per-thread pse scratch for M2L sweep.       */
 } fmm_work_t;
 
 /* ------------------------------------------------------------------ */
@@ -591,6 +530,13 @@ static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsig
     bp += offsets_bytes;
     out.nflist_indices = (unsigned *)bp;
     out.nflist_capacity = max_per;
+    bp += max_per * sizeof(unsigned);
+
+    /* M2L per-thread scratch (independent of the transient scratch buffer). */
+    out.m2l_shift_exp = (real_t *)bp;
+    bp += sizes.m2l_shift_exp_bytes;
+    out.m2l_pse = (real_t *)bp;
+    bp += sizes.m2l_pse_bytes;
     return out;
 }
 
@@ -625,11 +571,12 @@ bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_s
     return true;
 }
 
-size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count)
+size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count,
+                     unsigned n_threads)
 {
     if (count == NULL || count->n_internal + count->n_multipole_leaves + count->n_particle_leaves == 0)
         return 0;
-    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count);
+    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count, n_threads);
     return fmm_total_work_size(ws);
 }
 
@@ -654,7 +601,7 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         return false;
 
     /* Size work buffer and validate. */
-    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count);
+    const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count, n_threads);
     if (buffer_size < fmm_total_work_size(ws))
         return false;
 
@@ -712,7 +659,8 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
 
         fmm_assign_local_slices(n_topo, work.nodes, order, work.local_coeffs, work.local_slices);
         fmm_m2l_sweep(n_topo, work.nodes, n_leaves, work.leaf_indices, order, work_order, work.mp_slices,
-                      work.local_slices, work.vlist_offsets, work.vlist_indices, scratch, n_threads);
+                      work.local_slices, work.vlist_offsets, work.vlist_indices, work.m2l_shift_exp, work.m2l_pse,
+                      n_threads);
 
         out->local_coeffs = work.local_coeffs;
         out->local_slices = work.local_slices;
@@ -773,7 +721,7 @@ bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t source
         goto cleanup;
 
     /* 4. Size work buffer. */
-    const size_t total_work_size = fmm_work_size(n_sources, settings, &count);
+    const size_t total_work_size = fmm_work_size(n_sources, settings, &count, n_threads);
     if (total_work_size == 0)
         goto cleanup;
 

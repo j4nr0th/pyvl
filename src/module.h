@@ -28,6 +28,7 @@ typedef struct
     PyTypeObject *rf_type;
     PyTypeObject *transformation_plane_type;
     PyTypeObject *bh_tree_type;
+    PyTypeObject *fmm_tree_type;
 } module_state_t;
 
 CVL_INTERNAL

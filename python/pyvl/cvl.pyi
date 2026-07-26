@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Self, final
+from typing import Literal, Self, final
 
 import numpy as np
 from numpy import typing as npt
@@ -2015,6 +2015,278 @@ class BarnesHutTree:
 
         out : (..., 3) ndarray, optional
             Output array. Must have the same shape as *targets*, be writable,
+            C-contiguous and aligned.
+
+        Returns
+        -------
+        (..., 3) ndarray
+            Induced vector at each target point.
+        """
+        ...
+
+    @staticmethod
+    def multipole_eval_cost(order: int, /) -> int:
+        """FLOP count for one multipole_eval at *order*.
+
+        Parameters
+        ----------
+        order : int
+            Multipole expansion order.
+
+        Returns
+        -------
+        int
+            Total floating-point operations.
+        """
+        ...
+
+    @staticmethod
+    def direct_sum_cost(n_sources: int, /) -> int:
+        """FLOP count for a direct sum over *n_sources*.
+
+        Parameters
+        ----------
+        n_sources : int
+            Number of source particles.
+
+        Returns
+        -------
+        int
+            Total floating-point operations.
+        """
+        ...
+
+    @staticmethod
+    def crossover_order(n_sources: int, /) -> int:
+        """Smallest multipole order whose eval cost is below the direct sum.
+
+        Parameters
+        ----------
+        n_sources : int
+            Number of source particles.
+
+        Returns
+        -------
+        int
+            Minimum order beating the direct sum, or ``-1`` if none.
+        """
+        ...
+
+    @staticmethod
+    def min_sources_for_order(order: int, /) -> int:
+        """Minimum sources where multipole at *order* beats the direct sum.
+
+        Parameters
+        ----------
+        order : int
+            Multipole expansion order.
+
+        Returns
+        -------
+        int
+            Minimum number of sources.
+        """
+        ...
+
+@final
+class FMMTree:
+    r"""Fast Multipole Method octree for O(N) far-field induction from vortex particles.
+
+    The tree partitions vortex sources into an octree and uses
+    multipole-to-local (M2L) conversion to achieve linear-time
+    evaluation.  Unlike :class:`BarnesHutTree` which evaluates each
+    well-separated cell's multipole individually (:math:`O(N \log N)`),
+    the FMM pre-converts all V-list multipoles into a single local
+    expansion per leaf during the build phase, making eval :math:`O(N)`.
+
+    Parameters
+    ----------
+    order : int, default 4
+        Multipole order used by every compressed leaf.
+    critical_particle_count : int, default 4
+        Base subdivision threshold.
+    max_depth : int, default 20
+        Maximum octree depth.
+    work_order : int or None, default None
+        Internal expansion order for multipole shifting (``None`` = use *order*).
+    alpha_centroid : float, default 0.5
+        Centroid-based subdivision threshold.
+
+    See Also
+    --------
+    FMMTree.build : Construct and populate in one step.
+    BarnesHutTree : O(N log N) tree-code alternative.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from pyvl.cvl import FMMTree
+    >>> rng = np.random.default_rng(42)
+    >>> coords = rng.uniform(-1, 1, (100, 3))
+    >>> values = rng.uniform(-1, 1, (100, 3))
+    >>> tree = FMMTree.build(coords, values, order=4)
+    >>> tree.eval(np.array([[10., 0., 0.], [0., 10., 0.]]))
+    array([[ ...]])
+    """
+
+    def __new__(
+        cls,
+        order: int = 4,
+        critical_particle_count: int = 4,
+        max_depth: int = 20,
+        work_order: int | None = None,
+        alpha_centroid: float = 0.5,
+    ) -> Self: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    @property
+    def n_sources(self) -> int:
+        """Number of source particles."""
+        ...
+
+    @property
+    def n_nodes(self) -> int:
+        """Total number of octree nodes."""
+        ...
+
+    @property
+    def n_internal(self) -> int:
+        """Number of internal (non-leaf) nodes."""
+        ...
+
+    @property
+    def n_multipole_leaves(self) -> int:
+        """Number of multipole-bearing leaves."""
+        ...
+
+    @property
+    def n_particle_leaves(self) -> int:
+        """Number of uncompressed particle leaves."""
+        ...
+
+    @property
+    def max_depth(self) -> int:
+        """Maximum depth actually reached in the tree."""
+        ...
+
+    @property
+    def memory_bytes(self) -> int:
+        """Size of the tree buffer in bytes."""
+        ...
+
+    @property
+    def order(self) -> int:
+        """Multipole order used by the tree."""
+        ...
+
+    @property
+    def critical_particle_count(self) -> int:
+        """Base subdivision threshold."""
+        ...
+
+    @property
+    def alpha_centroid(self) -> float:
+        """Centroid-based subdivision threshold (0.0 = disabled)."""
+        ...
+    @property
+    def max_depth_setting(self) -> int:
+        """Maximum depth cap configured at build time."""
+        ...
+
+    @property
+    def n_leaves(self) -> int:
+        """Number of leaves in the tree."""
+        ...
+
+    @property
+    def vlist_count(self) -> int:
+        """Total V-list (well-separated) entries across all leaves."""
+        ...
+
+    @property
+    def nflist_count(self) -> int:
+        """Total near-field list entries across all leaves."""
+        ...
+
+    @classmethod
+    def build(
+        cls,
+        sources_coords: npt.ArrayLike,
+        sources_values: npt.ArrayLike,
+        order: int = 4,
+        critical_particle_count: int = 4,
+        max_depth: int = 20,
+        work_order: int | None = None,
+        alpha_centroid: float = 0.5,
+        n_threads: int = 1,
+    ) -> FMMTree:
+        """Build an FMM tree from source arrays and return a new tree.
+
+        Parameters
+        ----------
+        sources_coords : (..., 3) array_like
+            Positions of the vortex sources.
+        sources_values : (..., 3) array_like
+            Vector strengths of the sources (same batch shape as coords).
+
+        order : int, default 4
+            Multipole order for compressed leaves.
+
+        critical_particle_count : int, default 4
+            Base threshold for leaf subdivision.
+
+        max_depth : int, default 20
+            Maximum tree depth.
+
+        work_order : int or None, default None
+            Internal order for multipole shifting (``None`` = use *order*).
+
+        alpha_centroid : float, default 0.5
+            Centroid-based subdivision threshold (0.0 = disabled).
+
+        n_threads : int, default 1
+            OpenMP thread count.
+
+        Returns
+        -------
+        FMMTree
+            Populated tree.
+        """
+        ...
+
+    def eval(
+        self,
+        targets: npt.ArrayLike,
+        /,
+        *,
+        theta: float = 0.0,
+        mode: Literal["tree_code", "fmm"] = "tree_code",
+        n_threads: int | None = None,
+        out: npt.NDArray[np.double] | None = None,
+    ) -> npt.NDArray[np.double]:
+        """Evaluate the tree at one or more target points.
+
+        Parameters
+        ----------
+        targets : (..., 3) array_like
+            Points at which to evaluate.  All leading dimensions are preserved in the
+            output.
+
+        theta : float, default 0.0
+            Multipole acceptance criterion.  Only used in ``"tree_code"`` mode.
+
+        mode : str, default "tree_code"
+            Evaluation mode:
+
+            - ``"tree_code"`` -- per V-list multipole evaluation.
+            - ``"fmm"`` -- use the precomputed local expansion (M2L)
+              for true :math:`O(N)` evaluation.
+
+        n_threads : int or None, default None
+            OpenMP thread count.  ``None`` uses the value passed to ``build()``.
+
+        out : (..., 3) ndarray, optional
+            Output array.  Must have the same shape as *targets*, be writable,
             C-contiguous and aligned.
 
         Returns

@@ -31,6 +31,7 @@ list(
         src/referenceframeobject.c
         src/transformationplaneobject.c
         src/barneshuobject.c
+        src/fmmtreeobject.c
         src/methods.c
 )
 
@@ -45,6 +46,7 @@ list(
         src/referenceframeobject.h
         src/transformationplaneobject.h
         src/barneshuobject.h
+        src/fmmtreeobject.h
         src/methods.h
 )
 
