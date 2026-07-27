@@ -333,48 +333,29 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
         coeffs[i] = 0.0;
     }
     // Prepare coeff arrays
-    const multipole_t this = {
+    const multipole_t mp_built = {
         .order = order,
         .center = center,
         .coeffs_x = coeffs,
         .coeffs_y = coeffs + needed_coeffs,
         .coeffs_z = coeffs + 2 * needed_coeffs,
     };
-    // real_t *const coeffs_x = coeffs;
-    // real_t *const coeffs_y = coeffs + needed_coeffs;
-    // real_t *const coeffs_z = coeffs + 2 * needed_coeffs;
 
     for (size_t i = 0; i < sources; ++i)
     {
-        // cur holds the coefficients of (2 r·pos - pos·pos)^m as a polynomial in r.
-        // nxt is used to step from m to m+1.
         memset(cur, 0, scratch * sizeof(real_t));
         memset(nxt, 0, scratch * sizeof(real_t));
 
-        // Build a local multipole_t that aliases the caller's coeffs buffer
-        // so multipole_update reads back what it has just written. We avoid
-        // declaring a `multipole_t this` local with these pointers — with
-        // LTO + -O3 gcc may hoist `this` to a stack slot and then the
-        // final memcpy below gets partial garbage. Passing the components
-        // individually keeps everything in the right place.
-        // const multipole_t stub = {.coeffs_x = coeffs_x, .coeffs_y = coeffs_y, .coeffs_z = coeffs_z};
-        // multipole_update(&stub, center, sources_coords[i], sources_values[i], cur, nxt);
-        multipole_update(&this, center, sources_coords[i], sources_values[i], cur, nxt);
+        multipole_update(&mp_built, center, sources_coords[i], sources_values[i], cur, nxt);
     }
 
-    // Fill output field-by-field. We do NOT use `*out = this` and do NOT
-    // memcpy a struct: both let gcc ignore the active-union rules and
-    // spill through `out`'s neighbours (the `kind` slot of the
-    // containing octree_node_t in particular). When `out` aliases a tagged
-    // union member previously written as the other branch, strict
-    // aliasing permits the compiler to reorder writes as if `out` were
-    // fully uninitialised.
-    // out->order = this.order;
-    // out->center = this.center;
-    // out->coeffs_x = this.coeffs_x;
-    // out->coeffs_y = this.coeffs_y;
-    // out->coeffs_z = this.coeffs_z;
-    *out = this; // Will it work?
+    // Fill output field-by-field to avoid strict-aliasing UB when `out`
+    // aliases into a union member (octree_node_t.data.mp in particular).
+    out->order = mp_built.order;
+    out->center = mp_built.center;
+    out->coeffs_x = mp_built.coeffs_x;
+    out->coeffs_y = mp_built.coeffs_y;
+    out->coeffs_z = mp_built.coeffs_z;
 
     return true;
 }
@@ -383,7 +364,8 @@ real3_t multipole_eval(const multipole_t *multipole, const real3_t point)
 {
     const real3_t rel_point = real3_sub(point, multipole->center);
     const real_t inv_r = 1.0 / sqrt(rel_point.x * rel_point.x + rel_point.y * rel_point.y + rel_point.z * rel_point.z);
-    real_t scale = inv_r * inv_r;
+    const real_t inv_r2 = inv_r * inv_r;
+    real_t scale = inv_r2;
     real3_t res = {.x = 0, .y = 0, .z = 0};
     size_t idx = 0;
 
@@ -411,8 +393,11 @@ real3_t multipole_eval(const multipole_t *multipole, const real3_t point)
             }
             px *= rel_point.x;
         }
-        res = real3_add(res, real3_mul1(term, scale));
-        scale *= inv_r * inv_r;
+
+        res.x += term.x * scale;
+        res.y += term.y * scale;
+        res.z += term.z * scale;
+        scale *= inv_r2;
     }
 
     return res;

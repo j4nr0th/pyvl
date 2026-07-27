@@ -40,6 +40,7 @@ typedef struct
     unsigned max_depth;
     unsigned work_order;
     real_t alpha_centroid;
+    double theta; /**< MAC opening-angle for interaction-list building (0 = neighbour criterion). */
 } octree_settings_t;
 
 static inline unsigned octree_resolve_work_order(const octree_settings_t *settings)
@@ -89,6 +90,7 @@ typedef struct octree_node
     octree_node_kind_t kind;
     unsigned depth;
     real3_t center;
+    real3_t geom_center; /**< Geometric cell center (set during materialize, never changed). */
     real_t half_size;
     unsigned particle_begin;
     unsigned particle_count;

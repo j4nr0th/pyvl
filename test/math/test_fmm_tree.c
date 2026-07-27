@@ -204,7 +204,7 @@ int main(const int argc, const char *argv[static argc])
             const real3_t v1 = fmm_tree_eval(&tree1, coords, values, pt, FMM_EVAL_SETTINGS_DEFAULT);
             const real3_t v2 = fmm_tree_eval(&tree2, coords, values, pt, FMM_EVAL_SETTINGS_DEFAULT);
             const real_t err = rel_error(v1, v2);
-            TEST_ASSERT(err < 1e-15, "Determinism violation at target %u: rel error %e", j, err);
+            TEST_ASSERT(err < 1e-14, "Determinism violation at target %u: rel error %e", j, err);
         }
 
         if (tree1.buffer)

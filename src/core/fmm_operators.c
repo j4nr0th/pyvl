@@ -385,7 +385,10 @@ real3_t local_expansion_eval(const local_expansion_t *local, const real3_t point
             }
             px *= rel_point.x;
         }
-        res = real3_add(res, term);
+
+        res.x += term.x;
+        res.y += term.y;
+        res.z += term.z;
     }
 
     return res;

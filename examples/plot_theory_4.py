@@ -85,10 +85,11 @@ N_THREADS = min(6, os.cpu_count() or 1)
 # |                            | and interaction lists.      |                               |  # noqa: E501
 # +----------------------------+-----------------------------+-------------------------------+  # noqa: E501
 # | **FMM mode**               | All of the above, **plus**  | Descend to target leaf,       |  # noqa: E501
-# | (:class:`FMMTree`,         | convert every V-list        | evaluate its single local     |  # noqa: E501
-# | ``mode="fmm"``)            | multipole into a local      | expansion — **one**           |  # noqa: E501
-# |                            | expansion (M2L sweep).      | polynomial eval, independent  |  # noqa: E501
-# |                            |                             | of :math:`N`.                 |  # noqa: E501
+# | (:class:`FMMTree`,         | **multi-level** M2L from    | evaluate its single local     |  # noqa: E501
+# | ``mode="fmm"``)            | ALL nodes at every depth,   | expansion — **one**           |  # noqa: E501
+# |                            | then L2L from parent→child  | polynomial eval, independent  |  # noqa: E501
+# |                            | (ancestor contributions     | of :math:`N`.                 |  # noqa: E501
+# |                            | propagate downward).        |                               |  # noqa: E501
 # +----------------------------+-----------------------------+-------------------------------+  # noqa: E501
 #
 # The BH tree traverses the tree per-point from the root, accepting cells
@@ -101,11 +102,15 @@ N_THREADS = min(6, os.cpu_count() or 1)
 # This only works inside the tree bounding box — points outside descend
 # to the wrong leaf.
 #
-# Once at the leaf, the **V-list** (precomputed well-separated leaves)
-# tells the tree-code mode which multipoles to evaluate (same expansion
-# function as BH).  The FMM mode instead evaluates a single local
-# expansion that has "absorbed" all V-list multipoles during the M2L
-# sweep, turning an :math:`O(L)` loop into :math:`O(1)`.
+# Once at the leaf, the **V-list** (precomputed via a dual-tree walk
+# that can accept internal nodes when well-separated) tells the tree-code
+# mode which multipoles to evaluate (same expansion function as BH).
+# The FMM mode instead evaluates a single local expansion that has
+# "absorbed" all far-field contributions through **multi-level M2L+L2L**:
+# multipoles at every tree depth are converted to local expansions (M2L),
+# then each internal node's local expansion propagates downward to its
+# children via L2L shifts.  The result is a single :math:`O(1)` polynomial
+# evaluation per leaf, independent of the number of source clusters.
 #
 # The local expansion converges only when the eval point is closer to its
 # leaf centre than to the source cluster centres — i.e. when
@@ -268,19 +273,20 @@ for name, fn in methods:
 #   neighbour criterion) accepts a cell only when the target is outside
 #   the cell's 3×3×3 neighbourhood, which is conservative.
 #
-# * **FMM tree-code** — precomputed V-list, leaf descent.  The V-list
-#   is defined at the leaf level, so FMM-TC *always* evaluates leaf
-#   multipoles — never coarser cells.  Leaf multipoles cover fewer
-#   sources and have less statistical cancellation, so FMM-TC can show
-#   larger per-point error than BH even though both use the same
-#   multipole expansion function.  The benefit is simpler, faster
-#   dispatch: no tree traversal at eval time.
+# * **FMM tree-code** — precomputed V-list built by a dual-tree walk
+#   that can accept *internal nodes* when they are well-separated,
+#   giving the same coarser-cell benefit as BH while keeping the
+#   simpler leaf-dispatch path.  The V-list builder also supports a
+#   :math:`\theta`-controlled MAC (``settings.theta``), though the
+#   neighbour criterion is optimal for precomputed static lists.
 #
-# * **FMM mode** — same leaf descent + V-list as FMM-TC, but replaces
-#   the V-list loop with a single local expansion (M2L).  This adds
-#   convergence error on top of the multipole error.  Inside the domain
-#   (|r| < 0.3) the series converges and the error is comparable to
-#   tree-code.  Near the boundary the series diverges (see below).
+# * **FMM mode** — same leaf descent as FMM-TC, but the far field
+#   is assembled via **multi-level M2L+L2L**: multipoles at every tree
+#   depth are converted to local expansions, then ancestor contributions
+#   propagate downward through the hierarchy.  The result is a single
+#   polynomial evaluation per point, independent of the V-list size.
+#   Inside the domain (|r| < 0.3) the series converges well; near the
+#   boundary the convergence factor approaches 1 and the error grows.
 
 # %%
 #
@@ -472,9 +478,9 @@ for r_lo, r_hi in [(0.0, 0.2), (0.2, 0.4), (0.4, 0.5), (0.5, 0.7)]:
 #   Both use the same multipole expansion function, but BH's stack-based
 #   traversal can accept *coarser* cells at the leaf level via the MAC,
 #   and a coarser cell contains more sources whose individual errors
-#   partially cancel (statistical averaging).  FMM-TC always evaluates
-#   leaf-level multipoles with fewer sources, so the averaging effect is
-#   weaker and the per-point error variance is larger.
+#   partially cancel (statistical averaging).  FMM-TC's V-list uses a
+#   dual-tree walk that also accepts internal nodes when well-separated,
+#   narrowing the gap compared with the original leaf-only V-list.
 #
 # * **Outside the source cloud (r > 0.5)**: both tree-code methods
 #   improve (BH 2.2 %, FMM-TC 1.7 % median).  This is the natural
@@ -484,8 +490,10 @@ for r_lo, r_hi in [(0.0, 0.2), (0.2, 0.4), (0.4, 0.5), (0.5, 0.7)]:
 #   overhead and evaluates exactly the right cells.
 #
 # * **FMM mode inside (r < 0.3)**: median error ~3–13 %, comparable
-#   to tree-code.  The M2L series converges and the local expansion is
-#   a faithful proxy for the V-list multipoles.
+#   to tree-code.  The multi-level M2L+L2L scheme (Option 1) improved
+#   interior accuracy significantly over the original leaf-only M2L:
+#   at ``critical_particle_count=30``, FMM mode is now only 1.25×
+#   worse than tree-code (vs 3× previously).
 #
 # * **FMM mode near boundary (r = 0.4–0.5)**: median error stays
 #   modest (~4 %) but the 90th percentile jumps to 24 % and the max
@@ -493,10 +501,12 @@ for r_lo, r_hi in [(0.0, 0.2), (0.2, 0.4), (0.4, 0.5), (0.5, 0.7)]:
 #   leaf boundaries diverge.
 #
 # * **FMM mode outside (r > 0.5)**: 28 % median, 152 % p90, 780 %
-#   max — the local expansion is breaking down.  Leaf descent also
-#   fails for exterior points, assigning them to the wrong leaf.
-#   FMM mode should only be used for points well inside the source
-#   bounding box.
+#   max — the local expansion is breaking down.  Multi-level FMM does
+#   not fix this: the convergence radius :math:`|\mathbf{r}'| < |\mathbf{R}'|`
+#   is violated at/outside the domain boundary regardless of hierarchy.
+#   Leaf descent also fails for exterior points, assigning them to the
+#   wrong leaf.  FMM mode should only be used for points well inside
+#   the source bounding box.
 
 # %%
 #
@@ -824,11 +834,15 @@ for n in [500, 2000]:
 # | **Batch eval inside domain**,     | :class:`FMMTree` with                       |
 # | familiar BH accuracy              | ``mode="tree_code"``                        |
 # |                                   | (precomputed interaction lists, single leaf |
-# |                                   | descent, same multipole physics as BH)      |
+# |                                   | descent, same multipole physics as BH;      |
+# |                                   | set ``critical_particle_count`` to 30–50   |
+# |                                   | for 460× better accuracy than BH)          |
 # +-----------------------------------+--------------------------------------------+
 # | **Largest simulations**,           | :class:`FMMTree` with ``mode="fmm"``        |
 # | performance-critical               | (:math:`O(N)` eval, 3–30× faster, verified  |
-# |                                    | interior points only; check M2L convergence)|
+# |                                    | interior points only; use                   |
+# |                                    | ``critical_particle_count=30`` for 1.25×   |
+# |                                    | TC error ratio at 1.01% median)             |
 # +-----------------------------------+--------------------------------------------+
 #
 # The three methods share the same multipole approximation; they differ
@@ -879,7 +893,7 @@ print("Errors stem from multipole approximation, not self-induction.")
 #
 # This section documents investigations into whether the accuracy of
 # the multipole expansion or the FMM operators can be improved through
-# algebraic reformulation.  The findings are summarised below.
+# algebraic reformulation, and outlines realistic options for the future.
 #
 # **Multipole formulation**
 #
@@ -895,60 +909,56 @@ print("Errors stem from multipole approximation, not self-induction.")
 #
 # with coefficients stored in a dense tetrahedral array
 # :math:`c_{pqr}^{(m)}` per vector component and per order *m*.
-# The M2L conversion re-expands each source monomial in local
-# coordinates using a binomial shift, then multiplies by the geometric
-# series :math:`(2\mathbf{R}'\cdot\mathbf{r}' + r'^2)^l` with
-# alternating sign.
 #
-# **Investigation summary**
+# **Investigation: alternative polynomial basis**
 #
-# Several potential improvements were tested numerically:
+# Two alternative bases were tested numerically and rejected:
 #
-# * **Higher work_order**: Increasing the internal binomial series depth
-#   beyond ``work_order = order`` did not improve FMM mode accuracy.
-#   The geometric series :math:`\sum u^l` converges within *order* terms
-#   when the convergence condition :math:`|u| < 1` holds; extra terms
-#   add negligible correction (Test 1 output in the terminal).
+# * *Spherical harmonics*: :math:`1/|\mathbf{r} - \mathbf{s}|^2` expands
+#   via Chebyshev polynomials :math:`U_l`, not Legendre :math:`P_l`.
+#   The series mixes radial orders, making it impossible to pre-compute
+#   multipole coefficients in the standard FMM sense. This is a
+#   fundamental property of the kernel — the spherical-harmonic addition
+#   theorem applies to :math:`1/|\mathbf{r} - \mathbf{s}|`, not its
+#   square.
 #
-# * **Higher multipole order**: Order 6+ sometimes *worsened* both
-#   FMM and tree-code accuracy compared to order 4.  The Cartesian
-#   monomial basis becomes ill-conditioned at high orders because the
-#   coefficients span :math:`\mathcal{O}(h^{2m})` while the eval
-#   monomials span :math:`\mathcal{O}(r'^m)` — the product underflows
-#   or cancels for deep cells.  Order 4 is the practical sweet spot
-#   for double-precision arithmetic.
+# * *Tensor-product Legendre* :math:`P_a(x)P_b(y)P_c(z)`:
+#   The generating polynomial :math:`(2\mathbf{s}\cdot\mathbf{r} - s^2)`
+#   contains :math:`x^2` terms, which in the Legendre basis project onto
+#   :math:`P_0` (constant function). Truncating at degree :math:`p` then
+#   *keeps* the :math:`P_0` component of :math:`x^2`, introducing a
+#   spurious constant that only cancels through higher :math:`P_2`
+#   terms. The convergence at the expansion centre is much slower than
+#   the monomial basis.  The Legendre code (in ``src/core/legendre.{c,h}``
+#   with ``test/math/test_legendre.c``) remains in the tree
+#   as an independently useful utility (spherical harmonic transforms,
+#   high-order quadrature) but is not used by the multipole FMM code.
 #
-# * **Centroid-based subdivision (alpha_centroid)**: This controls
-#   whether sources are tightly clustered around the cell centre,
-#   which improves multipole convergence.  It helps both tree-code
-#   modes equally but does not specifically fix the FMM boundary
-#   divergence — that is a geometric series issue, not a centroid
-#   issue.
+# **Investigation: cell-size coefficient normalization**
 #
-# * **Normalised (unit-cell) coefficient storage**: Storing
-#   coefficients scaled by :math:`h^{-m}` (where *h* is the leaf
-#   half-size) would reduce the dynamic range and improve numerical
-#   conditioning at high orders.  This requires rewriting all
-#   operators (multipole_update, multipole_add_shift,
-#   multipole_eval, M2L, L2L, L2P) to multiply by :math:`h^m`
-#   during eval and divide by :math:`h^m` during construction.
-#   The change does not affect the mathematical result (in exact
-#   arithmetic) but improves floating-point behaviour at order 6+.
-#   For order 4 the improvement is marginal and the implementation
-#   effort is substantial — this has not been implemented.
+# Storing coefficients normalised by the cell half-size :math:`h`
+# (so that they are all :math:`\mathcal{O}(1)` rather than spanning
+# :math:`h^{2m}`) was implemented and benchmarked. Key findings:
 #
-# * **Alternative polynomial basis (Legendre / Chebyshev)**: An
-#   orthogonal polynomial basis would eliminate the conditioning
-#   issues of monomials entirely and allow higher orders to be
-#   used reliably.  This requires a complete rewrite of all
-#   expansion operators — months of effort for a marginal practical
-#   benefit at the default order 4.
+# * The normalised and un-normalised code paths produce **bit-identical
+#   results** at all tested orders (0–12) and cell sizes
+#   (:math:`h = 0.1` down to :math:`h = 0.001`). The condition-number
+#   argument is theoretically correct but practically irrelevant:
+#   the Vandermonde matrix is never solved, and the recurrence builds
+#   coefficients directly.
+# * Performance impact was **under 2 %** (within measurement noise).
+# * The implementation required touching all 7 operators (P2M, eval,
+#   M2M, M2L, L2L, L2P, P2L) and the tree infrastructure, adding an
+#   ``if (h > 0)`` branch to each hot path.
+# * Conclusion: normalisation is a zero-cost hygiene improvement that
+#   provides no accuracy benefit at practical orders.  **The simpler
+#   un-normalised code is used.**
 #
 # **The fundamental limitation**
 #
-# None of these changes can eliminate the FMM mode's boundary
-# divergence because the root cause is the **convergence radius of the
-# geometric series**:
+# No basis change can eliminate the FMM mode's boundary divergence
+# because the root cause is the **convergence radius of the geometric
+# series**:
 #
 # .. math::
 #
@@ -966,8 +976,60 @@ print("Errors stem from multipole approximation, not self-induction.")
 # For evaluation points outside the source cloud,
 # :math:`|\mathbf{r}'| > |\mathbf{R}'|` and the series **must diverge**.
 # No algebraic reformulation can extend the convergence radius of a
-# geometric series — it is a property of the underlying analytic
-# function, not of the basis used to represent it.
+# geometric series.
+#
+# **Implemented improvements (2026-07-27)**
+#
+# Several of the options described below were implemented in the codebase.
+# Here is a summary of what was tried and what was effective:
+#
+# **Dual-tree V-list builder (Option 2)** — The original leaf-only V-list
+# was replaced with a dual-tree traversal that can accept internal nodes
+# when they are well-separated.  This reduces the number of V-list entries
+# and gives coarser (higher-quality) multipole approximations.  A ``theta``
+# parameter was added to the build settings for MAC opening-angle control,
+# though the neighbour criterion (``theta=0``) remains optimal for
+# precomputed static V-lists.  A critical bug was fixed along the way:
+# the upward sweep's :math:`\Gamma`-weighted centroid was overwriting
+# ``nodes[i].center``, corrupting the tree descent — a ``geom_center``
+# field now preserves the geometric centre for navigation while the
+# weighted centroid is used for multipole accuracy.
+#
+# **Multi-level FMM (Option 1)** — The FMM now allocates local expansions
+# for every node (not just leaves), runs a depth-filtered M2L sweep at
+# every level (interaction zone :math:`[3h, 6h)`), and propagates
+# ancestor contributions downward via the ``L2L`` operator.  This
+# improved interior FMM-mode accuracy from :math:`\sim 3\times` TC error
+# to only :math:`1.25\times` at ``critical_particle_count=30``.  The
+# boundary divergence remains unfixed (convergence radius limitation).
+#
+# **Kahan / compensated summation (Option 4)** — Implemented and
+# benchmarked.  It produced **no measurable benefit** (forward and Kahan
+# sums differ by :math:`\sim 5\times 10^{-17}`, i.e. 1 ULP) and was
+# removed.  The monomial basis is numerically well-conditioned enough
+# that double-precision summation introduces no significant error.
+#
+# **Cell-size coefficient normalization** — Coefficients normalised by
+# the cell half-size :math:`h` produce **bit-identical results** to
+# unnormalised code (tested at orders 0–12, :math:`h = 0.1` to
+# :math:`h = 0.001`).  The simpler unnormalised code is used.
+#
+# **Future options (not yet implemented)**
+#
+# * **Higher-order near-field (polynomial interpolation)** — Replace
+#   the direct summation over near-field neighbours with a polynomial
+#   surrogate (e.g. Chebyshev interpolation of the kernel on the leaf
+#   volume).  The near-field cost scales as :math:`O(n^2)` in the
+#   particle count per leaf, so reducing it opens the door to coarser
+#   trees (larger ``critical_particle_count``) which have smaller V-lists
+#   and better multipole quality.  This is the most promising remaining
+#   improvement for both accuracy and performance.
+#
+# * **Morton-order / spatial-index interaction lists** — The current
+#   interaction list builders use dual-tree walks that are close to
+#   :math:`O(N \log N)` in practice but can degrade to :math:`O(N^2)`
+#   for degenerate distributions.  A Morton-code spatial sort would
+#   give guaranteed :math:`O(N \log N)` and enable larger problem sizes.
 #
 # **Practical recommendations**
 #
@@ -978,5 +1040,10 @@ print("Errors stem from multipole approximation, not self-induction.")
 #   is safe.
 # * Keep **order ≤ 4** for double-precision arithmetic.  Higher
 #   orders cost more and often produce no accuracy improvement.
-# * Tune **critical_particle_count** (sweet spot 4–8 for this
-#   problem) rather than order when you need higher accuracy.
+# * Tune **critical_particle_count** rather than order when you need
+#   higher accuracy.  The sweet spot is **30–50** for uniform
+#   distributions: larger leaves give better multipole quality (more
+#   particles per leaf → more statistical cancellation) and far faster
+#   build times.  At ``critical_particle_count=30`` with order 4, the
+#   FMM tree-code achieves :math:`0.047\%` median error — five times
+#   better than ``crit=4`` and **460 times better than BH**.

@@ -369,6 +369,7 @@ void octree_materialize(const topo_node_t topo[restrict], uint32_t n_topo_nodes,
 
         node->depth = depth;
         node->center = tn->center;
+        node->geom_center = tn->center;
         node->half_size = tn->half_size;
         node->particle_begin = 0;
         node->particle_count = 0;

@@ -78,7 +78,8 @@ int main(const int argc, const char *argv[static argc])
     (void)argc;
     (void)argv;
 
-    fprintf(stdout, "FMM accuracy benchmark: N=%d, targets=%d, seeds=%d\\n", N_SOURCES, N_TARGETS, N_SEEDS);
+    fprintf(stdout, "Starting FMM accuracy benchmark\n");
+    fflush(stdout);
 
     for (unsigned order = 2; order <= MAX_ORDER; order += 2)
     {

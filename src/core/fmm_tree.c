@@ -25,6 +25,7 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
         octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, count_pass_res);
     const unsigned n_leaves = count_pass_res.n_multipole_leaves + count_pass_res.n_particle_leaves;
     const size_t max_per_list = n_leaves > 0 ? (size_t)n_leaves * (size_t)(n_leaves - 1) : 1u;
+    const size_t max_per_node = (size_t)n_total * (size_t)n_total;
     const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
     const size_t shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
@@ -36,10 +37,12 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
         .topo_to_real_bytes = base.topo_to_real_bytes,
         .mp_slices_bytes = base.mp_slices_bytes,
         .leaf_indices_bytes = (size_t)n_leaves * sizeof(unsigned),
-        .local_coeffs_bytes = (size_t)(count_pass_res.n_multipole_leaves + count_pass_res.n_particle_leaves) * 3u *
-                              multipole_num_coeffs(settings->order) * sizeof(real_t),
+        /* Local expansions for ALL nodes (internal + leaves) for multi-level FMM. */
+        .local_coeffs_bytes = (size_t)n_total * 3u * multipole_num_coeffs(settings->order) * sizeof(real_t),
         .local_slices_bytes = (size_t)n_total * sizeof(real_t *),
-        .interaction_lists_bytes = ((size_t)n_leaves + 1) * sizeof(unsigned) * 4 + max_per_list * sizeof(unsigned) * 2,
+        /* Per-leaf V-list (tree-code mode) + per-node interaction lists (multi-level M2L). */
+        .interaction_lists_bytes = ((size_t)n_leaves + 1) * sizeof(unsigned) * 4 + max_per_list * sizeof(unsigned) * 2 +
+                                   ((size_t)n_total + 1) * sizeof(unsigned) + max_per_node * sizeof(unsigned),
         .m2l_shift_exp_bytes = (size_t)n_threads * shift_exp_per_thread,
         .m2l_pse_bytes = (size_t)n_threads * pse_per_thread,
     };
@@ -53,34 +56,34 @@ size_t fmm_total_work_size(fmm_work_sizes_t sizes)
 }
 
 /**
- * @brief Build CSR interaction lists for all leaves.
+ * @brief Build per-leaf interaction lists for tree-code mode.
  *
- * For each leaf, two lists are built:
- *  - V-list: well-separated leaves (|center_diff| >= 3 * max(half_a, half_b))
- *  - Near-field list: all other leaves (including self placeholder — self
- *    is handled separately in eval so we skip it here).
+ * For each leaf, walk the tree from the root and for each candidate node:
+ *  - Well-separated: add the node's INDEX to the V-list.
+ *  - Not well-separated AND internal: descend.
+ *  - Not well-separated AND leaf: near-field.
  *
- * @param n_nodes         Total number of nodes.
- * @param nodes           Node array.
- * @param n_leaves        Number of leaves.
  * @param leaf_indices    Mapping from leaf index (0..n_leaves-1) to node index.
  * @param vlist_offsets   Output CSR offsets [n_leaves+1].
- * @param vlist_indices   Output flat V-list indices (leaf indices).
+ * @param vlist_indices   Output flat V-list (NODE indices).
  * @param vlist_capacity  Capacity of vlist_indices.
  * @param nflist_offsets  Output CSR offsets [n_leaves+1].
  * @param nflist_indices  Output flat near-field leaf indices.
  * @param nflist_capacity Capacity of nflist_indices.
- * @param out_vlist_count  Output total V-list entries written.
- * @param out_nflist_count Output total near-field entries written.
+ * @param out_vlist_count  Output total V-list entries.
+ * @param out_nflist_count Output total near-field entries.
+ * @param theta            MAC opening-angle (0 = neighbour criterion).
  */
-static bool fmm_compute_interaction_lists(const octree_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned n_leaves,
-                                          const unsigned CVL_ARRAY_ARG(leaf_indices, restrict n_leaves),
-                                          unsigned CVL_ARRAY_ARG(vlist_offsets, restrict n_leaves + 1),
-                                          unsigned CVL_ARRAY_ARG(vlist_indices, restrict), size_t vlist_capacity,
-                                          unsigned CVL_ARRAY_ARG(nflist_offsets, restrict n_leaves + 1),
-                                          unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
-                                          size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads)
+static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned n_leaves,
+                                  const unsigned CVL_ARRAY_ARG(leaf_indices, restrict n_leaves),
+                                  unsigned CVL_ARRAY_ARG(vlist_offsets, restrict n_leaves + 1),
+                                  unsigned CVL_ARRAY_ARG(vlist_indices, restrict), size_t vlist_capacity,
+                                  unsigned CVL_ARRAY_ARG(nflist_offsets, restrict n_leaves + 1),
+                                  unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
+                                  size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads, double theta)
 {
+    static const unsigned STACK_SIZE = 256;
+
     if (n_leaves == 0)
     {
         vlist_offsets[0] = nflist_offsets[0] = 0;
@@ -90,44 +93,67 @@ static bool fmm_compute_interaction_lists(const octree_node_t CVL_ARRAY_ARG(node
 
     /*
      * Two-pass CSR construction:
-     *   Pass 1 (parallel) — count per-leaf V-list and near-field entries.
-     *   Pass 2 (serial)   — prefix-sum to build global CSR offsets.
-     *   Pass 3 (parallel) — fill index arrays using precomputed offsets.
-     *
-     * This avoids a critical section on shared counters while keeping
-     * the distance computations simple.
+     *   Pass 1 (parallel) — dual-tree walk to count per-leaf entries.
+     *   Pass 2 (serial)   — prefix-sum to build CSR offsets.
+     *   Pass 3 (parallel) — repeat dual-tree walk to fill indices.
      */
 
-    /* Pass 1: count per-leaf entries (parallel, writes to vlist_offsets/nflist_offsets). */
-#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets)            \
+    /* Pass 1: count (parallel). */
+#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets, theta)     \
     schedule(static) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
-        const unsigned idx_a = leaf_indices[li];
-        const octree_node_t *node_a = &nodes[idx_a];
+        const unsigned target_ni = leaf_indices[li];
+        const octree_node_t *target = &nodes[target_ni];
+        const real_t ht = target->half_size;
         unsigned vcnt = 0, nfcnt = 0;
 
-        for (unsigned lj = 0; lj < n_leaves; ++lj)
+        /* Dual-tree walk: depth-first, explicit stack. */
+        unsigned stack[STACK_SIZE];
+        unsigned sp = 0;
+        stack[sp++] = 0; /* root */
+
+        while (sp > 0)
         {
-            if (li == lj)
+            const unsigned ni = stack[--sp];
+            if (ni == target_ni)
                 continue;
-            const unsigned idx_b = leaf_indices[lj];
-            const octree_node_t *node_b = &nodes[idx_b];
 
-            const real3_t diff = real3_sub(node_a->center, node_b->center);
+            const octree_node_t *cand = &nodes[ni];
+            const real3_t diff = real3_sub(target->center, cand->center);
             const real_t dist = real3_mag(diff);
-            const real_t max_h = (node_a->half_size > node_b->half_size) ? node_a->half_size : node_b->half_size;
-
-            if (dist >= 3.0 * max_h - 1e-12)
-                vcnt++;
+            bool well_separated;
+            if (theta > 0.0)
+                well_separated = dist > (real_t)1e-30 && cand->half_size / dist < theta;
             else
+                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - (real_t)1e-12;
+
+            if (well_separated)
+            {
+                /* Well-separated: add to V-list (any node type). */
+                vcnt++;
+            }
+            else if (cand->kind == OCTREE_NODE_INTERNAL)
+            {
+                /* Too close for the coarser cell — descend. */
+                for (int oct = 7; oct >= 0; --oct)
+                {
+                    const octree_node_t *child = cand->data.internal.children[oct];
+                    if (child != NULL)
+                        stack[sp++] = (unsigned)(child - nodes);
+                }
+            }
+            else
+            {
+                /* Leaf and not well-separated: near-field. */
                 nfcnt++;
+            }
         }
         vlist_offsets[li] = vcnt;
         nflist_offsets[li] = nfcnt;
     }
 
-    /* Pass 2: prefix-sum to build CSR offsets (serial). */
+    /* Pass 2: prefix-sum (serial). */
     size_t vlist_total = 0, nflist_total = 0;
     for (unsigned li = 0; li < n_leaves; ++li)
     {
@@ -141,41 +167,170 @@ static bool fmm_compute_interaction_lists(const octree_node_t CVL_ARRAY_ARG(node
     vlist_offsets[n_leaves] = (unsigned)vlist_total;
     nflist_offsets[n_leaves] = (unsigned)nflist_total;
 
-    /* Check capacity before writing indices. */
     if (vlist_total > vlist_capacity || nflist_total > nflist_capacity)
         return false;
 
     /* Pass 3: fill index arrays (parallel). */
-#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices,             \
-                                                  nflist_offsets, nflist_indices, vlist_total, nflist_total)           \
+#pragma omp parallel for default(none)                                                                                 \
+    shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices, nflist_offsets, nflist_indices, theta)         \
     schedule(static) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         unsigned vi = vlist_offsets[li];
         unsigned nfi = nflist_offsets[li];
+        const unsigned target_ni = leaf_indices[li];
+        const octree_node_t *target = &nodes[target_ni];
+        const real_t ht = target->half_size;
 
-        for (unsigned lj = 0; lj < n_leaves; ++lj)
+        unsigned stack[STACK_SIZE];
+        unsigned sp = 0;
+        stack[sp++] = 0;
+
+        while (sp > 0)
         {
-            if (li == lj)
+            const unsigned ni = stack[--sp];
+            if (ni == target_ni)
                 continue;
-            const unsigned idx_b = leaf_indices[lj];
-            const unsigned idx_a = leaf_indices[li];
-            const octree_node_t *node_a = &nodes[idx_a];
-            const octree_node_t *node_b = &nodes[idx_b];
 
-            const real3_t diff = real3_sub(node_a->center, node_b->center);
+            const octree_node_t *cand = &nodes[ni];
+            const real3_t diff = real3_sub(target->center, cand->center);
             const real_t dist = real3_mag(diff);
-            const real_t max_h = (node_a->half_size > node_b->half_size) ? node_a->half_size : node_b->half_size;
-
-            if (dist >= 3.0 * max_h - 1e-12)
-                vlist_indices[vi++] = lj;
+            bool well_separated;
+            if (theta > 0.0)
+                well_separated = dist > (real_t)1e-30 && cand->half_size / dist < theta;
             else
-                nflist_indices[nfi++] = lj;
+                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - (real_t)1e-12;
+
+            if (well_separated)
+            {
+                vlist_indices[vi++] = ni;
+            }
+            else if (cand->kind == OCTREE_NODE_INTERNAL)
+            {
+                for (int oct = 7; oct >= 0; --oct)
+                {
+                    const octree_node_t *child = cand->data.internal.children[oct];
+                    if (child != NULL)
+                        stack[sp++] = (unsigned)(child - nodes);
+                }
+            }
+            else
+            {
+                nflist_indices[nfi++] = (unsigned)nodes[ni].leaf_id;
+            }
         }
     }
 
     *out_vlist_count = vlist_total;
     *out_nflist_count = nflist_total;
+    return true;
+}
+
+/**
+ * @brief Build per-node interaction lists for multi-level M2L.
+ *
+ * For each node, walks the tree and finds same-depth nodes in the interaction
+ * zone [3h, 6h).  Sources at distance < 3h are handled at finer levels; those
+ * at >= 6h are handled at coarser levels via L2L.
+ */
+static bool fmm_build_per_node_interaction_lists(const octree_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned n_nodes,
+                                                 unsigned CVL_ARRAY_ARG(mlvl_offsets, restrict n_nodes + 1),
+                                                 unsigned CVL_ARRAY_ARG(mlvl_indices, restrict), size_t mlvl_capacity,
+                                                 size_t *out_count, unsigned n_threads)
+{
+    static const unsigned STACK_SIZE = 256;
+    static const real_t EPS = (real_t)1e-12;
+
+    if (n_nodes == 0)
+    {
+        mlvl_offsets[0] = 0;
+        *out_count = 0;
+        return true;
+    }
+
+    /* Pass 1: count (parallel). */
+#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets) schedule(static) num_threads(n_threads)
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    {
+        const octree_node_t *target = &nodes[ni];
+        const real_t h = target->half_size;
+        unsigned cnt = 0;
+        unsigned stack[STACK_SIZE];
+        unsigned sp = 0;
+        stack[sp++] = 0;
+
+        while (sp > 0)
+        {
+            const unsigned ci = stack[--sp];
+            if (ci == ni)
+                continue;
+            const octree_node_t *cand = &nodes[ci];
+            if (cand->depth != target->depth)
+            {
+                if (cand->kind == OCTREE_NODE_INTERNAL)
+                    for (int oct = 7; oct >= 0; --oct)
+                    {
+                        const octree_node_t *ch = cand->data.internal.children[oct];
+                        if (ch)
+                            stack[sp++] = (unsigned)(ch - nodes);
+                    }
+                continue;
+            }
+            const real_t dist = real3_mag(real3_sub(target->center, cand->center));
+            if (dist >= 3.0 * h - EPS && dist < 6.0 * h - EPS)
+                cnt++;
+        }
+        mlvl_offsets[ni] = cnt;
+    }
+
+    /* Pass 2: prefix-sum (serial). */
+    size_t total = 0;
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    {
+        const unsigned cnt = mlvl_offsets[ni];
+        mlvl_offsets[ni] = (unsigned)total;
+        total += cnt;
+    }
+    mlvl_offsets[n_nodes] = (unsigned)total;
+
+    if (total > mlvl_capacity)
+        return false;
+
+    /* Pass 3: fill (parallel). */
+#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets, mlvl_indices) schedule(static)             \
+    num_threads(n_threads)
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    {
+        unsigned vi = mlvl_offsets[ni];
+        const octree_node_t *target = &nodes[ni];
+        const real_t h = target->half_size;
+        unsigned stack[STACK_SIZE];
+        unsigned sp = 0;
+        stack[sp++] = 0;
+        while (sp > 0)
+        {
+            const unsigned ci = stack[--sp];
+            if (ci == ni)
+                continue;
+            const octree_node_t *cand = &nodes[ci];
+            if (cand->depth != target->depth)
+            {
+                if (cand->kind == OCTREE_NODE_INTERNAL)
+                    for (int oct = 7; oct >= 0; --oct)
+                    {
+                        const octree_node_t *ch = cand->data.internal.children[oct];
+                        if (ch)
+                            stack[sp++] = (unsigned)(ch - nodes);
+                    }
+                continue;
+            }
+            const real_t dist = real3_mag(real3_sub(target->center, cand->center));
+            if (dist >= 3.0 * h - EPS && dist < 6.0 * h - EPS)
+                mlvl_indices[vi++] = ci;
+        }
+    }
+
+    *out_count = total;
     return true;
 }
 
@@ -223,8 +378,7 @@ static unsigned fmm_build_leaf_index_map(unsigned n_nodes, const octree_node_t C
  * @param local_coeffs  Flat arena of local expansion coefficients.
  * @param local_slices  Output per-node local slice pointers [n_nodes].
  */
-static void fmm_assign_local_slices(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
-                                    unsigned order, real_t *local_coeffs,
+static void fmm_assign_local_slices(unsigned n_nodes, unsigned order, real_t *local_coeffs,
                                     real_t *CVL_ARRAY_ARG(local_slices, restrict n_nodes))
 {
     const size_t n_coeffs = multipole_num_coeffs(order);
@@ -232,15 +386,9 @@ static void fmm_assign_local_slices(unsigned n_nodes, const octree_node_t CVL_AR
 
     for (uint32_t i = 0; i < n_nodes; ++i)
     {
-        if (nodes[i].kind != OCTREE_NODE_INTERNAL)
-        {
-            local_slices[i] = cursor;
-            cursor += 3u * n_coeffs;
-        }
-        else
-        {
-            local_slices[i] = NULL;
-        }
+        /* All nodes get a local expansion slice for multi-level FMM. */
+        local_slices[i] = cursor;
+        cursor += 3u * n_coeffs;
     }
     /* Zero all local coefficients. */
     const size_t total = (size_t)(cursor - local_coeffs);
@@ -252,43 +400,27 @@ static void fmm_assign_local_slices(unsigned n_nodes, const octree_node_t CVL_AR
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Run the M2L (multipole-to-local) conversion sweep.
+ * @brief Multi-level M2L sweep over ALL nodes using per-node interaction lists.
  *
- * For each leaf, converts all V-list multipoles into a local expansion
- * centred at the leaf's centre and accumulates into local_slices.
- *
- * @param n_nodes         Number of nodes.
- * @param nodes           Node array.
- * @param n_leaves        Number of leaves.
- * @param leaf_indices    Leaf index to node index map [n_leaves].
- * @param order           Multipole/local expansion order.
- * @param work_order      Internal work order for M2L series.
- * @param mp_slices       Per-node multipole coefficient slices.
- * @param local_slices    Per-node local coefficient slices (accumulated).
- * @param vlist_offsets   V-list CSR offsets [n_leaves+1].
- * @param vlist_indices   V-list flat leaf indices.
- * @param scratch         Scratch buffer (per-thread shift_exp/pse).
- * @param n_threads       Number of OpenMP threads.
+ * For each node, converts all interaction-list sources (same-depth nodes in
+ * the [3h, 6h) zone) into a local expansion at the node's centre.
  */
-static void fmm_m2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
-                          unsigned n_leaves, const unsigned CVL_ARRAY_ARG(leaf_indices, restrict n_leaves),
-                          unsigned order, unsigned work_order, real_t *const *restrict mp_slices,
-                          real_t *const *restrict local_slices,
-                          unsigned CVL_ARRAY_ARG(vlist_offsets, restrict n_leaves + 1),
-                          unsigned CVL_ARRAY_ARG(vlist_indices, restrict), real_t *work_shift_exp, real_t *work_pse,
-                          unsigned n_threads)
+static void fmm_m2l_sweep_mlvl(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                               unsigned order, unsigned work_order, real_t *const *restrict mp_slices,
+                               real_t *const *restrict local_slices,
+                               unsigned CVL_ARRAY_ARG(mlvl_offsets, restrict n_nodes + 1),
+                               unsigned CVL_ARRAY_ARG(mlvl_indices, restrict), real_t *work_shift_exp, real_t *work_pse,
+                               unsigned n_threads)
 {
     const size_t n_coeffs = multipole_num_coeffs(order);
     const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
 
 #pragma omp parallel for default(none)                                                                                 \
-    shared(n_leaves, leaf_indices, nodes, order, work_order, mp_slices, local_slices, vlist_offsets, vlist_indices,    \
-               work_shift_exp, work_pse, n_coeffs, shift_per_thread, pse_per_thread) schedule(dynamic, 16)             \
-    num_threads(n_threads)
-    for (unsigned li = 0; li < n_leaves; ++li)
+    shared(n_nodes, nodes, order, work_order, mp_slices, local_slices, mlvl_offsets, mlvl_indices, work_shift_exp,     \
+               work_pse, n_coeffs, shift_per_thread, pse_per_thread) schedule(dynamic, 16) num_threads(n_threads)
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
     {
-        const unsigned ni = leaf_indices[li];
         real_t *local_slice = local_slices[ni];
         if (local_slice == NULL)
             continue;
@@ -303,22 +435,83 @@ static void fmm_m2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(no
         real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
         real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
 
-        const unsigned v_start = vlist_offsets[li];
-        const unsigned v_end = vlist_offsets[li + 1];
+        const unsigned v_start = mlvl_offsets[ni];
+        const unsigned v_end = mlvl_offsets[ni + 1];
         for (unsigned vi = v_start; vi < v_end; ++vi)
         {
-            const unsigned li_src = vlist_indices[vi];
-            const unsigned ni_src = leaf_indices[li_src];
+            const unsigned ni_src = mlvl_indices[vi];
             real_t *mp_slice = mp_slices[ni_src];
             if (mp_slice == NULL)
                 continue;
-
             const multipole_t mp = {.order = order,
-                                    .center = nodes[ni_src].data.mp.center,
+                                    .center = nodes[ni_src].center,
                                     .coeffs_x = mp_slice,
                                     .coeffs_y = mp_slice + n_coeffs,
                                     .coeffs_z = mp_slice + 2u * n_coeffs};
             multipole_to_local(&mp, (local_expansion_t *)&local, work_order, my_shift_exp, my_pse);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* L2L downward sweep                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Propagate local expansions downward via L2L (coarse → fine).
+ *
+ * For each internal node (root → leaves), L2L-shift its local expansion
+ * into each child's local expansion (additive).  After this sweep, every
+ * node's local expansion contains contributions from all coarser-level
+ * ancestor interactions.
+ */
+static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARRAY_ARG(nodes, restrict n_nodes),
+                                   unsigned order, unsigned work_order, real_t *const *restrict local_slices,
+                                   real_t *work_shift_exp, real_t *work_pse, unsigned n_threads)
+{
+    const size_t n_coeffs = multipole_num_coeffs(order);
+    const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
+    const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
+
+#pragma omp parallel for default(none) shared(n_nodes, nodes, order, work_order, local_slices, work_shift_exp,         \
+                                                  work_pse, n_coeffs, shift_per_thread, pse_per_thread)                \
+    schedule(dynamic, 16) num_threads(n_threads)
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    {
+        if (nodes[ni].kind != OCTREE_NODE_INTERNAL)
+            continue;
+
+        real_t *parent_local = local_slices[ni];
+        if (parent_local == NULL)
+            continue;
+
+        const local_expansion_t parent_loc = {.order = order,
+                                              .center = nodes[ni].center,
+                                              .coeffs_x = parent_local,
+                                              .coeffs_y = parent_local + n_coeffs,
+                                              .coeffs_z = parent_local + 2u * n_coeffs};
+
+        const int tid = omp_get_thread_num();
+        real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
+        real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
+
+        for (int oct = 0; oct < 8; ++oct)
+        {
+            const octree_node_t *child = nodes[ni].data.internal.children[oct];
+            if (child == NULL)
+                continue;
+
+            const unsigned ci = (unsigned)(child - nodes);
+            real_t *child_local = local_slices[ci];
+            if (child_local == NULL)
+                continue;
+
+            local_expansion_t child_loc = {.order = order,
+                                           .center = child->center,
+                                           .coeffs_x = child_local,
+                                           .coeffs_y = child_local + n_coeffs,
+                                           .coeffs_z = child_local + 2u * n_coeffs};
+            local_expansion_shift(&parent_loc, &child_loc, work_order, my_shift_exp, my_pse);
         }
     }
 }
@@ -340,14 +533,14 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
 
     real3_t result = {.x = 0, .y = 0, .z = 0};
 
-    /* Step 1: Descend to the target's leaf. */
+    /* Step 1: Descend to the target's leaf using geometric centers. */
     uint32_t leaf_node_idx = 0;
     {
         uint32_t idx = 0;
         while (tree->nodes[idx].kind == OCTREE_NODE_INTERNAL)
         {
             const real3_t p = point;
-            const real3_t c = tree->nodes[idx].center;
+            const real3_t c = tree->nodes[idx].geom_center;
             const unsigned oct =
                 (unsigned)(p.x >= c.x) * 1u + (unsigned)(p.y >= c.y) * 2u + (unsigned)(p.z >= c.z) * 4u;
             const octree_node_t *child = tree->nodes[idx].data.internal.children[oct];
@@ -384,21 +577,22 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     }
     else if (tree->vlist_offsets && tree->vlist_indices && tree->leaf_indices)
     {
-        /* Tree-code mode: per-V-list multipole_eval. */
+        /* Tree-code mode: per-V-list multipole_eval.
+         * V-list entries are NODE indices (leaf or internal), directly usable. */
         if (li >= 0)
         {
             const unsigned v_start = tree->vlist_offsets[(unsigned)li];
             const unsigned v_end = tree->vlist_offsets[(unsigned)li + 1];
             for (unsigned vi = v_start; vi < v_end; ++vi)
             {
-                const unsigned li_other = tree->vlist_indices[vi];
-                const unsigned other_node_idx = lindices[li_other];
-                real_t *slice = tree->mp_slices[other_node_idx];
+                const unsigned other_ni = tree->vlist_indices[vi];
+                real_t *slice = tree->mp_slices[other_ni];
                 if (slice == NULL)
                     continue;
-                const octree_node_t *other = &tree->nodes[other_node_idx];
+                const octree_node_t *other = &tree->nodes[other_ni];
+                const real3_t center = other->center; /* works for both leaf and internal */
                 const multipole_t mp = {.order = order,
-                                        .center = other->data.mp.center,
+                                        .center = center,
                                         .coeffs_x = slice,
                                         .coeffs_y = slice + n_coeffs,
                                         .coeffs_z = slice + 2u * n_coeffs};
@@ -490,15 +684,18 @@ typedef struct
     unsigned *nflist_offsets;
     unsigned *nflist_indices;
     size_t nflist_capacity;
-    real_t *m2l_shift_exp; /**< Per-thread shift_exp scratch for M2L sweep. */
-    real_t *m2l_pse;       /**< Per-thread pse scratch for M2L sweep.       */
+    unsigned *mlvl_offsets; /**< Per-node interaction-list CSR offsets (multi-level M2L). */
+    unsigned *mlvl_indices; /**< Per-node interaction-list flat indices. */
+    size_t mlvl_capacity;   /**< Capacity of mlvl_indices. */
+    real_t *m2l_shift_exp;  /**< Per-thread shift_exp scratch for M2L sweep. */
+    real_t *m2l_pse;        /**< Per-thread pse scratch for M2L sweep.       */
 } fmm_work_t;
 
 /* ------------------------------------------------------------------ */
 /* Work buffer partition helper (FMM-specific)                        */
 /* ------------------------------------------------------------------ */
 
-static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsigned n_leaves)
+static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsigned n_leaves, unsigned n_total)
 {
     uint8_t *bp = (uint8_t *)buffer;
     fmm_work_t out = {0};
@@ -519,18 +716,28 @@ static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsig
     out.local_slices = (real_t **)bp;
     bp += sizes.local_slices_bytes;
 
-    const size_t offsets_bytes = (size_t)(n_leaves + 1) * sizeof(unsigned);
-    const size_t max_per = n_leaves > 0 ? (size_t)n_leaves * (size_t)(n_leaves - 1) : 1u;
+    /* Per-leaf V-list + NF-list (tree-code mode). */
+    const size_t leaf_offsets_bytes = (size_t)(n_leaves + 1) * sizeof(unsigned);
+    const size_t max_per_leaf = n_leaves > 0 ? (size_t)n_leaves * (size_t)(n_leaves - 1) : 1u;
     out.vlist_offsets = (unsigned *)bp;
-    bp += offsets_bytes;
+    bp += leaf_offsets_bytes;
     out.vlist_indices = (unsigned *)bp;
-    out.vlist_capacity = max_per;
-    bp += max_per * sizeof(unsigned);
+    out.vlist_capacity = max_per_leaf;
+    bp += max_per_leaf * sizeof(unsigned);
     out.nflist_offsets = (unsigned *)bp;
-    bp += offsets_bytes;
+    bp += leaf_offsets_bytes;
     out.nflist_indices = (unsigned *)bp;
-    out.nflist_capacity = max_per;
-    bp += max_per * sizeof(unsigned);
+    out.nflist_capacity = max_per_leaf;
+    bp += max_per_leaf * sizeof(unsigned);
+
+    /* Per-node interaction lists (multi-level M2L). */
+    const size_t node_offsets_bytes = (size_t)(n_total + 1) * sizeof(unsigned);
+    const size_t max_per_node = (size_t)n_total * (size_t)n_total;
+    out.mlvl_offsets = (unsigned *)bp;
+    bp += node_offsets_bytes;
+    out.mlvl_indices = (unsigned *)bp;
+    out.mlvl_capacity = max_per_node;
+    bp += max_per_node * sizeof(unsigned);
 
     /* M2L per-thread scratch (independent of the transient scratch buffer). */
     out.m2l_shift_exp = (real_t *)bp;
@@ -606,7 +813,7 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         return false;
 
     const unsigned n_leaves = count->n_multipole_leaves + count->n_particle_leaves;
-    const fmm_work_t work = fmm_partition_work(ws, buffer, n_leaves);
+    const fmm_work_t work = fmm_partition_work(ws, buffer, n_leaves, n_topo);
 
     /* === Shared pipeline stages === */
     octree_materialize(scratch->topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
@@ -637,9 +844,15 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         fmm_build_leaf_index_map(n_topo, work.nodes, work.leaf_indices);
 
         size_t vlist_count = 0, nflist_count = 0;
-        if (!fmm_compute_interaction_lists(
-                work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets, work.vlist_indices, work.vlist_capacity,
-                work.nflist_offsets, work.nflist_indices, work.nflist_capacity, &vlist_count, &nflist_count, n_threads))
+        if (!fmm_build_leaf_vlists(work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets, work.vlist_indices,
+                                   work.vlist_capacity, work.nflist_offsets, work.nflist_indices, work.nflist_capacity,
+                                   &vlist_count, &nflist_count, n_threads, settings->theta))
+            goto cleanup;
+
+        /* Build per-node interaction lists for multi-level M2L. */
+        size_t mlvl_count = 0;
+        if (!fmm_build_per_node_interaction_lists(work.nodes, n_topo, work.mlvl_offsets, work.mlvl_indices,
+                                                  work.mlvl_capacity, &mlvl_count, n_threads))
             goto cleanup;
 
         out->leaf_indices = work.leaf_indices;
@@ -652,15 +865,16 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         out->n_leaves = n_leaves;
     }
 
-    /* M2L (multipole-to-local). */
+    /* Multi-level M2L + L2L. */
     {
         const unsigned order = settings->order;
         const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
 
-        fmm_assign_local_slices(n_topo, work.nodes, order, work.local_coeffs, work.local_slices);
-        fmm_m2l_sweep(n_topo, work.nodes, n_leaves, work.leaf_indices, order, work_order, work.mp_slices,
-                      work.local_slices, work.vlist_offsets, work.vlist_indices, work.m2l_shift_exp, work.m2l_pse,
-                      n_threads);
+        fmm_assign_local_slices(n_topo, order, work.local_coeffs, work.local_slices);
+        fmm_m2l_sweep_mlvl(n_topo, work.nodes, order, work_order, work.mp_slices, work.local_slices, work.mlvl_offsets,
+                           work.mlvl_indices, work.m2l_shift_exp, work.m2l_pse, n_threads);
+        fmm_downward_l2l_sweep(n_topo, work.nodes, order, work_order, work.local_slices, work.m2l_shift_exp,
+                               work.m2l_pse, n_threads);
 
         out->local_coeffs = work.local_coeffs;
         out->local_slices = work.local_slices;
