@@ -709,9 +709,14 @@ static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class
         {
             eval_mode = FMM_EVAL_FMM;
         }
+        else if (strcmp(mode_str, "hybrid") == 0)
+        {
+            eval_mode = FMM_EVAL_HYBRID;
+        }
         else
         {
-            PyErr_Format(PyExc_ValueError, "Unknown mode \"%s\". Must be \"tree_code\" or \"fmm\".", mode_str);
+            PyErr_Format(PyExc_ValueError, "Unknown mode \"%s\". Must be \"tree_code\", \"fmm\", or \"hybrid\".",
+                         mode_str);
             return NULL;
         }
     }
@@ -750,7 +755,7 @@ static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class
         }
     }
 
-    const fmm_eval_settings_t eval_cfg = {.theta = theta, .mode = eval_mode};
+    const fmm_eval_settings_t eval_cfg = {.theta = theta, .mode = eval_mode, .hybrid_alpha = 1.5};
 
     const real3_t *targets_data = (const real3_t *)PyArray_DATA(targets_arr);
     const real3_t *src_coords = (const real3_t *)PyArray_DATA((PyArrayObject *)this->sources_coords);

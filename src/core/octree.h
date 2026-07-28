@@ -118,6 +118,7 @@ typedef struct
     size_t size_leaf_values_per_thread;
     size_t size_shift_exp_per_thread;
     size_t size_pse_per_thread;
+    size_t size_radix_hist_per_thread; /**< Radix-sort histogram bins per thread (256 * sizeof(unsigned)). */
 } octree_scratch_sizes_t;
 
 typedef struct
@@ -132,6 +133,7 @@ typedef struct
     real_t *leaf_values;
     real_t *shift_exp;
     real_t *pse;
+    unsigned *radix_hist; /**< [n_threads * 256] Per-thread radix-sort histogram bins. */
 } octree_scratch_t;
 
 /* ================================================================ */
@@ -235,7 +237,7 @@ void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_
                     unsigned *source_leaf_real, unsigned n_threads);
 
 unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigned max_depth,
-                                 unsigned depth_start[restrict], unsigned depth_end[restrict]);
+                                 unsigned depth_start[restrict], unsigned depth_end[restrict], unsigned n_threads);
 
 void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_real, octree_node_t *nodes,
                                 unsigned *particle_order, unsigned n_threads);
@@ -283,5 +285,137 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
                              const octree_scratch_t *scratch, const unsigned particle_order[restrict],
                              const real3_t sources_coords[restrict], const real3_t sources_values[restrict],
                              unsigned n_threads);
+
+/* ================================================================ */
+/* Morton 3D helpers (static inline)                                */
+/* ================================================================ */
+
+/**
+ * @brief Split 21 low bits by interleaving with zeros (3D Morton code helper).
+ *
+ * Bit-parallel spread via successive shift-and-mask stages.
+ * Each stage doubles the spacing between information bits:
+ *
+ * Mask constants (binary, grouped by stage):
+ *   0x1fffff                — keep low 21 bits
+ *   0x1f00000000ffff        — spread 7 → 14 bits
+ *   0x1f0000ff0000ff        — spread 14 → 28 bits
+ *   0x100f00f00f00f00f      — spread 28 → 42 bits
+ *   0x10c30c30c30c30c3      — spread 42 → 56 bits
+ *   0x1249249249249249      — final: bit at every 3rd position
+ *                            (positions 0,3,6,… = X slot in 3D code)
+ */
+static inline uint64_t morton_split_21(uint64_t x)
+{
+    x &= 0x1fffffULL;
+    x = (x | (x << 32)) & 0x1f00000000ffffULL;
+    x = (x | (x << 16)) & 0x1f0000ff0000ffULL;
+    x = (x | (x << 8)) & 0x100f00f00f00f00fULL;
+    x = (x | (x << 4)) & 0x10c30c30c30c30c3ULL;
+    x = (x | (x << 2)) & 0x1249249249249249ULL;
+    return x;
+}
+
+/** @brief Compute 63-bit Morton code for a point within the root cell. */
+static inline uint64_t morton_3d(real3_t p, real3_t root_center, real_t root_half_size)
+{
+    const real_t inv_cell = 1.0 / (2.0 * root_half_size);
+    const real_t scale = (real_t)((1u << 21) - 1);
+    real_t nx = (p.x - root_center.x) * inv_cell + 0.5;
+    real_t ny = (p.y - root_center.y) * inv_cell + 0.5;
+    real_t nz = (p.z - root_center.z) * inv_cell + 0.5;
+    /* Clamp to [0, 1). */
+    if (nx < 0)
+        nx = 0;
+    if (nx >= 1)
+        nx = 0.999999;
+    if (ny < 0)
+        ny = 0;
+    if (ny >= 1)
+        ny = 0.999999;
+    if (nz < 0)
+        nz = 0;
+    if (nz >= 1)
+        nz = 0.999999;
+    const uint64_t ix = (uint64_t)(nx * scale);
+    const uint64_t iy = (uint64_t)(ny * scale);
+    const uint64_t iz = (uint64_t)(nz * scale);
+    return morton_split_21(ix) | (morton_split_21(iy) << 1) | (morton_split_21(iz) << 2);
+}
+
+/**
+ * @brief Binary-search the Morton-sorted index array for a code range.
+ */
+static inline void morton_range_bounds(const unsigned *sorted_indices, const uint64_t *codes, size_t offset,
+                                       size_t count, uint64_t code_min, uint64_t code_max, size_t *out_begin,
+                                       size_t *out_end)
+{
+    if (count == 0)
+    {
+        *out_begin = *out_end = offset;
+        return;
+    }
+
+    size_t lo = offset, hi = offset + count;
+    while (lo < hi)
+    {
+        const size_t mid = lo + (hi - lo) / 2;
+        const uint64_t mc = codes[sorted_indices[mid]];
+        if (mc < code_min)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    *out_begin = lo;
+
+    lo = offset;
+    hi = offset + count;
+    while (lo < hi)
+    {
+        const size_t mid = lo + (hi - lo) / 2;
+        const uint64_t mc = codes[sorted_indices[mid]];
+        if (mc <= code_max)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    *out_end = lo;
+}
+
+/* ================================================================ */
+/* Morton sort (public API)                                         */
+/* ================================================================ */
+
+/**
+ * @brief Build per-depth Morton-sorted index arrays using parallel LSD radix sort.
+ *
+ * Uses @c geom_center (the geometric cell centre, invariant across the build)
+ * rather than the Γ-weighted centroid so that the spatial ordering is stable.
+ *
+ * Sorts (Morton code, node_index) pairs per depth level with a parallel
+ * radix sort (8 passes, 8 bits/pass) that replaces the former qsort approach.
+ * The histogram buffer (@p radix_hist) is caller-provided from the scratch buffer.
+ *
+ * On output:
+ *   depth_offsets[d] for d = 0..max_depth_found stores the start offset for depth d.
+ *   depth_offsets[max_depth_found + 1] = n_nodes (end sentinel).
+ *   *out_max_depth_found = the number of depth levels found.
+ *
+ * @param n_nodes           Number of nodes.
+ * @param nodes             Node array (geom_center must be populated).
+ * @param codes             Output: Morton code for every node [n_nodes].
+ * @param sorted_indices    Output: node indices sorted by Morton code (per depth) [n_nodes].
+ * @param depth_offsets     Output: per-depth start offsets [(max_depth + 2)].
+ * @param pairs_temp        Radix sort ping-pong buffer [2 * n_nodes * pair_size].
+ * @param radix_hist        Per-thread histogram bins [n_threads * 256] (from scratch).
+ * @param max_depth         Hint for depth_offsets capacity; max_depth_found ≤ max_depth.
+ * @param out_max_depth_found Output: actual max depth found.
+ * @param n_threads         Number of OpenMP threads.
+ * @return true on success.
+ */
+bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[restrict], uint64_t codes[restrict n_nodes],
+                                unsigned sorted_indices[restrict n_nodes], unsigned depth_offsets[restrict],
+                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict], unsigned max_depth,
+                                unsigned *out_max_depth_found, unsigned n_threads);
 
 /* OCTREE_H */

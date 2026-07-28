@@ -1,16 +1,31 @@
 #include "fmm_tree.h"
 #include "fmm_operators.h"
 
-#include <omp.h>
-
+#include <assert.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
+/* Internal constants                                                 */
+/* ------------------------------------------------------------------ */
+
+/** @brief Depth array sizing.  topo_node_t.depth is uint8_t \xE2\x86\x92 max depth 255. */
+#define FMM_DEPTH_SLOTS 256u
+
+/** @brief Stack for dual-tree walk in V-list building. */
+#define FMM_VLIST_STACK_SIZE 256u
+
+/** @brief Small epsilon for geometry comparisons. */
+#define FMM_EPS ((real_t)1e-12)
+
+/* ------------------------------------------------------------------ */
 /* Internal helpers                                                   */
 /* ------------------------------------------------------------------ */
+
+/* Morton 3D helpers moved to octree.h (morton_split_21, morton_3d, morton_range_bounds)
+ * and octree.c (octree_build_morton_sorted). */
 
 /* ------------------------------------------------------------------ */
 /* FMM-specific sizing (extra regions beyond octree_base_work_sizes_t) */
@@ -29,6 +44,9 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
     const unsigned work_order = settings->work_order ? settings->work_order : settings->order;
     const size_t shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
+    const size_t morton_bytes_per_node = sizeof(uint64_t) + sizeof(unsigned);
+    const size_t pair_size = sizeof(uint64_t) + sizeof(unsigned);
+    const size_t depth_slots = (size_t)count_pass_res.max_depth + 2u;
 
     return (fmm_work_sizes_t){
         .nodes_bytes = base.nodes_bytes,
@@ -45,6 +63,8 @@ fmm_work_sizes_t fmm_size_work_buffer(unsigned n_sources, const fmm_settings_t s
                                    ((size_t)n_total + 1) * sizeof(unsigned) + max_per_node * sizeof(unsigned),
         .m2l_shift_exp_bytes = (size_t)n_threads * shift_exp_per_thread,
         .m2l_pse_bytes = (size_t)n_threads * pse_per_thread,
+        .morton_sort_bytes =
+            (size_t)n_total * morton_bytes_per_node + (size_t)n_total * pair_size * 2u + depth_slots * sizeof(unsigned),
     };
 }
 
@@ -52,7 +72,7 @@ size_t fmm_total_work_size(fmm_work_sizes_t sizes)
 {
     return sizes.nodes_bytes + sizes.particle_order_bytes + sizes.multipole_coeffs_bytes + sizes.topo_to_real_bytes +
            sizes.mp_slices_bytes + sizes.leaf_indices_bytes + sizes.local_coeffs_bytes + sizes.local_slices_bytes +
-           sizes.interaction_lists_bytes + sizes.m2l_shift_exp_bytes + sizes.m2l_pse_bytes;
+           sizes.interaction_lists_bytes + sizes.m2l_shift_exp_bytes + sizes.m2l_pse_bytes + sizes.morton_sort_bytes;
 }
 
 /**
@@ -82,7 +102,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
                                   unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
                                   size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads, double theta)
 {
-    static const unsigned STACK_SIZE = 256;
+    /* Depth never exceeds FMM_DEPTH_SLOTS; use a named constant for the local stack. */
 
     if (n_leaves == 0)
     {
@@ -100,7 +120,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
 
     /* Pass 1: count (parallel). */
 #pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets, theta)     \
-    schedule(static) num_threads(n_threads)
+    schedule(dynamic) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         const unsigned target_ni = leaf_indices[li];
@@ -109,7 +129,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
         unsigned vcnt = 0, nfcnt = 0;
 
         /* Dual-tree walk: depth-first, explicit stack. */
-        unsigned stack[STACK_SIZE];
+        unsigned stack[FMM_VLIST_STACK_SIZE];
         unsigned sp = 0;
         stack[sp++] = 0; /* root */
 
@@ -173,7 +193,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
     /* Pass 3: fill index arrays (parallel). */
 #pragma omp parallel for default(none)                                                                                 \
     shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices, nflist_offsets, nflist_indices, theta)         \
-    schedule(static) num_threads(n_threads)
+    schedule(dynamic) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         unsigned vi = vlist_offsets[li];
@@ -182,7 +202,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
         const octree_node_t *target = &nodes[target_ni];
         const real_t ht = target->half_size;
 
-        unsigned stack[STACK_SIZE];
+        unsigned stack[FMM_VLIST_STACK_SIZE];
         unsigned sp = 0;
         stack[sp++] = 0;
 
@@ -227,20 +247,19 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
 }
 
 /**
- * @brief Build per-node interaction lists for multi-level M2L.
+ * @brief Build per-node interaction lists for multi-level M2L using
+ *        Morton-code-accelerated range queries.
  *
- * For each node, walks the tree and finds same-depth nodes in the interaction
- * zone [3h, 6h).  Sources at distance < 3h are handled at finer levels; those
- * at >= 6h are handled at coarser levels via L2L.
+ * For each node, finds same-depth nodes in the interaction zone [3h, 6h).
+ * Uses pre-computed Morton codes and per-depth sorted indices for O(N log N)
+ * range queries instead of the O(N^2) dual-tree walk.
  */
-static bool fmm_build_per_node_interaction_lists(const octree_node_t CVL_ARRAY_ARG(nodes, restrict), unsigned n_nodes,
-                                                 unsigned CVL_ARRAY_ARG(mlvl_offsets, restrict n_nodes + 1),
-                                                 unsigned CVL_ARRAY_ARG(mlvl_indices, restrict), size_t mlvl_capacity,
-                                                 size_t *out_count, unsigned n_threads)
+static bool fmm_build_per_node_interaction_lists(const octree_node_t *nodes, unsigned n_nodes, unsigned *mlvl_offsets,
+                                                 unsigned *mlvl_indices, size_t mlvl_capacity, size_t *out_count,
+                                                 unsigned n_threads, const uint64_t *morton_codes,
+                                                 const unsigned *morton_sorted, const unsigned *depth_offsets,
+                                                 unsigned max_depth_found)
 {
-    static const unsigned STACK_SIZE = 256;
-    static const real_t EPS = (real_t)1e-12;
-
     if (n_nodes == 0)
     {
         mlvl_offsets[0] = 0;
@@ -248,36 +267,83 @@ static bool fmm_build_per_node_interaction_lists(const octree_node_t CVL_ARRAY_A
         return true;
     }
 
-    /* Pass 1: count (parallel). */
-#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets) schedule(static) num_threads(n_threads)
+    /* Reference frame for Morton: invariant geometric root centre. */
+    const real3_t root_gc = nodes[0].geom_center;
+    const real_t root_hs = nodes[0].half_size;
+
+    /* Pass 1: count (parallel).  Morton bounding-box range query per node. */
+#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets, morton_codes, morton_sorted,               \
+                                                  depth_offsets, max_depth_found, root_gc, root_hs) schedule(dynamic)  \
+    num_threads(n_threads)
     for (unsigned ni = 0; ni < n_nodes; ++ni)
     {
         const octree_node_t *target = &nodes[ni];
         const real_t h = target->half_size;
+        const unsigned td = target->depth;
         unsigned cnt = 0;
-        unsigned stack[STACK_SIZE];
-        unsigned sp = 0;
-        stack[sp++] = 0;
 
-        while (sp > 0)
+        /* Skip if this node's depth exceeds our depth_offsets bounds. */
+        if (td > max_depth_found)
         {
-            const unsigned ci = stack[--sp];
+            mlvl_offsets[ni] = 0;
+            continue;
+        }
+
+        /* Bounding box for the [3h, 6h) interaction zone. */
+        real3_t bb_min, bb_max;
+        bb_min.x = target->center.x - 6.0 * h;
+        bb_min.y = target->center.y - 6.0 * h;
+        bb_min.z = target->center.z - 6.0 * h;
+        bb_max.x = target->center.x + 6.0 * h;
+        bb_max.y = target->center.y + 6.0 * h;
+        bb_max.z = target->center.z + 6.0 * h;
+
+        const unsigned doff = depth_offsets[td];
+        unsigned dend = n_nodes;
+        /* Find end offset: the start of the next occupied depth level. */
+        for (unsigned dd = td + 1; dd <= max_depth_found; ++dd)
+        {
+            const unsigned nxt = depth_offsets[dd];
+            if (nxt < dend)
+            {
+                dend = nxt;
+                break;
+            }
+        }
+        if (doff >= dend)
+        {
+            mlvl_offsets[ni] = 0;
+            continue;
+        }
+        const size_t ndepth = (size_t)(dend - doff);
+        assert(ndepth <= n_nodes && "depth range count exceeds n_nodes");
+
+        /* Morton range over all 8 bounding-box corners. */
+        uint64_t mc_min = UINT64_MAX, mc_max = 0;
+        for (int mc_ix = 0; mc_ix < 8; ++mc_ix)
+        {
+            real3_t corner;
+            corner.x = (mc_ix & 1) ? bb_max.x : bb_min.x;
+            corner.y = (mc_ix & 2) ? bb_max.y : bb_min.y;
+            corner.z = (mc_ix & 4) ? bb_max.z : bb_min.z;
+            const uint64_t mc = morton_3d(corner, root_gc, root_hs);
+            if (mc < mc_min)
+                mc_min = mc;
+            if (mc > mc_max)
+                mc_max = mc;
+        }
+
+        size_t b_begin, b_end;
+        morton_range_bounds(morton_sorted, morton_codes, doff, ndepth, mc_min, mc_max, &b_begin, &b_end);
+
+        for (size_t j = b_begin; j < b_end; ++j)
+        {
+            const unsigned ci = morton_sorted[j];
+            assert(ci < n_nodes && "Morton-sorted ci out of range");
             if (ci == ni)
                 continue;
-            const octree_node_t *cand = &nodes[ci];
-            if (cand->depth != target->depth)
-            {
-                if (cand->kind == OCTREE_NODE_INTERNAL)
-                    for (int oct = 7; oct >= 0; --oct)
-                    {
-                        const octree_node_t *ch = cand->data.internal.children[oct];
-                        if (ch)
-                            stack[sp++] = (unsigned)(ch - nodes);
-                    }
-                continue;
-            }
-            const real_t dist = real3_mag(real3_sub(target->center, cand->center));
-            if (dist >= 3.0 * h - EPS && dist < 6.0 * h - EPS)
+            const real_t dist = real3_mag(real3_sub(target->center, nodes[ci].center));
+            if (dist >= 3.0 * h - FMM_EPS && dist < 6.0 * h - FMM_EPS)
                 cnt++;
         }
         mlvl_offsets[ni] = cnt;
@@ -297,35 +363,66 @@ static bool fmm_build_per_node_interaction_lists(const octree_node_t CVL_ARRAY_A
         return false;
 
     /* Pass 3: fill (parallel). */
-#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets, mlvl_indices) schedule(static)             \
+#pragma omp parallel for default(none) shared(n_nodes, nodes, mlvl_offsets, mlvl_indices, morton_codes, morton_sorted, \
+                                                  depth_offsets, max_depth_found, root_gc, root_hs) schedule(dynamic)  \
     num_threads(n_threads)
     for (unsigned ni = 0; ni < n_nodes; ++ni)
     {
         unsigned vi = mlvl_offsets[ni];
         const octree_node_t *target = &nodes[ni];
         const real_t h = target->half_size;
-        unsigned stack[STACK_SIZE];
-        unsigned sp = 0;
-        stack[sp++] = 0;
-        while (sp > 0)
+        const unsigned td = target->depth;
+
+        if (td > max_depth_found)
+            continue;
+
+        real3_t bb_min, bb_max;
+        bb_min.x = target->center.x - 6.0 * h;
+        bb_min.y = target->center.y - 6.0 * h;
+        bb_min.z = target->center.z - 6.0 * h;
+        bb_max.x = target->center.x + 6.0 * h;
+        bb_max.y = target->center.y + 6.0 * h;
+        bb_max.z = target->center.z + 6.0 * h;
+
+        const unsigned doff = depth_offsets[td];
+        unsigned dend = n_nodes;
+        for (unsigned dd = td + 1; dd <= max_depth_found; ++dd)
         {
-            const unsigned ci = stack[--sp];
+            const unsigned nxt = depth_offsets[dd];
+            if (nxt < dend)
+            {
+                dend = nxt;
+                break;
+            }
+        }
+        if (doff >= dend)
+            continue;
+        const size_t ndepth = (size_t)(dend - doff);
+
+        uint64_t mc_min = UINT64_MAX, mc_max = 0;
+        for (int mc_ix = 0; mc_ix < 8; ++mc_ix)
+        {
+            real3_t corner;
+            corner.x = (mc_ix & 1) ? bb_max.x : bb_min.x;
+            corner.y = (mc_ix & 2) ? bb_max.y : bb_min.y;
+            corner.z = (mc_ix & 4) ? bb_max.z : bb_min.z;
+            const uint64_t mc = morton_3d(corner, root_gc, root_hs);
+            if (mc < mc_min)
+                mc_min = mc;
+            if (mc > mc_max)
+                mc_max = mc;
+        }
+
+        size_t b_begin, b_end;
+        morton_range_bounds(morton_sorted, morton_codes, doff, ndepth, mc_min, mc_max, &b_begin, &b_end);
+
+        for (size_t j = b_begin; j < b_end; ++j)
+        {
+            const unsigned ci = morton_sorted[j];
             if (ci == ni)
                 continue;
-            const octree_node_t *cand = &nodes[ci];
-            if (cand->depth != target->depth)
-            {
-                if (cand->kind == OCTREE_NODE_INTERNAL)
-                    for (int oct = 7; oct >= 0; --oct)
-                    {
-                        const octree_node_t *ch = cand->data.internal.children[oct];
-                        if (ch)
-                            stack[sp++] = (unsigned)(ch - nodes);
-                    }
-                continue;
-            }
-            const real_t dist = real3_mag(real3_sub(target->center, cand->center));
-            if (dist >= 3.0 * h - EPS && dist < 6.0 * h - EPS)
+            const real_t dist = real3_mag(real3_sub(target->center, nodes[ci].center));
+            if (dist >= 3.0 * h - FMM_EPS && dist < 6.0 * h - FMM_EPS)
                 mlvl_indices[vi++] = ci;
         }
     }
@@ -349,6 +446,7 @@ static unsigned fmm_build_leaf_index_map(unsigned n_nodes, const octree_node_t C
                                          unsigned CVL_ARRAY_ARG(leaf_indices, restrict))
 {
     unsigned cnt = 0;
+#pragma omp parallel for reduction(+ : cnt) default(none) shared(n_nodes, nodes, leaf_indices)
     for (uint32_t i = 0; i < n_nodes; ++i)
     {
         if (nodes[i].kind != OCTREE_NODE_INTERNAL)
@@ -382,17 +480,14 @@ static void fmm_assign_local_slices(unsigned n_nodes, unsigned order, real_t *lo
                                     real_t *CVL_ARRAY_ARG(local_slices, restrict n_nodes))
 {
     const size_t n_coeffs = multipole_num_coeffs(order);
-    real_t *cursor = local_coeffs;
+    const size_t slice_stride = 3u * n_coeffs;
 
+#pragma omp parallel for default(none) shared(n_nodes, local_slices, local_coeffs, slice_stride)
     for (uint32_t i = 0; i < n_nodes; ++i)
-    {
-        /* All nodes get a local expansion slice for multi-level FMM. */
-        local_slices[i] = cursor;
-        cursor += 3u * n_coeffs;
-    }
+        local_slices[i] = local_coeffs + i * slice_stride;
+
     /* Zero all local coefficients. */
-    const size_t total = (size_t)(cursor - local_coeffs);
-    memset(local_coeffs, 0, total * sizeof(real_t));
+    memset(local_coeffs, 0, (size_t)n_nodes * slice_stride * sizeof(real_t));
 }
 
 /* ------------------------------------------------------------------ */
@@ -416,39 +511,44 @@ static void fmm_m2l_sweep_mlvl(unsigned n_nodes, const octree_node_t CVL_ARRAY_A
     const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
 
-#pragma omp parallel for default(none)                                                                                 \
+    unsigned thread_counter_m2l = 0;
+#pragma omp parallel default(none)                                                                                     \
     shared(n_nodes, nodes, order, work_order, mp_slices, local_slices, mlvl_offsets, mlvl_indices, work_shift_exp,     \
-               work_pse, n_coeffs, shift_per_thread, pse_per_thread) schedule(dynamic, 16) num_threads(n_threads)
-    for (unsigned ni = 0; ni < n_nodes; ++ni)
+               work_pse, n_coeffs, shift_per_thread, pse_per_thread, thread_counter_m2l) num_threads(n_threads)
     {
-        real_t *local_slice = local_slices[ni];
-        if (local_slice == NULL)
-            continue;
-
-        const local_expansion_t local = {.order = order,
-                                         .center = nodes[ni].center,
-                                         .coeffs_x = local_slice,
-                                         .coeffs_y = local_slice + n_coeffs,
-                                         .coeffs_z = local_slice + 2u * n_coeffs};
-
-        const int tid = omp_get_thread_num();
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter_m2l++;
         real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
         real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
-
-        const unsigned v_start = mlvl_offsets[ni];
-        const unsigned v_end = mlvl_offsets[ni + 1];
-        for (unsigned vi = v_start; vi < v_end; ++vi)
+#pragma omp for schedule(dynamic, 16)
+        for (unsigned ni = 0; ni < n_nodes; ++ni)
         {
-            const unsigned ni_src = mlvl_indices[vi];
-            real_t *mp_slice = mp_slices[ni_src];
-            if (mp_slice == NULL)
+            real_t *local_slice = local_slices[ni];
+            if (local_slice == NULL)
                 continue;
-            const multipole_t mp = {.order = order,
-                                    .center = nodes[ni_src].center,
-                                    .coeffs_x = mp_slice,
-                                    .coeffs_y = mp_slice + n_coeffs,
-                                    .coeffs_z = mp_slice + 2u * n_coeffs};
-            multipole_to_local(&mp, (local_expansion_t *)&local, work_order, my_shift_exp, my_pse);
+
+            const local_expansion_t local = {.order = order,
+                                             .center = nodes[ni].center,
+                                             .coeffs_x = local_slice,
+                                             .coeffs_y = local_slice + n_coeffs,
+                                             .coeffs_z = local_slice + 2u * n_coeffs};
+
+            const unsigned v_start = mlvl_offsets[ni];
+            const unsigned v_end = mlvl_offsets[ni + 1];
+            for (unsigned vi = v_start; vi < v_end; ++vi)
+            {
+                const unsigned ni_src = mlvl_indices[vi];
+                real_t *mp_slice = mp_slices[ni_src];
+                if (mp_slice == NULL)
+                    continue;
+                const multipole_t mp = {.order = order,
+                                        .center = nodes[ni_src].center,
+                                        .coeffs_x = mp_slice,
+                                        .coeffs_y = mp_slice + n_coeffs,
+                                        .coeffs_z = mp_slice + 2u * n_coeffs};
+                multipole_to_local(&mp, (local_expansion_t *)&local, work_order, my_shift_exp, my_pse);
+            }
         }
     }
 }
@@ -473,45 +573,81 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARR
     const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
 
-#pragma omp parallel for default(none) shared(n_nodes, nodes, order, work_order, local_slices, work_shift_exp,         \
-                                                  work_pse, n_coeffs, shift_per_thread, pse_per_thread)                \
-    schedule(dynamic, 16) num_threads(n_threads)
-    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    /* Find max depth. */
+    unsigned max_depth = 0;
+    for (unsigned i = 0; i < n_nodes; ++i)
+        if (nodes[i].depth > max_depth)
+            max_depth = nodes[i].depth;
+
+    unsigned depth_start[FMM_DEPTH_SLOTS], depth_end[FMM_DEPTH_SLOTS];
+    octree_compute_depth_ranges(n_nodes, nodes, max_depth, depth_start, depth_end);
+
+    /*
+     * Propagate local expansions root → leaves, one depth level at a time.
+     *
+     * WARNING: L2L has a parent→child data dependency — a child's local
+     * expansion is READ when that child acts as a parent at the next level.
+     * Processing all levels in a single parallel loop would race: thread A
+     * could read child C's local expansion (as C is parent of D) while
+     * thread B writes C's expansion (as C is child of B's node).
+     *
+     * We serialize over depth to guarantee each level is fully written
+     * before the next level reads it.  Nodes within a single depth level
+     * are independent (a child has exactly one parent), so they can be
+     * processed in parallel within each level.
+     */
+    for (unsigned d = 0; d < max_depth; ++d)
     {
-        if (nodes[ni].kind != OCTREE_NODE_INTERNAL)
+        const unsigned ds = depth_start[d];
+        const unsigned de = depth_end[d];
+        if (ds >= de)
             continue;
 
-        real_t *parent_local = local_slices[ni];
-        if (parent_local == NULL)
-            continue;
-
-        const local_expansion_t parent_loc = {.order = order,
-                                              .center = nodes[ni].center,
-                                              .coeffs_x = parent_local,
-                                              .coeffs_y = parent_local + n_coeffs,
-                                              .coeffs_z = parent_local + 2u * n_coeffs};
-
-        const int tid = omp_get_thread_num();
-        real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
-        real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
-
-        for (int oct = 0; oct < 8; ++oct)
+        unsigned thread_counter_l2l = 0;
+#pragma omp parallel default(none) shared(ds, de, nodes, order, work_order, local_slices, work_shift_exp, work_pse,    \
+                                              n_coeffs, shift_per_thread, pse_per_thread, thread_counter_l2l)          \
+    num_threads(n_threads)
         {
-            const octree_node_t *child = nodes[ni].data.internal.children[oct];
-            if (child == NULL)
-                continue;
+            unsigned tid;
+#pragma omp atomic capture
+            tid = thread_counter_l2l++;
+            real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
+            real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
+#pragma omp for schedule(dynamic, 16)
+            for (unsigned ni = ds; ni < de; ++ni)
+            {
+                if (nodes[ni].kind != OCTREE_NODE_INTERNAL)
+                    continue;
 
-            const unsigned ci = (unsigned)(child - nodes);
-            real_t *child_local = local_slices[ci];
-            if (child_local == NULL)
-                continue;
+                real_t *parent_local = local_slices[ni];
+                if (parent_local == NULL)
+                    continue;
 
-            local_expansion_t child_loc = {.order = order,
-                                           .center = child->center,
-                                           .coeffs_x = child_local,
-                                           .coeffs_y = child_local + n_coeffs,
-                                           .coeffs_z = child_local + 2u * n_coeffs};
-            local_expansion_shift(&parent_loc, &child_loc, work_order, my_shift_exp, my_pse);
+                const local_expansion_t parent_loc = {.order = order,
+                                                      .center = nodes[ni].center,
+                                                      .coeffs_x = parent_local,
+                                                      .coeffs_y = parent_local + n_coeffs,
+                                                      .coeffs_z = parent_local + 2u * n_coeffs};
+
+                for (int oct = 0; oct < 8; ++oct)
+                {
+                    const octree_node_t *child = nodes[ni].data.internal.children[oct];
+                    if (child == NULL)
+                        continue;
+
+                    const unsigned ci = (unsigned)(child - nodes);
+                    real_t *child_local = local_slices[ci];
+                    if (child_local == NULL)
+                        continue;
+
+                    local_expansion_t child_loc = {.order = order,
+                                                   .center = child->center,
+                                                   .coeffs_x = child_local,
+                                                   .coeffs_y = child_local + n_coeffs,
+                                                   .coeffs_z = child_local + 2u * n_coeffs};
+                    local_expansion_shift(&parent_loc, &child_loc, work_order, my_shift_exp, my_pse);
+                }
+            }
         }
     }
 }
@@ -559,11 +695,13 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     const unsigned order = tree->settings.order;
     const size_t n_coeffs = multipole_num_coeffs(order);
     const unsigned *lindices = tree->leaf_indices;
+    const bool has_local = (tree->local_coeffs != NULL && tree->local_slices != NULL);
+    const bool has_vlist = (tree->vlist_offsets && tree->vlist_indices && tree->leaf_indices);
 
     /* --- Far-field --- */
-    if (eval_settings.mode == FMM_EVAL_FMM && tree->local_coeffs != NULL && tree->local_slices != NULL)
+    if (eval_settings.mode == FMM_EVAL_FMM && has_local)
     {
-        /* FMM mode: evaluate the leaf's precomputed local expansion. */
+        /* FMM mode: evaluate the leaf's precomputed local expansion (interior only). */
         real_t *local_slice = tree->local_slices[leaf_node_idx];
         if (local_slice != NULL)
         {
@@ -575,11 +713,58 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
             result = local_expansion_eval(&local, point);
         }
     }
-    else if (tree->vlist_offsets && tree->vlist_indices && tree->leaf_indices)
+    else if (eval_settings.mode == FMM_EVAL_HYBRID && has_local)
     {
-        /* Tree-code mode: per-V-list multipole_eval.
-         * V-list entries are NODE indices (leaf or internal), directly usable. */
-        if (li >= 0)
+        /*
+         * HYBRID mode: stack-based traversal from root, accepting the first
+         * node whose local expansion converges (|r'| < alpha * half_size).
+         * This works anywhere in space because we can always accept some
+         * ancestor whose cell covers the evaluation point.  If no node is
+         * accepted (pathological), fall back to tree-code.
+         */
+        static const unsigned STACK_MAX = 256;
+        unsigned stack[STACK_MAX];
+        unsigned sp = 0;
+        stack[sp++] = 0; /* root */
+
+        const real_t alpha = (eval_settings.hybrid_alpha > 0.0) ? eval_settings.hybrid_alpha : 1.5;
+
+        while (sp > 0)
+        {
+            const unsigned ni = stack[--sp];
+            const octree_node_t *node = &tree->nodes[ni];
+
+            real_t *local_slice = tree->local_slices[ni];
+            if (local_slice != NULL)
+            {
+                const real3_t rl = real3_sub(point, node->center);
+                const real_t dist = sqrt(rl.x * rl.x + rl.y * rl.y + rl.z * rl.z);
+                if (dist < alpha * node->half_size)
+                {
+                    /* Convergence criterion satisfied — evaluate and prune. */
+                    const local_expansion_t local = {.order = order,
+                                                     .center = node->center,
+                                                     .coeffs_x = local_slice,
+                                                     .coeffs_y = local_slice + n_coeffs,
+                                                     .coeffs_z = local_slice + 2u * n_coeffs};
+                    result = local_expansion_eval(&local, point);
+                    goto hybrid_done;
+                }
+            }
+
+            if (node->kind == OCTREE_NODE_INTERNAL && sp + 8 <= STACK_MAX)
+            {
+                for (int oct = 7; oct >= 0; --oct)
+                {
+                    const octree_node_t *child = node->data.internal.children[oct];
+                    if (child != NULL)
+                        stack[sp++] = (unsigned)(child - tree->nodes);
+                }
+            }
+        }
+
+        /* Fallback: no node's local expansion converged — use tree-code. */
+        if (has_vlist && li >= 0)
         {
             const unsigned v_start = tree->vlist_offsets[(unsigned)li];
             const unsigned v_end = tree->vlist_offsets[(unsigned)li + 1];
@@ -590,14 +775,36 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
                 if (slice == NULL)
                     continue;
                 const octree_node_t *other = &tree->nodes[other_ni];
-                const real3_t center = other->center; /* works for both leaf and internal */
                 const multipole_t mp = {.order = order,
-                                        .center = center,
+                                        .center = other->center,
                                         .coeffs_x = slice,
                                         .coeffs_y = slice + n_coeffs,
                                         .coeffs_z = slice + 2u * n_coeffs};
                 result = real3_add(result, multipole_eval(&mp, point));
             }
+        }
+    hybrid_done:;
+    }
+    else if (has_vlist && li >= 0)
+    {
+        /* Tree-code mode: per-V-list multipole_eval.
+         * V-list entries are NODE indices (leaf or internal), directly usable. */
+        const unsigned v_start = tree->vlist_offsets[(unsigned)li];
+        const unsigned v_end = tree->vlist_offsets[(unsigned)li + 1];
+        for (unsigned vi = v_start; vi < v_end; ++vi)
+        {
+            const unsigned other_ni = tree->vlist_indices[vi];
+            real_t *slice = tree->mp_slices[other_ni];
+            if (slice == NULL)
+                continue;
+            const octree_node_t *other = &tree->nodes[other_ni];
+            const real3_t center = other->center; /* works for both leaf and internal */
+            const multipole_t mp = {.order = order,
+                                    .center = center,
+                                    .coeffs_x = slice,
+                                    .coeffs_y = slice + n_coeffs,
+                                    .coeffs_z = slice + 2u * n_coeffs};
+            result = real3_add(result, multipole_eval(&mp, point));
         }
     }
     else
@@ -657,7 +864,7 @@ void fmm_tree_eval_all(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(sourc
                        unsigned n_threads)
 {
 #pragma omp parallel for default(none) shared(tree, sources_coords, sources_values, n_targets, targets, results,       \
-                                                  eval_settings) num_threads(n_threads) schedule(static)
+                                                  eval_settings) num_threads(n_threads) schedule(dynamic)
     for (unsigned i = 0; i < n_targets; ++i)
     {
         results[i] = fmm_tree_eval(tree, sources_coords, sources_values, targets[i], eval_settings);
@@ -689,14 +896,21 @@ typedef struct
     size_t mlvl_capacity;   /**< Capacity of mlvl_indices. */
     real_t *m2l_shift_exp;  /**< Per-thread shift_exp scratch for M2L sweep. */
     real_t *m2l_pse;        /**< Per-thread pse scratch for M2L sweep.       */
+    /* Morton-order sort storage. */
+    uint64_t *morton_codes;         /**< [n_total] Morton code for every node. */
+    unsigned *morton_sorted_nodes;  /**< [n_total] Node indices sorted by Morton code (per depth). */
+    unsigned *morton_depth_offsets; /**< [max_depth+2] depth_offsets + end sentinel. */
+    uint8_t *morton_pairs_temp;     /**< [2 * n_total * pair_size] Radix sort ping-pong buffer. */
 } fmm_work_t;
 
 /* ------------------------------------------------------------------ */
 /* Work buffer partition helper (FMM-specific)                        */
 /* ------------------------------------------------------------------ */
 
-static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsigned n_leaves, unsigned n_total)
+static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsigned n_leaves, unsigned n_total,
+                                     unsigned max_depth)
 {
+    const size_t pair_size = sizeof(uint64_t) + sizeof(unsigned);
     uint8_t *bp = (uint8_t *)buffer;
     fmm_work_t out = {0};
     out.nodes = (octree_node_t *)bp;
@@ -744,6 +958,17 @@ static fmm_work_t fmm_partition_work(fmm_work_sizes_t sizes, void *buffer, unsig
     bp += sizes.m2l_shift_exp_bytes;
     out.m2l_pse = (real_t *)bp;
     bp += sizes.m2l_pse_bytes;
+
+    /* Morton sort storage. */
+    out.morton_codes = (uint64_t *)bp;
+    bp += (size_t)n_total * sizeof(uint64_t);
+    out.morton_sorted_nodes = (unsigned *)bp;
+    bp += (size_t)n_total * sizeof(unsigned);
+    out.morton_depth_offsets = (unsigned *)bp;
+    bp += (size_t)(max_depth + 2u) * sizeof(unsigned);
+    out.morton_pairs_temp = (uint8_t *)bp;
+    bp += (size_t)n_total * pair_size * 2u;
+
     return out;
 }
 
@@ -813,14 +1038,26 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         return false;
 
     const unsigned n_leaves = count->n_multipole_leaves + count->n_particle_leaves;
-    const fmm_work_t work = fmm_partition_work(ws, buffer, n_leaves, n_topo);
+    const fmm_work_t work = fmm_partition_work(ws, buffer, n_leaves, n_topo, count->max_depth);
+
+    /* Zero the per-thread M2L/L2L scratch buffers in the work buffer.
+     *
+     * These come from PyMem_Malloc and may contain stale NaN / large-exponent
+     * bit patterns when blocks are reused after prior trees are freed.  The
+     * M2L/L2L operators do initialise these buffers before reading, but stale
+     * values at indices that are read (via multipole_add_poly_to_order's
+     * ``if (c == 0.0) continue``) before being written by the monomial-loop
+     * l>=1 iterations can produce inf/NaN.  BH has no M2L/L2L scratch, hence
+     * no issue. */
+    memset(work.m2l_shift_exp, 0, ws.m2l_shift_exp_bytes);
+    memset(work.m2l_pse, 0, ws.m2l_pse_bytes);
 
     /* === Shared pipeline stages === */
     octree_materialize(scratch->topo, n_topo, (const octree_settings_t *)settings, work.topo_to_real, work.nodes,
                        work.multipole_coeffs, work.mp_slices, n_threads);
     octree_descend(n_sources, sources_coords, work.nodes, scratch->source_leaf_real, n_threads);
 
-    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL);
+    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL, n_threads);
 
     octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
@@ -843,16 +1080,24 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
     {
         fmm_build_leaf_index_map(n_topo, work.nodes, work.leaf_indices);
 
+        /* Build Morton-sorted index arrays using invariant geom_center. */
+        unsigned max_depth_found = 0;
+        if (!octree_build_morton_sorted(n_topo, work.nodes, work.morton_codes, work.morton_sorted_nodes,
+                                        work.morton_depth_offsets, work.morton_pairs_temp, scratch->radix_hist,
+                                        count->max_depth, &max_depth_found, n_threads))
+            goto cleanup;
+
         size_t vlist_count = 0, nflist_count = 0;
         if (!fmm_build_leaf_vlists(work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets, work.vlist_indices,
                                    work.vlist_capacity, work.nflist_offsets, work.nflist_indices, work.nflist_capacity,
                                    &vlist_count, &nflist_count, n_threads, settings->theta))
             goto cleanup;
 
-        /* Build per-node interaction lists for multi-level M2L. */
+        /* Build per-node interaction lists via Morton-accelerated range queries. */
         size_t mlvl_count = 0;
         if (!fmm_build_per_node_interaction_lists(work.nodes, n_topo, work.mlvl_offsets, work.mlvl_indices,
-                                                  work.mlvl_capacity, &mlvl_count, n_threads))
+                                                  work.mlvl_capacity, &mlvl_count, n_threads, work.morton_codes,
+                                                  work.morton_sorted_nodes, work.morton_depth_offsets, max_depth_found))
             goto cleanup;
 
         out->leaf_indices = work.leaf_indices;
@@ -926,6 +1171,13 @@ bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t source
     scratch_buffer = octree_alloc(allocator, needed_scratch);
     if (!scratch_buffer)
         return false;
+
+    /* Zero scratch to prevent stale data in per-thread pse/shift_exp.
+     * Valgrind confirms 5.7M uninitialised reads from multipole_add_poly_to_order
+     * in the upward sweep when this is omitted.  BH skips this because its
+     * eval accuracy checks are looser and the uninit patterns rarely produce
+     * inf/NaN in that code path, but FMM's M2L chain amplifies the garbage. */
+    memset(scratch_buffer, 0, needed_scratch);
 
     /* 3. Prepare scratch (partition + count). */
     octree_count_t count;

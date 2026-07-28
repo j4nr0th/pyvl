@@ -1,13 +1,27 @@
 #include "octree.h"
 
-#include <omp.h>
-
 #include <assert.h>
 
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ------------------------------------------------------------------ */
+/* Internal constants                                                 */
+/* ------------------------------------------------------------------ */
+
+enum
+{
+    /** @brief Max tree depth (uint8_t depth field → max 255). */
+    OCTREE_MAX_DEPTH = 256u,
+    /** @brief Number of bits per radix sort pass. */
+    RADIX_BITS = 8u,
+    /** @brief Number of histogram bins (2^RADIX_BITS). */
+    RADIX_BINS = (1u << RADIX_BITS),
+    /** @brief Number of passes for 64-bit keys (64 / RADIX_BITS). */
+    RADIX_PASSES = (64u / RADIX_BITS),
+};
 
 /* ================================================================ */
 /* Internal helpers                                                 */
@@ -243,6 +257,7 @@ octree_scratch_sizes_t octree_size_scratch(unsigned n_sources, const octree_sett
     const unsigned work_order = octree_resolve_work_order(settings);
     const size_t shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
+    const size_t radix_hist_per_thread = (size_t)RADIX_BINS * sizeof(unsigned);
 
     return (octree_scratch_sizes_t){
         .size_topo = topo_bytes,
@@ -253,6 +268,7 @@ octree_scratch_sizes_t octree_size_scratch(unsigned n_sources, const octree_sett
         .size_leaf_values_per_thread = leaf_values_per_thread,
         .size_shift_exp_per_thread = shift_exp_per_thread,
         .size_pse_per_thread = pse_per_thread,
+        .size_radix_hist_per_thread = radix_hist_per_thread,
     };
 }
 
@@ -263,7 +279,7 @@ size_t octree_total_scratch_size(octree_scratch_sizes_t sizes, unsigned n_thread
     return sizes.size_topo + sizes.size_source_leaf_topo + sizes.size_source_leaf_real +
            sizes.size_leaf_buf_per_thread * (size_t)n_threads + sizes.size_leaf_coords_per_thread * (size_t)n_threads +
            sizes.size_leaf_values_per_thread * (size_t)n_threads + sizes.size_shift_exp_per_thread * (size_t)n_threads +
-           sizes.size_pse_per_thread * (size_t)n_threads;
+           sizes.size_pse_per_thread * (size_t)n_threads + sizes.size_radix_hist_per_thread * (size_t)n_threads;
 }
 
 size_t octree_scratch_size(unsigned n_sources, unsigned n_threads, const octree_settings_t *settings)
@@ -296,6 +312,8 @@ octree_scratch_t octree_scratch_partition(unsigned n_threads, void *buffer, octr
     bp += (size_t)n_threads * sizes.size_shift_exp_per_thread;
     out.pse = (real_t *)bp;
     bp += (size_t)n_threads * sizes.size_pse_per_thread;
+    out.radix_hist = (unsigned *)bp;
+    bp += (size_t)n_threads * sizes.size_radix_hist_per_thread;
     out.n_thread_partitions = n_threads;
     return out;
 }
@@ -470,24 +488,81 @@ void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_
 /* ================================================================ */
 
 unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigned max_depth,
-                                 unsigned depth_start[restrict], unsigned depth_end[restrict])
+                                 unsigned depth_start[restrict], unsigned depth_end[restrict], unsigned n_threads)
 {
     unsigned n_mp_leaves = 0;
     unsigned cursor = 0;
 
     if (depth_start && depth_end)
+    {
+#pragma omp parallel for default(none) shared(max_depth, depth_start, depth_end, n_nodes) num_threads(n_threads)
         for (unsigned d = 0; d <= max_depth + 1; ++d)
             depth_start[d] = depth_end[d] = n_nodes;
+    }
+
+    /* Parallel depth_start/depth_end via per-thread min/max arrays. */
+    if (depth_start && depth_end && n_nodes > 1024)
+    {
+        const unsigned nt = n_threads < 6 ? n_threads : 6;
+        unsigned ds_per_thread[6][256];
+        unsigned de_per_thread[6][256];
+        for (unsigned t = 0; t < nt; ++t)
+            for (unsigned d = 0; d <= max_depth + 1; ++d)
+                ds_per_thread[t][d] = n_nodes, de_per_thread[t][d] = 0;
+
+        unsigned thread_counter = 0;
+#pragma omp parallel default(none) shared(n_nodes, nodes, ds_per_thread, de_per_thread, max_depth, nt, thread_counter) \
+    num_threads(nt)
+        {
+            unsigned tid;
+#pragma omp atomic capture
+            tid = thread_counter++;
+            unsigned *my_ds = ds_per_thread[tid];
+            unsigned *my_de = de_per_thread[tid];
+#pragma omp for schedule(static)
+            for (uint32_t i = 0; i < n_nodes; ++i)
+            {
+                const unsigned d = nodes[i].depth;
+                if (d <= max_depth)
+                {
+                    if (i < my_ds[d])
+                        my_ds[d] = i;
+                    if (i + 1 > my_de[d])
+                        my_de[d] = i + 1;
+                }
+            }
+        }
+
+#pragma omp simd
+        for (unsigned d = 0; d <= max_depth; ++d)
+        {
+            unsigned lo = n_nodes, hi = 0;
+            for (unsigned t = 0; t < nt; ++t)
+            {
+                if (ds_per_thread[t][d] < lo)
+                    lo = ds_per_thread[t][d];
+                if (de_per_thread[t][d] > hi)
+                    hi = de_per_thread[t][d];
+            }
+            depth_start[d] = lo;
+            depth_end[d] = hi;
+        }
+    }
+    else if (depth_start && depth_end)
+    {
+        for (uint32_t i = 0; i < n_nodes; ++i)
+        {
+            const unsigned d = nodes[i].depth;
+            if (i < depth_start[d])
+                depth_start[d] = i;
+            if (i + 1 > depth_end[d])
+                depth_end[d] = i + 1;
+        }
+    }
 
     unsigned leaf_counter = 0;
     for (uint32_t i = 0; i < n_nodes; ++i)
     {
-        const unsigned d = nodes[i].depth;
-        if (depth_start && i < depth_start[d])
-            depth_start[d] = i;
-        if (depth_end && i + 1 > depth_end[d])
-            depth_end[d] = i + 1;
-
         if (nodes[i].kind != OCTREE_NODE_INTERNAL)
         {
             nodes[i].particle_begin = cursor;
@@ -590,11 +665,15 @@ bool octree_build_leaf_multipoles(unsigned n_nodes, octree_node_t *nodes, const 
 
     const size_t leaf_buf_size = octree_leaf_stride(settings->order);
 
+    unsigned thread_counter = 0;
+
 #pragma omp parallel default(none)                                                                                     \
     shared(n_mp_leaves, mp_leaf_indices, nodes, particle_order, sources_coords, sources_values, settings, scratch,     \
-               leaf_buf_size, n_sources, leaf_ok, mp_slices) num_threads(n_threads)
+               leaf_buf_size, n_sources, leaf_ok, mp_slices, n_threads, thread_counter) num_threads(n_threads)
     {
-        const int tid = omp_get_thread_num();
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter++;
         const size_t tid_s = (size_t)tid;
         const size_t coords_pt = (size_t)n_sources * 3u;
         real_t *leaf_cur = scratch.leaf_cur + tid_s * leaf_buf_size;
@@ -669,115 +748,121 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                                const real3_t sources_values[restrict], const octree_scratch_t *scratch,
                                size_t leaf_stride, unsigned n_threads)
 {
-#pragma omp parallel for default(none)                                                                                 \
+    unsigned thread_counter = 0;
+#pragma omp parallel default(none)                                                                                     \
     shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, shift_stride,        \
-               pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride) schedule(dynamic, 16) \
+               pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride, thread_counter)       \
     num_threads(n_threads)
-    for (uint32_t i = depth_start; i < depth_end; ++i)
     {
-        if (nodes[i].kind != OCTREE_NODE_INTERNAL)
-            continue;
-
-        /* ---- |Γ|-weighted centroid from children ---- */
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter++;
+        const size_t tid_s = (size_t)tid;
+        real_t *particle_cur = scratch->leaf_cur + tid_s * leaf_stride;
+        real_t *particle_nxt = scratch->leaf_nxt + tid_s * leaf_stride;
+        real_t *my_shift_exp = shift_exp + tid_s * shift_stride;
+        real_t *my_pse = pse + tid_s * pse_stride;
+#pragma omp for schedule(dynamic, 16)
+        for (uint32_t i = depth_start; i < depth_end; ++i)
         {
-            real_t cx = 0, cy = 0, cz = 0;
-            real_t total_weight = 0.0;
-            unsigned n_children = 0;
+            if (nodes[i].kind != OCTREE_NODE_INTERNAL)
+                continue;
+
+            /* ---- |Γ|-weighted centroid from children ---- */
+            {
+                real_t cx = 0, cy = 0, cz = 0;
+                real_t total_weight = 0.0;
+                unsigned n_children = 0;
+
+                for (int oct = 0; oct < 8; ++oct)
+                {
+                    octree_node_t *child = nodes[i].data.internal.children[oct];
+                    if (child == NULL)
+                        continue;
+                    n_children += 1;
+                    real_t w;
+                    if (child->kind == OCTREE_NODE_PARTICLE)
+                    {
+                        w = 0.0;
+                        for (unsigned kk = child->particle_begin; kk < child->particle_begin + child->particle_count;
+                             ++kk)
+                            w += real3_mag(sources_values[particle_order[kk]]);
+                    }
+                    else
+                    {
+                        real_t *cs = mp_slices[(uint32_t)(child - nodes)];
+                        if (cs == NULL)
+                            continue;
+                        w = real3_mag((real3_t){.x = cs[0], .y = cs[n_coeffs], .z = cs[2u * n_coeffs]});
+                    }
+                    cx += child->center.x * w;
+                    cy += child->center.y * w;
+                    cz += child->center.z * w;
+                    total_weight += w;
+                }
+
+                if (total_weight > 0.0)
+                {
+                    nodes[i].center = (real3_t){.x = cx / total_weight, .y = cy / total_weight, .z = cz / total_weight};
+                }
+                else if (n_children > 0)
+                {
+                    real_t ax = 0, ay = 0, az = 0;
+                    for (int oct = 0; oct < 8; ++oct)
+                    {
+                        octree_node_t *child = nodes[i].data.internal.children[oct];
+                        if (child == NULL)
+                            continue;
+                        ax += child->center.x;
+                        ay += child->center.y;
+                        az += child->center.z;
+                    }
+                    const real_t inv_n = 1.0 / (real_t)n_children;
+                    nodes[i].center = (real3_t){.x = ax * inv_n, .y = ay * inv_n, .z = az * inv_n};
+                }
+            }
+
+            /* Zero the internal node's coefficient slice. */
+            real_t *slice = mp_slices[i];
+            memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
+            const multipole_t internal_mp = {
+                .order = order,
+                .center = nodes[i].center,
+                .coeffs_x = slice,
+                .coeffs_y = slice + n_coeffs,
+                .coeffs_z = slice + 2u * n_coeffs,
+            };
 
             for (int oct = 0; oct < 8; ++oct)
             {
                 octree_node_t *child = nodes[i].data.internal.children[oct];
                 if (child == NULL)
                     continue;
-                n_children += 1;
-                real_t w;
+
                 if (child->kind == OCTREE_NODE_PARTICLE)
                 {
-                    w = 0.0;
                     for (unsigned kk = child->particle_begin; kk < child->particle_begin + child->particle_count; ++kk)
-                        w += real3_mag(sources_values[particle_order[kk]]);
+                    {
+                        const unsigned src = particle_order[kk];
+                        multipole_update(&internal_mp, nodes[i].center, sources_coords[src], sources_values[src],
+                                         particle_cur, particle_nxt);
+                    }
                 }
                 else
                 {
-                    real_t *cs = mp_slices[(uint32_t)(child - nodes)];
-                    if (cs == NULL)
+                    const uint32_t ci = (uint32_t)(child - nodes);
+                    real_t *child_slice = mp_slices[ci];
+                    if (child_slice == NULL)
                         continue;
-                    w = real3_mag((real3_t){.x = cs[0], .y = cs[n_coeffs], .z = cs[2u * n_coeffs]});
+                    const multipole_t child_mp = {
+                        .order = order,
+                        .center = child->center,
+                        .coeffs_x = child_slice,
+                        .coeffs_y = child_slice + n_coeffs,
+                        .coeffs_z = child_slice + 2u * n_coeffs,
+                    };
+                    multipole_add_shift(&child_mp, &internal_mp, work_order, my_shift_exp, my_pse);
                 }
-                cx += child->center.x * w;
-                cy += child->center.y * w;
-                cz += child->center.z * w;
-                total_weight += w;
-            }
-
-            if (total_weight > 0.0)
-            {
-                nodes[i].center = (real3_t){.x = cx / total_weight, .y = cy / total_weight, .z = cz / total_weight};
-            }
-            else if (n_children > 0)
-            {
-                real_t ax = 0, ay = 0, az = 0;
-                for (int oct = 0; oct < 8; ++oct)
-                {
-                    octree_node_t *child = nodes[i].data.internal.children[oct];
-                    if (child == NULL)
-                        continue;
-                    ax += child->center.x;
-                    ay += child->center.y;
-                    az += child->center.z;
-                }
-                const real_t inv_n = 1.0 / (real_t)n_children;
-                nodes[i].center = (real3_t){.x = ax * inv_n, .y = ay * inv_n, .z = az * inv_n};
-            }
-        }
-
-        /* Zero the internal node's coefficient slice. */
-        real_t *slice = mp_slices[i];
-        memset(slice, 0, 3u * n_coeffs * sizeof(real_t));
-        const multipole_t internal_mp = {
-            .order = order,
-            .center = nodes[i].center,
-            .coeffs_x = slice,
-            .coeffs_y = slice + n_coeffs,
-            .coeffs_z = slice + 2u * n_coeffs,
-        };
-
-        const int tid = omp_get_thread_num();
-        const size_t tid_s = (size_t)tid;
-        real_t *particle_cur = scratch->leaf_cur + tid_s * leaf_stride;
-        real_t *particle_nxt = scratch->leaf_nxt + tid_s * leaf_stride;
-        real_t *my_shift_exp = shift_exp + tid_s * shift_stride;
-        real_t *my_pse = pse + tid_s * pse_stride;
-
-        for (int oct = 0; oct < 8; ++oct)
-        {
-            octree_node_t *child = nodes[i].data.internal.children[oct];
-            if (child == NULL)
-                continue;
-
-            if (child->kind == OCTREE_NODE_PARTICLE)
-            {
-                for (unsigned kk = child->particle_begin; kk < child->particle_begin + child->particle_count; ++kk)
-                {
-                    const unsigned src = particle_order[kk];
-                    multipole_update(&internal_mp, nodes[i].center, sources_coords[src], sources_values[src],
-                                     particle_cur, particle_nxt);
-                }
-            }
-            else
-            {
-                const uint32_t ci = (uint32_t)(child - nodes);
-                real_t *child_slice = mp_slices[ci];
-                if (child_slice == NULL)
-                    continue;
-                const multipole_t child_mp = {
-                    .order = order,
-                    .center = child->center,
-                    .coeffs_x = child_slice,
-                    .coeffs_y = child_slice + n_coeffs,
-                    .coeffs_z = child_slice + 2u * n_coeffs,
-                };
-                multipole_add_shift(&child_mp, &internal_mp, work_order, my_shift_exp, my_pse);
             }
         }
     }
@@ -808,4 +893,280 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
         if (d == 0)
             break;
     }
+}
+
+/* ================================================================ */
+/* Morton sort — parallel LSD radix sort                            */
+/* ================================================================ */
+
+/** @brief Internal: scatter (Morton code, index) pairs from src to dst using histogram bin. */
+static void radix_scatter(const uint8_t *src, uint8_t *dst, size_t ndepth, size_t pair_size, unsigned shift,
+                          unsigned *scatter_offsets, const unsigned *hist_thread, unsigned n_threads)
+{
+    unsigned thread_counter = 0;
+#pragma omp parallel default(none) shared(src, dst, ndepth, pair_size, shift, scatter_offsets, hist_thread, n_threads, \
+                                              thread_counter) num_threads(n_threads)
+    {
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter++;
+        const size_t chunk = (ndepth + (size_t)n_threads - 1) / (size_t)n_threads;
+        const size_t start = (size_t)tid * chunk;
+        const size_t end = start + chunk > ndepth ? ndepth : start + chunk;
+
+        /* Compute per-thread scatter offsets from the global histogram base. */
+        unsigned my_offsets[RADIX_BINS];
+        {
+#pragma omp simd
+            for (unsigned b = 0; b < RADIX_BINS; ++b)
+            {
+                unsigned off = scatter_offsets[b];
+                for (unsigned t = 0; t < (unsigned)tid; ++t)
+                    off += hist_thread[(size_t)t * RADIX_BINS + b];
+                my_offsets[b] = off;
+            }
+        }
+
+        for (size_t i = start; i < end; ++i)
+        {
+            const uint64_t key = *(const uint64_t *)(src + i * pair_size);
+            const unsigned bin = (unsigned)((key >> shift) & (RADIX_BINS - 1));
+            const size_t dst_idx = (size_t)my_offsets[bin] * pair_size;
+            memcpy(dst + dst_idx, src + i * pair_size, pair_size);
+            my_offsets[bin]++;
+        }
+    }
+}
+
+/**
+ * @brief Parallel LSD radix sort for (Morton code, index) pairs.
+ *
+ * Sorts @p ndepth pairs in @p pairs (each @p pair_size bytes) in-place
+ * using @p radix_hist as per-thread histogram scratch [n_threads * RADIX_BINS].
+ * @p pairs_alt must be a same-sized temp buffer for ping-pong.
+ */
+static void radix_sort_pairs(uint8_t *pairs, uint8_t *pairs_alt, size_t ndepth, size_t pair_size,
+                             unsigned radix_hist[restrict], unsigned n_threads)
+{
+    for (unsigned pass = 0; pass < RADIX_PASSES; ++pass)
+    {
+        const unsigned shift = pass * RADIX_BITS;
+
+        /* Zero per-thread histograms. */
+#pragma omp parallel for default(none) shared(n_threads, radix_hist) schedule(static) num_threads(n_threads)
+        for (unsigned t = 0; t < n_threads; ++t)
+        {
+            unsigned *h = radix_hist + (size_t)t * RADIX_BINS;
+#pragma omp simd
+            for (unsigned i = 0; i < RADIX_BINS; ++i)
+                h[i] = 0;
+        }
+
+        /* Histogram: each thread counts its chunk. */
+        unsigned thread_counter_hist = 0;
+#pragma omp parallel default(none) shared(ndepth, pairs, shift, radix_hist, n_threads, pair_size, thread_counter_hist) \
+    num_threads(n_threads)
+        {
+            unsigned tid;
+#pragma omp atomic capture
+            tid = thread_counter_hist++;
+            unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
+#pragma omp for schedule(static)
+            for (size_t i = 0; i < ndepth; ++i)
+            {
+                const uint64_t key = *(const uint64_t *)(pairs + i * pair_size);
+                h[(key >> shift) & (RADIX_BINS - 1)]++;
+            }
+        }
+
+        /* Reduce + prefix-sum: combine all thread histograms into global offsets. */
+        unsigned global_hist[RADIX_BINS];
+        {
+#pragma omp simd
+            for (unsigned b = 0; b < RADIX_BINS; ++b)
+            {
+                unsigned sum = 0;
+                for (unsigned t = 0; t < n_threads; ++t)
+                    sum += radix_hist[(size_t)t * RADIX_BINS + b];
+                global_hist[b] = sum;
+            }
+            unsigned acc = 0;
+#pragma omp simd
+            for (unsigned b = 0; b < RADIX_BINS; ++b)
+            {
+                const unsigned tmp = global_hist[b];
+                global_hist[b] = acc;
+                acc += tmp;
+            }
+        }
+
+        /* Scatter: each thread moves its pairs to the temp buffer. */
+        radix_scatter(pairs, pairs_alt, ndepth, pair_size, shift, global_hist, radix_hist, n_threads);
+
+        /* Swap current and temp buffers. */
+        {
+            uint8_t *tmp = pairs;
+            pairs = pairs_alt;
+            pairs_alt = tmp;
+        }
+    }
+}
+
+bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[restrict], uint64_t codes[restrict n_nodes],
+                                unsigned sorted_indices[restrict n_nodes], unsigned depth_offsets[restrict],
+                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict], unsigned max_depth,
+                                unsigned *out_max_depth_found, unsigned n_threads)
+{
+    const size_t pair_size = sizeof(uint64_t) + sizeof(unsigned);
+
+    if (n_nodes == 0)
+    {
+        *out_max_depth_found = 0;
+        return false;
+    }
+
+    /* max_depth is a capacity hint; we compute actual depth from nodes. */
+    (void)max_depth;
+    const real3_t root_gc = nodes[0].geom_center;
+    const real_t root_hs = nodes[0].half_size;
+
+    /* Compute Morton codes for all nodes using geom_center. */
+#pragma omp parallel for default(none) shared(n_nodes, nodes, codes, root_gc, root_hs) schedule(static)                \
+    num_threads(n_threads)
+    for (unsigned i = 0; i < n_nodes; ++i)
+        codes[i] = morton_3d(nodes[i].geom_center, root_gc, root_hs);
+
+    /* === Parallel depth counting via per-thread histograms in radix_hist === */
+    unsigned max_depth_found = 0;
+    unsigned depth_buf[OCTREE_MAX_DEPTH];
+
+    /* Zero per-thread depth counters. */
+#pragma omp parallel for default(none) shared(n_threads, radix_hist) schedule(static) num_threads(n_threads)
+    for (unsigned t = 0; t < n_threads; ++t)
+    {
+        unsigned *h = radix_hist + (size_t)t * RADIX_BINS;
+        for (unsigned d = 0; d < OCTREE_MAX_DEPTH; ++d)
+            h[d] = 0;
+    }
+
+    /* Each thread counts depths in its own histogram slice — no atomics. */
+    unsigned thread_counter_depth = 0;
+#pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, n_threads, thread_counter_depth)                 \
+    num_threads(n_threads)
+    {
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter_depth++;
+        unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
+#pragma omp for schedule(static)
+        for (unsigned i = 0; i < n_nodes; ++i)
+        {
+            unsigned d = nodes[i].depth;
+            if (d >= OCTREE_MAX_DEPTH)
+                d = OCTREE_MAX_DEPTH - 1;
+            h[d]++;
+        }
+    }
+
+    /* Reduce per-thread histograms into depth_buf, find max_depth_found. */
+    {
+        for (unsigned d = 0; d < OCTREE_MAX_DEPTH; ++d)
+        {
+            unsigned sum = 0;
+            for (unsigned t = 0; t < n_threads; ++t)
+                sum += radix_hist[(size_t)t * RADIX_BINS + d];
+            depth_buf[d] = sum;
+            if (sum > 0)
+                max_depth_found = d;
+        }
+    }
+    assert(max_depth_found <= max_depth && "octree_build_morton_sorted: max_depth_found exceeds capacity");
+
+    /* Prefix-sum for depth offsets. */
+    {
+        unsigned off = 0;
+        for (unsigned d = 0; d <= max_depth_found; ++d)
+        {
+            depth_offsets[d] = off;
+            off += depth_buf[d];
+        }
+        assert(off == n_nodes && "depth count sum != n_nodes");
+        depth_offsets[max_depth_found + 1] = off; /* end sentinel */
+    }
+
+    /* === Parallel depth-node index building === */
+    /* Transform per-thread depth counts into per-thread starting offsets
+     * (stored back in radix_hist, overwriting the counts). */
+    {
+        for (unsigned d = 0; d <= max_depth_found; ++d)
+        {
+            unsigned acc = depth_offsets[d];
+            for (unsigned t = 0; t < n_threads; ++t)
+            {
+                const unsigned cnt = radix_hist[(size_t)t * RADIX_BINS + d];
+                radix_hist[(size_t)t * RADIX_BINS + d] = acc;
+                acc += cnt;
+            }
+        }
+    }
+
+    /* Each thread scatters its nodes using its own cursor array — no atomics. */
+    unsigned thread_counter_scatter = 0;
+#pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, sorted_indices, depth_offsets, depth_buf,        \
+                                              n_threads, max_depth_found, thread_counter_scatter)                      \
+    num_threads(n_threads)
+    {
+        unsigned tid;
+#pragma omp atomic capture
+        tid = thread_counter_scatter++;
+        unsigned *my_cursors = radix_hist + (size_t)tid * RADIX_BINS;
+#pragma omp for schedule(static)
+        for (unsigned i = 0; i < n_nodes; ++i)
+        {
+            const unsigned d = nodes[i].depth;
+            assert(d <= max_depth_found && "node depth exceeds max_depth_found");
+            const unsigned pos = my_cursors[d];
+            assert(pos < depth_offsets[d] + depth_buf[d] && "depth cursor overflow");
+            sorted_indices[pos] = i;
+            my_cursors[d]++;
+        }
+    }
+
+    /* === Per-depth parallel LSD radix sort === */
+    for (unsigned d = 0; d <= max_depth_found; ++d)
+    {
+        const unsigned ndepth = depth_offsets[d + 1] - depth_offsets[d];
+        if (ndepth == 0)
+            continue;
+        const unsigned base = depth_offsets[d];
+
+        /* Use first half of pairs_temp as current buffer, second half as temp. */
+        uint8_t *pairs = pairs_temp;                                   /* current */
+        uint8_t *pairs_alt = pairs_temp + (size_t)n_nodes * pair_size; /* temp */
+
+        /* Gather pairs using the depth-node index (parallel for large depths). */
+#pragma omp parallel for if (ndepth > 1024) default(none)                                                              \
+    shared(ndepth, base, sorted_indices, codes, pairs, pair_size) schedule(static) num_threads(n_threads)
+        for (unsigned j = 0; j < ndepth; ++j)
+        {
+            const unsigned ni = sorted_indices[base + j];
+            *(uint64_t *)(pairs + (size_t)j * pair_size) = codes[ni];
+            *(unsigned *)(pairs + (size_t)j * pair_size + sizeof(uint64_t)) = ni;
+        }
+
+        /* Parallel LSD radix sort (radix_hist reused as histogram scratch). */
+        radix_sort_pairs(pairs, pairs_alt, ndepth, pair_size, radix_hist, n_threads);
+
+        /* Extract sorted indices (parallel for large depths). */
+#pragma omp parallel for if (ndepth > 1024) default(none) shared(ndepth, pairs, pair_size, sorted_indices, base)       \
+    schedule(static) num_threads(n_threads)
+        for (unsigned j = 0; j < ndepth; ++j)
+        {
+            const unsigned ni = *(const unsigned *)(pairs + (size_t)j * pair_size + sizeof(uint64_t));
+            sorted_indices[base + j] = ni;
+        }
+    }
+
+    *out_max_depth_found = max_depth_found;
+    return true;
 }

@@ -1,7 +1,5 @@
 #include "barnes_hut_tree.h"
 
-#include <omp.h>
-
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -96,7 +94,7 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_
                        work.multipole_coeffs, work.mp_slices, n_threads);
     octree_descend(n_sources, sources_coords, work.nodes, scratch->source_leaf_real, n_threads);
 
-    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL);
+    const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL, n_threads);
 
     octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);

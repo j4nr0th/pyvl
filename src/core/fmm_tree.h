@@ -29,15 +29,17 @@ typedef enum
 {
     FMM_EVAL_TREE_CODE = 0,
     FMM_EVAL_FMM = 1,
+    FMM_EVAL_HYBRID = 2, /**< Stack-based traversal of ancestor local expansions (works everywhere). */
 } fmm_eval_mode_t;
 
 typedef struct
 {
     double theta;
     fmm_eval_mode_t mode;
+    double hybrid_alpha; /**< Convergence safety factor for HYBRID mode (default 1.5). */
 } fmm_eval_settings_t;
 
-#define FMM_EVAL_SETTINGS_DEFAULT ((fmm_eval_settings_t){.theta = 0.0, .mode = FMM_EVAL_TREE_CODE})
+#define FMM_EVAL_SETTINGS_DEFAULT ((fmm_eval_settings_t){.theta = 0.0, .mode = FMM_EVAL_TREE_CODE, .hybrid_alpha = 1.5})
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -62,6 +64,7 @@ typedef struct
     size_t interaction_lists_bytes;
     size_t m2l_shift_exp_bytes; /**< Per-thread shift_exp scratch for M2L sweep. */
     size_t m2l_pse_bytes;       /**< Per-thread pse scratch for M2L sweep.       */
+    size_t morton_sort_bytes;   /**< Morton-code sort storage (transient).         */
 } fmm_work_sizes_t;
 
 /* ------------------------------------------------------------------ */
