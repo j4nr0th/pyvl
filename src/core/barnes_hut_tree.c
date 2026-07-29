@@ -102,7 +102,8 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_
 
     const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL, n_threads);
 
-    octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
+    octree_fill_particle_order(n_sources, scratch->source_leaf_real, n_topo, work.nodes, work.particle_order,
+                               n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
 
     if (n_mp > 0)

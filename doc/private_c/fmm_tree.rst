@@ -50,17 +50,42 @@ The insert pipeline stages (steps inside stage 6) are:
 
 *FMM-specific stages:*
 
-9. **Interaction lists** — for each leaf, classifies every other leaf
-   as V-list (well-separated: :math:`|\Delta\mathbf{c}| \ge 3\max(h_a, h_b)`)
-   or near-field (everything else).  Stored as CSR arrays.
+9. **Morton-sorted index arrays** — :c:func:`octree_build_morton_sorted`
+   computes 63-bit Morton codes from invariant ``geom_center``, then
+   runs a parallel LSD radix sort (8 passes, 8 bits/pass) to produce
+   per-depth sorted index arrays.  The histogram buffer is caller-provided
+   from the scratch buffer (``radix_hist``, per-thread 256 bins).
 
-10. **M2L** (FMM mode only) — converts V-list multipoles to local
-    expansions at each leaf via :c:func:`multipole_to_local`.
+10. **Interaction lists** — two builders, both Morton-accelerated:
 
-The L2L (local-to-local) downward-sweep stage was removed during a
-refactoring — it was dead code because M2L is done at leaf level only.
-The :c:func:`local_expansion_shift` function is still available as a
-library function for external callers.
+    * **Leaf V-list + NF-list** (:c:func:`fmm_build_leaf_vlists`):
+      depth-by-depth Morton range queries.  For each leaf at each depth,
+      computes the NF bounding box ``[center - nf_dist, center + nf_dist]``,
+      runs a Morton range query, classifies nodes outside the range as
+      auto V-list (no distance check), and checks distance for nodes
+      inside the range.  Uses a generation-counter array (``vlist_gen``)
+      and parent index array (``parent_idx``) to skip children of
+      V-list ancestors.  Stored as CSR arrays.
+
+    * **Per-node M2L interaction lists** (:c:func:`fmm_build_per_node_interaction_lists`):
+      same Morton range query approach for the ``[3h, 6h)`` interaction
+      zone used by multi-level M2L.
+
+11. **M2L sweep** (FMM mode only) — multi-level M2L over ALL nodes
+    (not just leaves).  For each node, converts all interaction-list
+    sources (same-depth nodes in ``[3h, 6h)``) into a local expansion
+    at the node's centre via :c:func:`multipole_to_local`.  Uses
+    dedicated per-thread scratch arrays (``m2l_shift_exp``,
+    ``m2l_pse``) in the work buffer.
+
+12. **L2L downward sweep** (FMM mode only) — propagates local expansions
+    from parent to children via :c:func:`local_expansion_shift`.
+    Serialised over depth levels (parent→child data dependency), parallel
+    within each level.  After this sweep, every node's local expansion
+    contains contributions from all coarser-level ancestor interactions.
+
+The L2L stage was previously removed as dead code (when M2L was leaf-only).
+It was restored when multi-level FMM was implemented (2026-07-27).
 
 Typical staged usage::
 
@@ -101,17 +126,28 @@ Sizing
 Evaluation
 ----------
 
-Two evaluation modes are available (controlled by ``eval_settings.mode``):
+Three evaluation modes are available (controlled by ``eval_settings.mode``):
 
 - **Tree-code mode** (``FMM_EVAL_TREE_CODE``): descends to the target's
   leaf, sums V-list multipoles via ``multipole_eval`` for the far-field,
   and performs a direct particle sum over the own leaf and near-field
-  neighbours for the near-field.
+  neighbours for the near-field.  Works anywhere in space.  Accuracy
+  controlled by ``theta`` (MAC opening-angle; 0 = neighbour criterion).
 
 - **FMM mode** (``FMM_EVAL_FMM``): evaluates the leaf's precomputed
   local expansion via ``local_expansion_eval`` for the far-field, plus
   the same near-field direct sum.  This is a single L2P call per target
   instead of one ``multipole_eval`` per V-list entry, giving O(N) scaling.
+  **Only accurate for points well inside the source bounding box**
+  (|r'| < 0.3 * domain_radius).  Diverges catastrophically outside.
+
+- **HYBRID mode** (``FMM_EVAL_HYBRID``): stack-based traversal from root
+  (like BH), accepting the first node where
+  :math:`|\mathbf{r}'| < \alpha \cdot h` and evaluating its local
+  expansion.  Falls back to tree-code (per-V-list multipole_eval) if no
+  node converges.  Works anywhere in space.  ``hybrid_alpha`` controls
+  the convergence safety factor (default 1.5; smaller = deeper traversal,
+  more accurate; larger = shallower, faster, may diverge).
 
 Comparison with Barnes-Hut
 --------------------------
@@ -143,14 +179,26 @@ The tree is stored in a single caller-provided persistent work buffer
 - ``mp_slices`` — per-node multipole slice pointers
 - ``leaf_indices`` — ``leaf_id`` to node index reverse map
 - ``local_coeffs`` — flat arena for local expansion coefficients
+  (3 * n_coeffs per node, for multi-level FMM)
 - ``local_slices`` — per-node local expansion slice pointers
-- V-list CSR (offsets + indices)
-- Near-field CSR (offsets + indices)
+- V-list CSR (offsets + indices) — per-leaf well-separated node indices
+- Near-field CSR (offsets + indices) — per-leaf neighbour leaf IDs
+- M2L interaction list CSR (offsets + indices) — per-node same-depth
+  interaction zone [3h, 6h) for multi-level M2L
+- ``m2l_shift_exp`` — per-thread shift_exp scratch for M2L/L2L sweep
+- ``m2l_pse`` — per-thread pse scratch for M2L/L2L sweep
+- ``morton_codes`` — [n_total] 63-bit Morton codes for every node
+- ``morton_sorted_nodes`` — [n_total] node indices sorted by Morton code
+- ``morton_depth_offsets`` — [max_depth+2] per-depth start offsets
+- ``morton_pairs_temp`` — [2 * n_total * pair_size] radix sort ping-pong
+- ``parent_idx`` — [n_total] parent node index for ancestor tracking
+- ``vlist_gen`` — [n_total] generation counter for V-list ancestor skip
 
 A separate transient scratch buffer (sized by :c:func:`fmm_scratch_size`)
-holds build-time temporaries including the topology array and per-thread
-multipole-build scratch.  The scratch is freed after insertion; the work
-buffer persists as ``tree.buffer``.
+holds build-time temporaries including the topology array, per-source
+leaf maps, per-thread multipole-build scratch, and the radix-sort
+histogram (``radix_hist``, n_threads × 256 unsigned).  The scratch is
+freed after insertion; the work buffer persists as ``tree.buffer``.
 
 API
 ---
@@ -190,10 +238,25 @@ API
 
 .. c:function:: real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t *sources_coords, const real3_t *sources_values, real3_t point, fmm_eval_settings_t eval_settings)
 
-   Evaluate at a single target point.  Uses precomputed V-list (tree-code
-   mode) or local expansion (FMM mode) for the far-field, plus direct
-   particle sum over the near-field.
+   Evaluate at a single target point.
+
+   **Pre-conditions:**
+   - ``tree`` must have been successfully built.
+   - ``sources_coords`` and ``sources_values`` must match build-time data.
+
+   **Post-conditions:**
+   - Returns induced vector at ``point``.
+   - ``FMM_EVAL_TREE_CODE``: works anywhere.  Accuracy via ``theta``.
+   - ``FMM_EVAL_FMM``: interior only (|r'| < 0.3 domain).  Diverges outside.
+   - ``FMM_EVAL_HYBRID``: works anywhere.  Falls back to tree-code if
+     no node converges (|r'| < hybrid_alpha * half_size).
 
 .. c:function:: void fmm_tree_eval_all(const fmm_tree_t *tree, const real3_t *sources_coords, const real3_t *sources_values, unsigned n_targets, const real3_t *targets, real3_t *results, fmm_eval_settings_t eval_settings, unsigned n_threads)
 
    Batched evaluation (OpenMP parallel over targets).
+
+   **Pre-conditions:** Same as ``fmm_tree_eval``.  ``results`` must have
+   space for ``n_targets``.
+
+   **Post-conditions:** ``results[i]`` = eval at ``targets[i]``.
+   Thread-safe (no shared mutable state).

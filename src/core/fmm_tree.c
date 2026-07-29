@@ -105,7 +105,8 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
                                   unsigned CVL_ARRAY_ARG(vlist_indices, restrict), size_t vlist_capacity,
                                   unsigned CVL_ARRAY_ARG(nflist_offsets, restrict n_leaves + 1),
                                   unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
-                                  size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads, double theta)
+                                  size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads, double theta,
+                                  real_t *const *restrict mp_slices)
 {
     /* Stack for dual-tree walk.  Depth never exceeds 256. */
     enum
@@ -128,8 +129,8 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
      */
 
     /* Pass 1: count (parallel). */
-#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets, theta)     \
-    schedule(dynamic) num_threads(n_threads)
+#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, nflist_offsets, theta,     \
+                                                  mp_slices) schedule(dynamic) num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         const unsigned target_ni = leaf_indices[li];
@@ -159,8 +160,11 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
 
             if (well_separated)
             {
-                /* Well-separated: add to V-list (any node type). */
-                vcnt++;
+                /* Well-separated and has multipole coefficients → V-list. */
+                if (mp_slices[ni] != NULL)
+                    vcnt++;
+                else
+                    nfcnt++; /* Particle leaf in V-list territory → near-field. */
             }
             else if (cand->kind == OCTREE_NODE_INTERNAL)
             {
@@ -202,9 +206,9 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
         return false;
 
     /* Pass 3: fill index arrays (parallel). */
-#pragma omp parallel for default(none)                                                                                 \
-    shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices, nflist_offsets, nflist_indices, theta)         \
-    schedule(dynamic) num_threads(n_threads)
+#pragma omp parallel for default(none) shared(n_leaves, leaf_indices, nodes, vlist_offsets, vlist_indices,             \
+                                                  nflist_offsets, nflist_indices, theta, mp_slices) schedule(dynamic)  \
+    num_threads(n_threads)
     for (unsigned li = 0; li < n_leaves; ++li)
     {
         unsigned vi = vlist_offsets[li];
@@ -234,7 +238,10 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
 
             if (well_separated)
             {
-                vlist_indices[vi++] = ni;
+                if (mp_slices[ni] != NULL)
+                    vlist_indices[vi++] = ni;
+                else
+                    nflist_indices[nfi++] = (unsigned)nodes[ni].leaf_id;
             }
             else if (cand->kind == OCTREE_NODE_INTERNAL)
             {
@@ -599,7 +606,7 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARR
         if (ds >= de)
             continue;
 
-#pragma omp parallel default(none) shared(ds, de, nodes, order, work_order, local_slices, work_shift_exp, work_pse,    \
+#pragma omp parallel default(none) shared(ds, de, d, nodes, order, work_order, local_slices, work_shift_exp, work_pse, \
                                               n_coeffs, shift_per_thread, pse_per_thread) num_threads(n_threads)
         {
             const unsigned tid = (unsigned)omp_get_thread_num();
@@ -608,7 +615,7 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARR
 #pragma omp for schedule(dynamic, 16)
             for (unsigned ni = ds; ni < de; ++ni)
             {
-                if (nodes[ni].kind != OCTREE_NODE_INTERNAL)
+                if (nodes[ni].kind != OCTREE_NODE_INTERNAL || nodes[ni].depth != d)
                     continue;
 
                 real_t *parent_local = local_slices[ni];
@@ -682,9 +689,6 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
 
     const octree_node_t *target_leaf = &tree->nodes[leaf_node_idx];
     const int32_t li = target_leaf->leaf_id;
-    if (li < 0)
-        return result;
-
     const unsigned order = tree->settings.order;
     const size_t n_coeffs = multipole_num_coeffs(order);
     const unsigned *lindices = tree->leaf_indices;
@@ -692,7 +696,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     const bool has_vlist = (tree->vlist_offsets && tree->vlist_indices && tree->leaf_indices);
 
     /* --- Far-field --- */
-    if (eval_settings.mode == FMM_EVAL_FMM && has_local)
+    if (eval_settings.mode == FMM_EVAL_FMM && has_local && li >= 0)
     {
         /* FMM mode: evaluate the leaf's precomputed local expansion (interior only). */
         real_t *local_slice = tree->local_slices[leaf_node_idx];
@@ -806,14 +810,18 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     }
     else
     {
-        /* Fallback: direct sum over all sources. */
-        real3_t fb = {0};
-        for (unsigned kk = 0; kk < tree->n_sources; ++kk)
+        /* Fallback: target outside source bounding box (li < 0) or other
+         * degenerate case — evaluate root multipole (same as BH tree-code). */
+        real_t *root_slice = tree->mp_slices[0];
+        if (root_slice != NULL)
         {
-            const real3_t dr = real3_sub(point, sources_coords[kk]);
-            fb = real3_add(fb, particle_kernel(sources_values[kk], dr));
+            const multipole_t mp = {.order = order,
+                                    .center = tree->nodes[0].center,
+                                    .coeffs_x = root_slice,
+                                    .coeffs_y = root_slice + n_coeffs,
+                                    .coeffs_z = root_slice + 2u * n_coeffs};
+            result = multipole_eval(&mp, point);
         }
-        result = fb;
     }
 
     /* --- Near-field: direct sum over neighbour leaves + own leaf --- */
@@ -1061,7 +1069,8 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
 
     const unsigned n_mp = octree_compute_metadata(n_topo, work.nodes, count->max_depth, NULL, NULL, n_threads);
 
-    octree_fill_particle_order(n_sources, scratch->source_leaf_real, work.nodes, work.particle_order, n_threads);
+    octree_fill_particle_order(n_sources, scratch->source_leaf_real, n_topo, work.nodes, work.particle_order,
+                               n_threads);
     octree_compute_leaf_centers(n_topo, work.nodes, work.particle_order, sources_coords, sources_values, n_threads);
 
     if (n_mp > 0)
@@ -1092,7 +1101,8 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         size_t vlist_count = 0, nflist_count = 0;
         if (!fmm_build_leaf_vlists(work.nodes, n_leaves, work.leaf_indices, work.vlist_offsets, work.vlist_indices,
                                    work.vlist_capacity, work.nflist_offsets, work.nflist_indices, work.nflist_capacity,
-                                   &vlist_count, &nflist_count, n_threads, settings->theta))
+                                   &vlist_count, &nflist_count, n_threads, settings->theta,
+                                   (real_t *const *)work.mp_slices))
             goto cleanup;
 
         /* Build per-node interaction lists via Morton-accelerated range queries. */

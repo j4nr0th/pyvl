@@ -275,8 +275,8 @@ void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_
 unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigned max_depth,
                                  unsigned depth_start[restrict], unsigned depth_end[restrict], unsigned n_threads);
 
-void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_real, octree_node_t *nodes,
-                                unsigned *particle_order, unsigned n_threads);
+void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_real, unsigned n_nodes,
+                                octree_node_t *nodes, unsigned *particle_order, unsigned n_threads);
 
 void octree_compute_leaf_centers(unsigned n_nodes, octree_node_t *nodes, const unsigned particle_order[restrict],
                                  const real3_t sources_coords[restrict], const real3_t sources_values[restrict],
@@ -297,7 +297,7 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                                real_t shift_exp[restrict], real_t pse[restrict], size_t shift_stride, size_t pse_stride,
                                const unsigned particle_order[restrict], const real3_t sources_coords[restrict],
                                const real3_t sources_values[restrict], const octree_scratch_t *scratch,
-                               size_t leaf_stride, unsigned n_threads);
+                               size_t leaf_stride, unsigned n_threads, unsigned depth);
 
 /**
  * @brief Run the complete upward sweep (M2M), bottom-to-top.

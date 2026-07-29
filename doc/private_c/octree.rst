@@ -28,13 +28,15 @@ The build stages are:
 
 2. **Materialise** — walks the topology in DFS pre-order, creating node
    entries, assigning coefficient slices from a flat arena, and resolving
-   child pointers.
+   child pointers.  Sets ``geom_center`` (invariant geometric cell centre,
+   never changed) and ``center`` (may be updated to Γ-weighted centroid).
 
 3. **Descend** — assigns each source to its leaf node (OpenMP parallel
    with atomic leaf-count increments).
 
 4. **Metadata** — computes ``particle_begin`` prefix sums, resets
    ``particle_count``, assigns unique ``leaf_id`` to each leaf.
+   Parallelised (per-thread depth ranges, atomic-capture thread IDs).
 
 5. **Fill** — populates ``particle_order[]`` so each leaf's sources are
    contiguous (OpenMP parallel, atomic capture).
@@ -46,11 +48,11 @@ The build stages are:
    via :c:func:`multipole_create`.
 
 8. **M2M** — upward sweep: aggregates child multipoles into each internal
-   node via :c:func:`multipole_add_shift`.
+   node via :c:func:`multipole_add_shift`.  Parallelised per depth level
+   (atomic-capture thread IDs, per-thread shift_exp/pse scratch).
 
-The FMM tree adds two extra stages (interaction lists, M2L) on
-top of this shared base.  The L2L stage was removed during refactoring
-— it was dead code because M2L is done at leaf level only.
+The FMM tree adds several extra stages (Morton sort, interaction lists,
+M2L, L2L) on top of this shared base — see :ref:`fmm_tree <pyvl.private_c.fmm_tree>`.
 
 The unified node type
 ---------------------
@@ -67,6 +69,7 @@ The unified node type
         octree_node_kind_t kind;
         unsigned depth;
         real3_t center;
+        real3_t geom_center; /**< Geometric cell center (set during materialize, never changed). */
         real_t half_size;
         unsigned particle_begin;
         unsigned particle_count;
@@ -96,11 +99,12 @@ allocated internally.  The two-tier buffer strategy:
 
 * **Scratch buffer** (transient) — sized from input parameters alone
   via :c:func:`octree_scratch_size`.  Holds the topology array,
-  per-source leaf maps, and per-thread multipole-build scratch.
+  per-source leaf maps, per-thread multipole-build scratch, and the
+  radix-sort histogram (``radix_hist``, n_threads × 256 unsigned).
 * **Work buffer** (persistent) — sized after the count pass via
   :c:func:`octree_size_work_buffer`.  Holds the materialised node array,
-  coefficient storage, and (for FMM) interaction lists and local
-  expansions.
+  coefficient storage, and (for FMM) interaction lists, local
+  expansions, Morton sort arrays, and parent index arrays.
 
 The BH and FMM tree modules provide **staged build wrappers** that
 encapsulate the two-pass protocol — see
@@ -173,6 +177,53 @@ Sizing API (canonical)
    and all ``octree_r_*`` / ``octree_w_*`` accessor macros have been
    **removed** from the header.  The pipeline now operates on
    ``octree_node_t *`` with direct field access — no indirection.
+
+
+Morton 3D helpers (static inline)
+---------------------------------
+
+.. c:function:: uint64_t morton_split_21(uint64_t x)
+
+   Split 21 low bits by interleaving with zeros (3D Morton code helper).
+   Bit-parallel spread via successive shift-and-mask stages.
+
+.. c:function:: uint64_t morton_3d(real3_t p, real3_t root_center, real_t root_half_size)
+
+   Compute 63-bit Morton code for a point within the root cell.
+   Uses 21 bits per coordinate (2^21 grid per axis).
+   Clamps input to [0, 1) range.
+
+.. c:function:: void morton_range_bounds(const unsigned *sorted_indices, const uint64_t *codes, size_t offset, size_t count, uint64_t code_min, uint64_t code_max, size_t *out_begin, size_t *out_end)
+
+   Binary-search the Morton-sorted index array for a code range.
+   Returns the half-open interval [out_begin, out_end) of indices
+   whose Morton codes fall within [code_min, code_max].
+
+.. c:function:: bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t *nodes, uint64_t *codes, unsigned *sorted_indices, unsigned *depth_offsets, uint8_t *pairs_temp, unsigned *radix_hist, unsigned max_depth, unsigned *out_max_depth_found, unsigned n_threads)
+
+   Build per-depth Morton-sorted index arrays using parallel LSD radix sort.
+   Uses ``geom_center`` (invariant) for stable spatial ordering.
+
+   **Algorithm:**
+   1. Compute 63-bit Morton codes for all nodes (parallel).
+   2. Count nodes per depth using per-thread histograms in ``radix_hist``.
+   3. Prefix-sum to build ``depth_offsets``.
+   4. Scatter node indices into per-depth buckets (parallel).
+   5. For each depth level with >1 node, run parallel LSD radix sort
+      (8 passes, 8 bits/pass, histogram + scatter per pass).
+
+   **Output:**
+   - ``depth_offsets[d]`` = start offset for depth d (0..max_depth_found).
+   - ``depth_offsets[max_depth_found+1]`` = total count (end sentinel).
+   - ``sorted_indices`` = node indices sorted by Morton code within each depth.
+
+   **Pre-conditions:**
+   - ``radix_hist`` must be [n_threads * 256] from scratch buffer.
+   - ``pairs_temp`` must be [2 * n_nodes * (sizeof(uint64_t) + sizeof(unsigned))].
+
+   **Post-conditions:**
+   - ``*out_max_depth_found`` = maximum occupied depth.
+   - Returns false if n_nodes == 0.
 
 
 Relationship to BH and FMM trees

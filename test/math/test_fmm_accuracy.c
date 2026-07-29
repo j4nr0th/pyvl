@@ -126,14 +126,38 @@ int main(const int argc, const char *argv[static argc])
                 };
             }
 
-            /* Direct O(N^2) reference. */
+            /* Interior targets for FMM mode: uniform within root cell.
+             * FMM mode only converges inside the source bounding box. */
+            const real_t hs = tree.root_half_size * 0.8; /* keep away from boundary */
+            const real3_t rc = tree.root_center;
+            real3_t fmm_targets[N_TARGETS];
+            unsigned n_fmm = 0;
+            for (unsigned j = 0; j < N_TARGETS && n_fmm < N_TARGETS; ++j)
+            {
+                const real_t t = (real_t)n_fmm / (real_t)N_TARGETS;
+                const real_t phi = acos(1.0 - 2.0 * t);
+                const real_t theta = (real_t)2.0 * PI * t * (1.0 + sqrt(5.0)) / 2.0;
+                fmm_targets[n_fmm] = (real3_t){
+                    .x = rc.x + hs * sin(phi) * cos(theta),
+                    .y = rc.y + hs * sin(phi) * sin(theta),
+                    .z = rc.z + hs * cos(phi),
+                };
+                n_fmm++;
+            }
+
+            /* Direct O(N^2) reference for far-field targets. */
             double t0 = seconds_now();
             real3_t exact[N_TARGETS];
             for (unsigned j = 0; j < N_TARGETS; ++j)
                 exact[j] = exact_field(targets[j], coords, values);
             double t_direct = seconds_now() - t0;
 
-            /* Tree-code mode eval. */
+            /* Direct O(N^2) reference for interior targets (FMM mode). */
+            real3_t exact_fmm[N_TARGETS];
+            for (unsigned j = 0; j < n_fmm; ++j)
+                exact_fmm[j] = exact_field(fmm_targets[j], coords, values);
+
+            /* Tree-code mode eval (far-field sphere, all targets). */
             const fmm_eval_settings_t tc_settings = {.theta = 0.0, .mode = FMM_EVAL_TREE_CODE};
             t0 = seconds_now();
             real_t tc_max_err = 0;
@@ -146,14 +170,14 @@ int main(const int argc, const char *argv[static argc])
             }
             double tc_time = seconds_now() - t0;
 
-            /* FMM mode eval. */
+            /* FMM mode eval (interior points only — diverges outside box). */
             const fmm_eval_settings_t fmm_settings = {.theta = 0.0, .mode = FMM_EVAL_FMM};
             t0 = seconds_now();
             real_t fmm_max_err = 0;
-            for (unsigned j = 0; j < N_TARGETS; ++j)
+            for (unsigned j = 0; j < n_fmm; ++j)
             {
-                const real3_t v = fmm_tree_eval(&tree, coords, values, targets[j], fmm_settings);
-                const real_t err = rel_error(v, exact[j]);
+                const real3_t v = fmm_tree_eval(&tree, coords, values, fmm_targets[j], fmm_settings);
+                const real_t err = rel_error(v, exact_fmm[j]);
                 if (err > fmm_max_err)
                     fmm_max_err = err;
             }

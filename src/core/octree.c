@@ -585,8 +585,8 @@ unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigne
 /* Fill particle order                                              */
 /* ================================================================ */
 
-void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_real, octree_node_t *nodes,
-                                unsigned *particle_order, unsigned n_threads)
+void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_real, unsigned n_nodes,
+                                octree_node_t *nodes, unsigned *particle_order, unsigned n_threads)
 {
 #pragma omp parallel for default(none) shared(n_sources, source_leaf_real, nodes, particle_order) schedule(static)     \
     num_threads(n_threads)
@@ -600,6 +600,40 @@ void octree_fill_particle_order(unsigned n_sources, const unsigned *source_leaf_
             leaf->particle_count += 1;
         }
         particle_order[leaf->particle_begin + cnt] = i;
+    }
+
+    /* Sort each leaf's particle range by source index to eliminate
+     * floating-point non-associativity from atomic-capture ordering.
+     * Different thread counts assign different sources to slot 0 in each
+     * leaf, producing different summation orders downstream.  Sorting
+     * by source index gives a deterministic order regardless of thread
+     * scheduling, so commutative-but-not-associative FP sums (centers,
+     * multipole coefficients) produce bit-identical results.
+     *
+     * Leaves are small (subdivision threshold limits their size ≈ O(100)),
+     * so insertion sort is efficient. */
+    for (uint32_t i = 0; i < n_nodes; ++i)
+    {
+        if (nodes[i].kind == OCTREE_NODE_INTERNAL || nodes[i].particle_count < 2)
+            continue;
+        unsigned *p = particle_order + nodes[i].particle_begin;
+        const unsigned n = nodes[i].particle_count;
+        for (unsigned j = 1; j < n; ++j)
+        {
+            const unsigned key = p[j];
+            unsigned k = j;
+            while (k > 0 && p[k - 1] > key)
+            {
+                p[k] = p[k - 1];
+                --k;
+            }
+            p[k] = key;
+        }
+#ifndef NDEBUG
+        /* Verify sorted. */
+        for (unsigned j = 1; j < n; ++j)
+            assert(p[j - 1] <= p[j]);
+#endif
     }
 }
 
@@ -746,10 +780,10 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                                real_t shift_exp[restrict], real_t pse[restrict], size_t shift_stride, size_t pse_stride,
                                const unsigned particle_order[restrict], const real3_t sources_coords[restrict],
                                const real3_t sources_values[restrict], const octree_scratch_t *scratch,
-                               size_t leaf_stride, unsigned n_threads)
+                               size_t leaf_stride, unsigned n_threads, unsigned depth)
 {
 #pragma omp parallel default(none)                                                                                     \
-    shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, shift_stride,        \
+    shared(depth_start, depth_end, depth, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, shift_stride, \
                pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride)                       \
     num_threads(n_threads)
     {
@@ -762,7 +796,7 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
 #pragma omp for schedule(dynamic, 16)
         for (uint32_t i = depth_start; i < depth_end; ++i)
         {
-            if (nodes[i].kind != OCTREE_NODE_INTERNAL)
+            if (nodes[i].kind != OCTREE_NODE_INTERNAL || nodes[i].depth != depth)
                 continue;
 
             /* ---- |Γ|-weighted centroid from children ---- */
@@ -886,7 +920,7 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
     {
         octree_upward_sweep_level(depth_start[d], depth_end[d], nodes, order, n_coeffs, mp_slices, work_order,
                                   scratch->shift_exp, scratch->pse, shift_stride, pse_stride, particle_order,
-                                  sources_coords, sources_values, scratch, leaf_stride, n_threads);
+                                  sources_coords, sources_values, scratch, leaf_stride, n_threads, d);
         if (d == 0)
             break;
     }
