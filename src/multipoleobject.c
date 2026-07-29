@@ -785,7 +785,7 @@ static PyObject *pyvl_multipole_add_sources(PyObject *self, PyTypeObject *defini
     {
         memset(cur, 0, scratch * sizeof(double));
         memset(nxt, 0, scratch * sizeof(double));
-        multipole_update(&this->multipole, this->multipole.center, points_data[i], values_data[i], cur, nxt);
+        multipole_update(&this->multipole, points_data[i], values_data[i], cur, nxt);
     }
 
     PyMem_Free(nxt);

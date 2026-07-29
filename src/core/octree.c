@@ -3,6 +3,7 @@
 #include <assert.h>
 
 #include <math.h>
+#include <omp.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -407,6 +408,7 @@ void octree_materialize(const topo_node_t topo[restrict], uint32_t n_topo_nodes,
                 }
                 else
                 {
+                    assert((size_t)sp < DFS_STACK_MAX);
                     if ((size_t)sp + 1 > DFS_STACK_MAX)
                         return;
                     stack[sp] = (uint32_t)tn->children[k];
@@ -503,20 +505,21 @@ unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigne
     /* Parallel depth_start/depth_end via per-thread min/max arrays. */
     if (depth_start && depth_end && n_nodes > 1024)
     {
-        const unsigned nt = n_threads < 6 ? n_threads : 6;
-        unsigned ds_per_thread[6][256];
+        enum
+        {
+            METADATA_MAX_THREADS = 6
+        };
+        assert(n_threads <= METADATA_MAX_THREADS);
+        const unsigned nt = n_threads < METADATA_MAX_THREADS ? n_threads : METADATA_MAX_THREADS;
+        unsigned ds_per_thread[METADATA_MAX_THREADS][256];
         unsigned de_per_thread[6][256];
         for (unsigned t = 0; t < nt; ++t)
             for (unsigned d = 0; d <= max_depth + 1; ++d)
                 ds_per_thread[t][d] = n_nodes, de_per_thread[t][d] = 0;
 
-        unsigned thread_counter = 0;
-#pragma omp parallel default(none) shared(n_nodes, nodes, ds_per_thread, de_per_thread, max_depth, nt, thread_counter) \
-    num_threads(nt)
+#pragma omp parallel default(none) shared(n_nodes, nodes, ds_per_thread, de_per_thread, max_depth, nt) num_threads(nt)
         {
-            unsigned tid;
-#pragma omp atomic capture
-            tid = thread_counter++;
+            const unsigned tid = (unsigned)omp_get_thread_num();
             unsigned *my_ds = ds_per_thread[tid];
             unsigned *my_de = de_per_thread[tid];
 #pragma omp for schedule(static)
@@ -665,15 +668,11 @@ bool octree_build_leaf_multipoles(unsigned n_nodes, octree_node_t *nodes, const 
 
     const size_t leaf_buf_size = octree_leaf_stride(settings->order);
 
-    unsigned thread_counter = 0;
-
 #pragma omp parallel default(none)                                                                                     \
     shared(n_mp_leaves, mp_leaf_indices, nodes, particle_order, sources_coords, sources_values, settings, scratch,     \
-               leaf_buf_size, n_sources, leaf_ok, mp_slices, n_threads, thread_counter) num_threads(n_threads)
+               leaf_buf_size, n_sources, leaf_ok, mp_slices, n_threads) num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         const size_t tid_s = (size_t)tid;
         const size_t coords_pt = (size_t)n_sources * 3u;
         real_t *leaf_cur = scratch.leaf_cur + tid_s * leaf_buf_size;
@@ -748,15 +747,12 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                                const real3_t sources_values[restrict], const octree_scratch_t *scratch,
                                size_t leaf_stride, unsigned n_threads)
 {
-    unsigned thread_counter = 0;
 #pragma omp parallel default(none)                                                                                     \
     shared(depth_start, depth_end, nodes, order, n_coeffs, mp_slices, work_order, shift_exp, pse, shift_stride,        \
-               pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride, thread_counter)       \
+               pse_stride, particle_order, sources_coords, sources_values, scratch, leaf_stride)                       \
     num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         const size_t tid_s = (size_t)tid;
         real_t *particle_cur = scratch->leaf_cur + tid_s * leaf_stride;
         real_t *particle_nxt = scratch->leaf_nxt + tid_s * leaf_stride;
@@ -844,8 +840,8 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
                     for (unsigned kk = child->particle_begin; kk < child->particle_begin + child->particle_count; ++kk)
                     {
                         const unsigned src = particle_order[kk];
-                        multipole_update(&internal_mp, nodes[i].center, sources_coords[src], sources_values[src],
-                                         particle_cur, particle_nxt);
+                        multipole_update(&internal_mp, sources_coords[src], sources_values[src], particle_cur,
+                                         particle_nxt);
                     }
                 }
                 else
@@ -899,33 +895,23 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
 /* Morton sort — parallel LSD radix sort                            */
 /* ================================================================ */
 
-/** @brief Internal: scatter (Morton code, index) pairs from src to dst using histogram bin. */
+/** @brief Internal: scatter (Morton code, index) pairs from src to dst using per-thread offsets. */
 static void radix_scatter(const uint8_t *src, uint8_t *dst, size_t ndepth, size_t pair_size, unsigned shift,
-                          unsigned *scatter_offsets, const unsigned *hist_thread, unsigned n_threads)
+                          const unsigned *thread_offsets, unsigned n_threads)
 {
-    unsigned thread_counter = 0;
-#pragma omp parallel default(none) shared(src, dst, ndepth, pair_size, shift, scatter_offsets, hist_thread, n_threads, \
-                                              thread_counter) num_threads(n_threads)
+#pragma omp parallel default(none) shared(src, dst, ndepth, pair_size, shift, thread_offsets, n_threads)               \
+    num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         const size_t chunk = (ndepth + (size_t)n_threads - 1) / (size_t)n_threads;
         const size_t start = (size_t)tid * chunk;
         const size_t end = start + chunk > ndepth ? ndepth : start + chunk;
 
-        /* Compute per-thread scatter offsets from the global histogram base. */
+        /* Copy per-thread offsets to local array (no cross-thread reads after this). */
         unsigned my_offsets[RADIX_BINS];
-        {
-#pragma omp simd
-            for (unsigned b = 0; b < RADIX_BINS; ++b)
-            {
-                unsigned off = scatter_offsets[b];
-                for (unsigned t = 0; t < (unsigned)tid; ++t)
-                    off += hist_thread[(size_t)t * RADIX_BINS + b];
-                my_offsets[b] = off;
-            }
-        }
+        const unsigned *src_off = thread_offsets + (size_t)tid * RADIX_BINS;
+        for (unsigned b = 0; b < RADIX_BINS; ++b)
+            my_offsets[b] = src_off[b];
 
         for (size_t i = start; i < end; ++i)
         {
@@ -962,27 +948,27 @@ static void radix_sort_pairs(uint8_t *pairs, uint8_t *pairs_alt, size_t ndepth, 
                 h[i] = 0;
         }
 
-        /* Histogram: each thread counts its chunk. */
-        unsigned thread_counter_hist = 0;
-#pragma omp parallel default(none) shared(ndepth, pairs, shift, radix_hist, n_threads, pair_size, thread_counter_hist) \
-    num_threads(n_threads)
+        /* Histogram: each thread counts its chunk (manual chunking, matching radix_scatter). */
+#pragma omp parallel default(none) shared(ndepth, pairs, shift, radix_hist, n_threads, pair_size) num_threads(n_threads)
         {
-            unsigned tid;
-#pragma omp atomic capture
-            tid = thread_counter_hist++;
+            const unsigned tid = (unsigned)omp_get_thread_num();
             unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
-#pragma omp for schedule(static)
-            for (size_t i = 0; i < ndepth; ++i)
+            const size_t chunk = (ndepth + (size_t)n_threads - 1) / (size_t)n_threads;
+            const size_t start = (size_t)tid * chunk;
+            const size_t end = start + chunk > ndepth ? ndepth : start + chunk;
+            for (size_t i = start; i < end; ++i)
             {
                 const uint64_t key = *(const uint64_t *)(pairs + i * pair_size);
                 h[(key >> shift) & (RADIX_BINS - 1)]++;
             }
         }
 
-        /* Reduce + prefix-sum: combine all thread histograms into global offsets. */
+        /* Reduce + prefix-sum: combine all thread histograms into global offsets.
+         * Pre-compute per-thread scatter offsets in radix_hist (serial, no race). */
         unsigned global_hist[RADIX_BINS];
         {
-#pragma omp simd
+            /* Compute global histogram directly from per-thread counts in radix_hist
+             * (no intermediate copy needed — radix_hist is not modified until after). */
             for (unsigned b = 0; b < RADIX_BINS; ++b)
             {
                 unsigned sum = 0;
@@ -990,18 +976,31 @@ static void radix_sort_pairs(uint8_t *pairs, uint8_t *pairs_alt, size_t ndepth, 
                     sum += radix_hist[(size_t)t * RADIX_BINS + b];
                 global_hist[b] = sum;
             }
+            /* Prefix-sum for global offsets. */
             unsigned acc = 0;
-#pragma omp simd
             for (unsigned b = 0; b < RADIX_BINS; ++b)
             {
                 const unsigned tmp = global_hist[b];
                 global_hist[b] = acc;
                 acc += tmp;
             }
+            /* Pre-compute per-thread scatter offsets into radix_hist (serial).
+             * Read original per-thread counts from radix_hist before overwriting. */
+            for (unsigned b = 0; b < RADIX_BINS; ++b)
+            {
+                unsigned off = global_hist[b];
+                for (unsigned t = 0; t < n_threads; ++t)
+                {
+                    const unsigned cnt = radix_hist[(size_t)t * RADIX_BINS + b];
+                    radix_hist[(size_t)t * RADIX_BINS + b] = off;
+                    off += cnt;
+                }
+            }
         }
 
-        /* Scatter: each thread moves its pairs to the temp buffer. */
-        radix_scatter(pairs, pairs_alt, ndepth, pair_size, shift, global_hist, radix_hist, n_threads);
+        /* Scatter: each thread moves its pairs to the temp buffer.
+         * Per-thread offsets pre-computed — no cross-thread reads inside parallel region. */
+        radix_scatter(pairs, pairs_alt, ndepth, pair_size, shift, radix_hist, n_threads);
 
         /* Swap current and temp buffers. */
         {
@@ -1024,6 +1023,16 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
         *out_max_depth_found = 0;
         return false;
     }
+
+    assert(nodes != NULL && "octree_build_morton_sorted: nodes is NULL");
+    assert(codes != NULL && "octree_build_morton_sorted: codes is NULL");
+    assert(sorted_indices != NULL && "octree_build_morton_sorted: sorted_indices is NULL");
+    assert(depth_offsets != NULL && "octree_build_morton_sorted: depth_offsets is NULL");
+    assert(pairs_temp != NULL && "octree_build_morton_sorted: pairs_temp is NULL");
+    assert(radix_hist != NULL && "octree_build_morton_sorted: radix_hist is NULL");
+    assert(out_max_depth_found != NULL && "octree_build_morton_sorted: out_max_depth_found is NULL");
+    assert(n_threads > 0 && "octree_build_morton_sorted: n_threads must be > 0");
+    assert(n_nodes > 0 && "octree_build_morton_sorted: n_nodes must be > 0");
 
     /* max_depth is a capacity hint; we compute actual depth from nodes. */
     (void)max_depth;
@@ -1050,13 +1059,9 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
     }
 
     /* Each thread counts depths in its own histogram slice — no atomics. */
-    unsigned thread_counter_depth = 0;
-#pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, n_threads, thread_counter_depth)                 \
-    num_threads(n_threads)
+#pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, n_threads) num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter_depth++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
 #pragma omp for schedule(static)
         for (unsigned i = 0; i < n_nodes; ++i)
@@ -1111,14 +1116,10 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
     }
 
     /* Each thread scatters its nodes using its own cursor array — no atomics. */
-    unsigned thread_counter_scatter = 0;
 #pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, sorted_indices, depth_offsets, depth_buf,        \
-                                              n_threads, max_depth_found, thread_counter_scatter)                      \
-    num_threads(n_threads)
+                                              n_threads, max_depth_found) num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter_scatter++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         unsigned *my_cursors = radix_hist + (size_t)tid * RADIX_BINS;
 #pragma omp for schedule(static)
         for (unsigned i = 0; i < n_nodes; ++i)

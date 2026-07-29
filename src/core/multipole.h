@@ -38,6 +38,50 @@ size_t multipole_num_coeffs(unsigned order);
  * @param r z-degree.
  * @return Linear index into a single-component coefficient array.
  */
+/**
+ * @brief Build binomial expansion coefficients (x + s)^e for e = 0..work_order.
+ *
+ * For each dimension d, fills @p shift_exp with coefficients such that
+ * shift_exp[d * shift_dim^2 + e * shift_dim + i] is the coefficient of
+ * x^i in (x + s_d)^e, for e = 0..work_order, i = 0..e, where s_d are
+ * the @p sx / @p sy / @p sz arguments.
+ *
+ * Pass pre-signed shifts: e.g. @c -shift.x for (x - shift_x) expansion,
+ * @c +R_prime.x for (x + R'_x) expansion.
+ *
+ * @param shift_exp  Output array [3 * shift_plane] where shift_plane = shift_dim^2.
+ * @param sx         x-shift (pre-signed).
+ * @param sy         y-shift (pre-signed).
+ * @param sz         z-shift (pre-signed).
+ * @param work_order Max expansion order.
+ * @param shift_dim  work_order + 1.
+ * @param shift_plane shift_dim * shift_dim.
+ */
+static inline void build_binomial_expansion(real_t CVL_ARRAY_ARG(shift_exp, restrict), real_t sx, real_t sy, real_t sz,
+                                            unsigned work_order, size_t shift_dim, size_t shift_plane)
+{
+    const real_t s[3] = {sx, sy, sz};
+#pragma omp simd
+    for (unsigned d = 0; d < 3; ++d)
+    {
+        shift_exp[d * shift_plane] = 1.0;
+        for (unsigned e = 1; e <= work_order; ++e)
+        {
+            shift_exp[d * shift_plane + e * shift_dim] = s[d] * shift_exp[d * shift_plane + (e - 1) * shift_dim];
+            for (unsigned i = 1; i <= e; ++i)
+            {
+                shift_exp[d * shift_plane + e * shift_dim + i] =
+                    shift_exp[d * shift_plane + (e - 1) * shift_dim + (i - 1)] +
+                    s[d] * shift_exp[d * shift_plane + (e - 1) * shift_dim + i];
+            }
+            for (unsigned i = e + 1; i <= work_order; ++i)
+            {
+                shift_exp[d * shift_plane + e * shift_dim + i] = 0.0;
+            }
+        }
+    }
+}
+
 CVL_INTERNAL size_t multipole_coeff_index(unsigned m, unsigned p, unsigned q, unsigned r);
 
 /**
@@ -103,18 +147,16 @@ size_t multipole_scratch_size(unsigned order);
  * @brief Updates a multipole expansion with a new source point.
  *
  * This function adds contributions of a new source point to an existing multipole expansion.
+ * Uses @c multipole->center as the expansion centre.
  *
  * @param multipole The multipole expansion to update.
- * @param num_coeffs The number of coefficients in the multipole expansion (used only for checking input).
- * @param center The center of the multipole expansion.
  * @param source_pos The position of the new source point.
  * @param source_value The value of the new source point.
  * @param cur Zeroed work buffer of at least multipole_scratch_size(order) elements.
  * @param nxt Zeroed work buffer of at least multipole_scratch_size(order) elements.
  */
-void multipole_update(const multipole_t *multipole, const real3_t center, const real3_t source_pos,
-                      const real3_t source_value, real_t CVL_ARRAY_ARG(cur, restrict),
-                      real_t CVL_ARRAY_ARG(nxt, restrict));
+void multipole_update(const multipole_t *multipole, const real3_t source_pos, const real3_t source_value,
+                      real_t CVL_ARRAY_ARG(cur, restrict), real_t CVL_ARRAY_ARG(nxt, restrict));
 
 /**
  * @brief Adds a shifted multipole expansion to a new multipole expansion.
@@ -131,8 +173,11 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
 /**
  * @brief Creates a multipole expansion from a set of source particles.
  *
+ * All three buffers (coeffs, cur, nxt) must each be at least
+ * @c max(3 * multipole_num_coeffs(order), multipole_scratch_size(order)) elements.
+ *
  * @param order The order of the multipole expansion.
- * @param num_coeffs The number of coefficients in the multipole expansion (used only for checking input).
+ * @param num_coeffs The number of elements in each buffer (must be @c >= max(3 * n_coeffs, scratch)).
  * @param coeffs Array to write the coefficients of the multipole expansion to.
  * @param center The center of the multipole expansion.
  * @param sources The number of source points.

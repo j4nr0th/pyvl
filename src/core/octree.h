@@ -89,8 +89,9 @@ typedef struct octree_node
 {
     octree_node_kind_t kind;
     unsigned depth;
-    real3_t center;
-    real3_t geom_center; /**< Geometric cell center (set during materialize, never changed). */
+    real3_t center;      /**< Node centre (may be updated to Γ-weighted centroid during centroids stage). */
+    real3_t geom_center; /**< Geometric cell centre (set during materialize, never changed).  Used for Morton codes and
+                            tree descent. */
     real_t half_size;
     unsigned particle_begin;
     unsigned particle_count;
@@ -204,6 +205,20 @@ static inline void octree_free(const allocator_t *allocator, void *ptr)
 /* Count pass                                                       */
 /* ================================================================ */
 
+/**
+ * @brief Count pass: build transient topology and count node types.
+ *
+ * The @p topo buffer must be at least @c (8 * n_sources + 1) * sizeof(topo_node_t) bytes.
+ * Each source creates at most 7 internal nodes, so this is a tight upper bound.
+ * Bounds are enforced via assert in debug builds.
+ *
+ * @param n_sources       Number of source particles.
+ * @param sources_coords  Source positions [n_sources].
+ * @param settings        Tree settings.
+ * @param topo            Output topology buffer (pre-allocated, zeroed).
+ * @param source_leaf     Output per-source leaf-node index [n_sources].
+ * @return Node count breakdown.
+ */
 octree_count_t octree_count_pass(unsigned n_sources, const real3_t sources_coords[restrict n_sources],
                                  const octree_settings_t *settings, topo_node_t *topo, uint32_t *source_leaf);
 
@@ -236,6 +251,27 @@ void octree_materialize(const topo_node_t topo[restrict], uint32_t n_topo_nodes,
 void octree_descend(unsigned n_sources, const real3_t sources_coords[restrict n_sources], octree_node_t *nodes,
                     unsigned *source_leaf_real, unsigned n_threads);
 
+/**
+ * @brief Compute node metadata: particle_begin prefix sums, reset particle_count, assign leaf_id.
+ *
+ * Pre-conditions:
+ *   - nodes must be materialised and descended (particle_count populated).
+ *   - depth_start/depth_end may be NULL (allocated internally if needed).
+ *
+ * Post-conditions:
+ *   - particle_begin[i] = prefix sum of particle_count up to node i.
+ *   - particle_count[i] reset to 0 for all nodes.
+ *   - leaf_id assigned to each non-internal node (0..n_mp_leaves-1).
+ *   - Returns number of multipole leaves.
+ *
+ * @param n_nodes     Number of nodes.
+ * @param nodes       Node array.
+ * @param max_depth   Maximum tree depth.
+ * @param depth_start Output depth start offsets [max_depth+2] (may be NULL).
+ * @param depth_end   Output depth end offsets [max_depth+2] (may be NULL).
+ * @param n_threads   OpenMP thread count.
+ * @return Number of multipole leaves.
+ */
 unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigned max_depth,
                                  unsigned depth_start[restrict], unsigned depth_end[restrict], unsigned n_threads);
 
@@ -268,6 +304,16 @@ void octree_upward_sweep_level(unsigned depth_start, unsigned depth_end, octree_
  *
  * Iterates from @p max_depth down to 0, aggregating child multipoles
  * (or particle sources) into each internal node via @ref octree_upward_sweep_level.
+ *
+ * Pre-conditions:
+ *   - nodes must be materialised, descended, metadata computed, centroids computed,
+ *     and leaf multipoles built.
+ *   - mp_slices must point to valid coefficient storage for all nodes.
+ *
+ * Post-conditions:
+ *   - Every internal node's multipole coefficients contain the aggregated
+ *     contribution of all descendants.
+ *   - Internal node centres are updated to Γ-weighted centroids.
  *
  * @param n_nodes          Number of nodes.
  * @param nodes            Node array.

@@ -16,16 +16,15 @@ size_t multipole_scratch_size(unsigned order)
     return dim * dim * dim;
 }
 
-void multipole_update(const multipole_t *multipole, const real3_t center, const real3_t source_pos,
-                      const real3_t source_value, real_t CVL_ARRAY_ARG(cur, restrict),
-                      real_t CVL_ARRAY_ARG(nxt, restrict))
+void multipole_update(const multipole_t *multipole, const real3_t source_pos, const real3_t source_value,
+                      real_t CVL_ARRAY_ARG(cur, restrict), real_t CVL_ARRAY_ARG(nxt, restrict))
 {
     const size_t order = multipole->order;
     const size_t scratch = multipole_scratch_size(order);
     const unsigned dim = order + 1;
     const size_t dim2 = (size_t)dim * dim;
 
-    const real3_t rel_pos = real3_sub(source_pos, center);
+    const real3_t rel_pos = real3_sub(source_pos, multipole->center);
     const real_t s2 = real3_dot(rel_pos, rel_pos);
 
     real_t *restrict const coeffs_x = multipole->coeffs_x;
@@ -225,26 +224,7 @@ void multipole_add_shift(const multipole_t *in, const multipole_t *out, unsigned
     // Build binomial expansions of (x - shift_x)^e etc up to work_order.
     const size_t shift_dim = (size_t)work_order + 1;
     const size_t shift_plane = shift_dim * shift_dim;
-#pragma omp simd
-    for (unsigned d = 0; d < 3; ++d)
-    {
-        const real_t s = (d == 0) ? shift.x : (d == 1) ? shift.y : shift.z;
-        shift_exp[d * shift_plane] = 1.0;
-        for (unsigned e = 1; e <= work_order; ++e)
-        {
-            shift_exp[d * shift_plane + e * shift_dim] = -s * shift_exp[d * shift_plane + (e - 1) * shift_dim];
-            for (unsigned i = 1; i <= e; ++i)
-            {
-                shift_exp[d * shift_plane + e * shift_dim + i] =
-                    shift_exp[d * shift_plane + (e - 1) * shift_dim + (i - 1)] -
-                    s * shift_exp[d * shift_plane + (e - 1) * shift_dim + i];
-            }
-            for (unsigned i = e + 1; i <= work_order; ++i)
-            {
-                shift_exp[d * shift_plane + e * shift_dim + i] = 0.0;
-            }
-        }
-    }
+    build_binomial_expansion(shift_exp, -shift.x, -shift.y, -shift.z, work_order, shift_dim, shift_plane);
 
     const size_t n_coeffs = multipole_num_coeffs(work_order);
 
@@ -346,7 +326,7 @@ bool multipole_create(unsigned order, unsigned num_coeffs, real_t CVL_ARRAY_ARG(
         memset(cur, 0, scratch * sizeof(real_t));
         memset(nxt, 0, scratch * sizeof(real_t));
 
-        multipole_update(&mp_built, center, sources_coords[i], sources_values[i], cur, nxt);
+        multipole_update(&mp_built, sources_coords[i], sources_values[i], cur, nxt);
     }
 
     // Fill output field-by-field to avoid strict-aliasing UB when `out`
