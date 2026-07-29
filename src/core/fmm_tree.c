@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <omp.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,10 +13,10 @@
 /* ------------------------------------------------------------------ */
 
 /** @brief Depth array sizing.  topo_node_t.depth is uint8_t \xE2\x86\x92 max depth 255. */
-#define FMM_DEPTH_SLOTS 256u
-
-/** @brief Stack for dual-tree walk in V-list building. */
-#define FMM_VLIST_STACK_SIZE 256u
+enum
+{
+    FMM_DEPTH_SLOTS = 256
+};
 
 /** @brief Small epsilon for geometry comparisons. */
 #define FMM_EPS ((real_t)1e-12)
@@ -78,7 +79,11 @@ size_t fmm_total_work_size(fmm_work_sizes_t sizes)
 /**
  * @brief Build per-leaf interaction lists for tree-code mode.
  *
- * For each leaf, walk the tree from the root and for each candidate node:
+ * Uses the original dual-tree walk algorithm (correct ancestor skip via
+ * stack-based traversal), but iterates nodes in Morton-sorted order
+ * within each depth level for cache-friendly access patterns.
+ *
+ * For each leaf, walks the tree from the root and for each candidate node:
  *  - Well-separated: add the node's INDEX to the V-list.
  *  - Not well-separated AND internal: descend.
  *  - Not well-separated AND leaf: near-field.
@@ -102,7 +107,11 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
                                   unsigned CVL_ARRAY_ARG(nflist_indices, restrict), size_t nflist_capacity,
                                   size_t *out_vlist_count, size_t *out_nflist_count, unsigned n_threads, double theta)
 {
-    /* Depth never exceeds FMM_DEPTH_SLOTS; use a named constant for the local stack. */
+    /* Stack for dual-tree walk.  Depth never exceeds 256. */
+    enum
+    {
+        FMM_VLIST_STACK_SIZE = 256
+    };
 
     if (n_leaves == 0)
     {
@@ -112,7 +121,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
     }
 
     /*
-     * Two-pass CSR construction:
+     * Three-pass CSR construction:
      *   Pass 1 (parallel) — dual-tree walk to count per-leaf entries.
      *   Pass 2 (serial)   — prefix-sum to build CSR offsets.
      *   Pass 3 (parallel) — repeat dual-tree walk to fill indices.
@@ -146,7 +155,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
             if (theta > 0.0)
                 well_separated = dist > (real_t)1e-30 && cand->half_size / dist < theta;
             else
-                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - (real_t)1e-12;
+                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - FMM_EPS;
 
             if (well_separated)
             {
@@ -159,8 +168,10 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
                 for (int oct = 7; oct >= 0; --oct)
                 {
                     const octree_node_t *child = cand->data.internal.children[oct];
-                    if (child != NULL)
-                        stack[sp++] = (unsigned)(child - nodes);
+                    if (child == NULL)
+                        continue;
+                    assert(sp < FMM_VLIST_STACK_SIZE);
+                    stack[sp++] = (unsigned)(child - nodes);
                 }
             }
             else
@@ -219,7 +230,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
             if (theta > 0.0)
                 well_separated = dist > (real_t)1e-30 && cand->half_size / dist < theta;
             else
-                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - (real_t)1e-12;
+                well_separated = dist >= 3.0 * (ht > cand->half_size ? ht : cand->half_size) - FMM_EPS;
 
             if (well_separated)
             {
@@ -230,8 +241,10 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
                 for (int oct = 7; oct >= 0; --oct)
                 {
                     const octree_node_t *child = cand->data.internal.children[oct];
-                    if (child != NULL)
-                        stack[sp++] = (unsigned)(child - nodes);
+                    if (child == NULL)
+                        continue;
+                    assert(sp < FMM_VLIST_STACK_SIZE);
+                    stack[sp++] = (unsigned)(child - nodes);
                 }
             }
             else
@@ -299,17 +312,9 @@ static bool fmm_build_per_node_interaction_lists(const octree_node_t *nodes, uns
         bb_max.z = target->center.z + 6.0 * h;
 
         const unsigned doff = depth_offsets[td];
-        unsigned dend = n_nodes;
-        /* Find end offset: the start of the next occupied depth level. */
-        for (unsigned dd = td + 1; dd <= max_depth_found; ++dd)
-        {
-            const unsigned nxt = depth_offsets[dd];
-            if (nxt < dend)
-            {
-                dend = nxt;
-                break;
-            }
-        }
+        /* depth_offsets[td+1] gives the start of the next depth level
+         * (directly, without O(max_depth) search). */
+        const unsigned dend = depth_offsets[td + 1];
         if (doff >= dend)
         {
             mlvl_offsets[ni] = 0;
@@ -344,7 +349,10 @@ static bool fmm_build_per_node_interaction_lists(const octree_node_t *nodes, uns
                 continue;
             const real_t dist = real3_mag(real3_sub(target->center, nodes[ci].center));
             if (dist >= 3.0 * h - FMM_EPS && dist < 6.0 * h - FMM_EPS)
+            {
                 cnt++;
+                assert(cnt <= 189u && "M2L zone max 189 same-depth neighbours");
+            }
         }
         mlvl_offsets[ni] = cnt;
     }
@@ -385,16 +393,7 @@ static bool fmm_build_per_node_interaction_lists(const octree_node_t *nodes, uns
         bb_max.z = target->center.z + 6.0 * h;
 
         const unsigned doff = depth_offsets[td];
-        unsigned dend = n_nodes;
-        for (unsigned dd = td + 1; dd <= max_depth_found; ++dd)
-        {
-            const unsigned nxt = depth_offsets[dd];
-            if (nxt < dend)
-            {
-                dend = nxt;
-                break;
-            }
-        }
+        const unsigned dend = depth_offsets[td + 1];
         if (doff >= dend)
             continue;
         const size_t ndepth = (size_t)(dend - doff);
@@ -511,14 +510,11 @@ static void fmm_m2l_sweep_mlvl(unsigned n_nodes, const octree_node_t CVL_ARRAY_A
     const size_t shift_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order);
 
-    unsigned thread_counter_m2l = 0;
 #pragma omp parallel default(none)                                                                                     \
     shared(n_nodes, nodes, order, work_order, mp_slices, local_slices, mlvl_offsets, mlvl_indices, work_shift_exp,     \
-               work_pse, n_coeffs, shift_per_thread, pse_per_thread, thread_counter_m2l) num_threads(n_threads)
+               work_pse, n_coeffs, shift_per_thread, pse_per_thread) num_threads(n_threads)
     {
-        unsigned tid;
-#pragma omp atomic capture
-        tid = thread_counter_m2l++;
+        const unsigned tid = (unsigned)omp_get_thread_num();
         real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
         real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
 #pragma omp for schedule(dynamic, 16)
@@ -603,14 +599,10 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARR
         if (ds >= de)
             continue;
 
-        unsigned thread_counter_l2l = 0;
 #pragma omp parallel default(none) shared(ds, de, nodes, order, work_order, local_slices, work_shift_exp, work_pse,    \
-                                              n_coeffs, shift_per_thread, pse_per_thread, thread_counter_l2l)          \
-    num_threads(n_threads)
+                                              n_coeffs, shift_per_thread, pse_per_thread) num_threads(n_threads)
         {
-            unsigned tid;
-#pragma omp atomic capture
-            tid = thread_counter_l2l++;
+            const unsigned tid = (unsigned)omp_get_thread_num();
             real_t *my_shift_exp = work_shift_exp + (size_t)tid * shift_per_thread;
             real_t *my_pse = work_pse + (size_t)tid * pse_per_thread;
 #pragma omp for schedule(dynamic, 16)
@@ -664,8 +656,9 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
                       const real3_t CVL_ARRAY_ARG(sources_values, restrict), real3_t point,
                       fmm_eval_settings_t eval_settings)
 {
-    if (tree == NULL || tree->nodes == NULL || tree->n_nodes == 0)
-        return (real3_t){.x = 0, .y = 0, .z = 0};
+    assert(tree != NULL);
+    assert(tree->nodes != NULL);
+    assert(tree->n_nodes > 0);
 
     real3_t result = {.x = 0, .y = 0, .z = 0};
 
@@ -752,13 +745,17 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
                 }
             }
 
-            if (node->kind == OCTREE_NODE_INTERNAL && sp + 8 <= STACK_MAX)
+            if (node->kind == OCTREE_NODE_INTERNAL)
             {
-                for (int oct = 7; oct >= 0; --oct)
+                assert(sp + 8 <= STACK_MAX);
+                if (sp + 8 <= STACK_MAX)
                 {
-                    const octree_node_t *child = node->data.internal.children[oct];
-                    if (child != NULL)
-                        stack[sp++] = (unsigned)(child - tree->nodes);
+                    for (int oct = 7; oct >= 0; --oct)
+                    {
+                        const octree_node_t *child = node->data.internal.children[oct];
+                        if (child != NULL)
+                            stack[sp++] = (unsigned)(child - tree->nodes);
+                    }
                 }
             }
         }
@@ -810,11 +807,13 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     else
     {
         /* Fallback: direct sum over all sources. */
+        real3_t fb = {0};
         for (unsigned kk = 0; kk < tree->n_sources; ++kk)
         {
             const real3_t dr = real3_sub(point, sources_coords[kk]);
-            result = real3_add(result, particle_kernel(sources_values[kk], dr));
+            fb = real3_add(fb, particle_kernel(sources_values[kk], dr));
         }
+        result = fb;
     }
 
     /* --- Near-field: direct sum over neighbour leaves + own leaf --- */
@@ -985,10 +984,12 @@ bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_s
                          const real3_t sources_coords[restrict n_sources], const fmm_settings_t settings[restrict],
                          octree_count_t *out_count, octree_scratch_t *out_scratch)
 {
-    if (scratch_buffer == NULL || out_count == NULL || out_scratch == NULL)
-        return false;
-    if (n_sources == 0 || settings == NULL || sources_coords == NULL)
-        return false;
+    assert(scratch_buffer != NULL);
+    assert(out_count != NULL);
+    assert(out_scratch != NULL);
+    assert(n_sources > 0);
+    assert(settings != NULL);
+    assert(sources_coords != NULL);
 
     const octree_scratch_sizes_t sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
     if (scratch_size < octree_total_scratch_size(sz, n_threads))
@@ -1006,8 +1007,8 @@ bool fmm_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsigned n_s
 size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const octree_count_t *count,
                      unsigned n_threads)
 {
-    if (count == NULL || count->n_internal + count->n_multipole_leaves + count->n_particle_leaves == 0)
-        return 0;
+    assert(count != NULL);
+    assert(count->n_internal + count->n_multipole_leaves + count->n_particle_leaves > 0);
     const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count, n_threads);
     return fmm_total_work_size(ws);
 }
@@ -1023,14 +1024,15 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
 {
     bool ret = false;
 
-    if (!buffer || !out || !scratch || !count)
-        return false;
-    if (n_sources == 0 || settings == NULL)
-        return false;
+    assert(buffer != NULL);
+    assert(out != NULL);
+    assert(scratch != NULL);
+    assert(count != NULL);
+    assert(n_sources > 0);
+    assert(settings != NULL);
 
     const unsigned n_topo = count->n_internal + count->n_multipole_leaves + count->n_particle_leaves;
-    if (n_topo == 0)
-        return false;
+    assert(n_topo > 0);
 
     /* Size work buffer and validate. */
     const fmm_work_sizes_t ws = fmm_size_work_buffer(n_sources, settings, *count, n_threads);

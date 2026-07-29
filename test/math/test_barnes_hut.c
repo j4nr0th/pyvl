@@ -195,59 +195,24 @@ int main(const int argc, const char *argv[static argc])
         void *buffer = malloc(required);
         TEST_ASSERT(scratch && buffer, "scratch/buffer malloc failed");
 
-        /* prepare_scratch error paths. */
+        /* prepare_scratch and insert use asserts for input validation.
+         * Verify the staging API works correctly with valid inputs instead. */
         octree_count_t cnt;
         octree_scratch_t sview;
-        TEST_ASSERT(
-            !barnes_hut_prepare_scratch(NULL, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview),
-            "prepare must fail for NULL scratch_buffer");
-        TEST_ASSERT(
-            !barnes_hut_prepare_scratch(scratch, scratch_sz, 0, TEST_N_THREADS, coords, &settings, &cnt, &sview),
-            "prepare must fail for n_sources=0");
-        TEST_ASSERT(
-            !barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, NULL, &settings, &cnt, &sview),
-            "prepare must fail for NULL sources_coords");
-        TEST_ASSERT(
-            !barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, NULL, &cnt, &sview),
-            "prepare must fail for NULL settings");
-        TEST_ASSERT(
-            !barnes_hut_prepare_scratch(scratch, 16, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview),
-            "prepare must fail for too-small scratch");
-
-        /* Insert error paths with valid count + scratch partition. */
         barnes_hut_prepare_scratch(scratch, scratch_sz, N_SOURCES, TEST_N_THREADS, coords, &settings, &cnt, &sview);
         barnes_hut_tree_t tree;
 
-        TEST_ASSERT(!barnes_hut_tree_insert(0, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL, buffer,
-                                            required, &tree),
-                    "insert must fail for n_sources=0");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, NULL, values, &settings, &cnt, &sview, NULL,
-                                            buffer, required, &tree),
-                    "insert must fail for NULL sources_coords");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, NULL, &settings, &cnt, &sview, NULL,
-                                            buffer, required, &tree),
-                    "insert must fail for NULL sources_values");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, NULL, &cnt, &sview, NULL, buffer,
-                                            required, &tree),
-                    "insert must fail for NULL settings");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, NULL, &sview, NULL,
-                                            buffer, required, &tree),
-                    "insert must fail for NULL count");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, NULL, NULL,
-                                            buffer, required, &tree),
-                    "insert must fail for NULL scratch");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
-                                            NULL, required, &tree),
-                    "insert must fail for NULL buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
-                                            buffer, 0, &tree),
-                    "insert must fail for buffer_size=0");
+        /* Too-small buffer must still return false at runtime. */
         TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
                                             buffer, 16, &tree),
                     "insert must fail for too-small buffer");
-        TEST_ASSERT(!barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
-                                            buffer, required, NULL),
-                    "insert must fail for NULL out");
+
+        /* Successful insert with valid inputs. */
+        TEST_ASSERT(barnes_hut_tree_insert(N_SOURCES, TEST_N_THREADS, coords, values, &settings, &cnt, &sview, NULL,
+                                           buffer, required, &tree),
+                    "insert failed for valid inputs");
+        TEST_ASSERT(tree.n_nodes > 0, "inserted tree must have nodes");
+        TEST_ASSERT(tree.n_sources == N_SOURCES, "n_sources mismatch");
 
         free(scratch);
         free(buffer);
@@ -552,13 +517,13 @@ int main(const int argc, const char *argv[static argc])
             printf("3b. batch/single consistency: OK\n");
         }
 
-        /* 3c. Invalid inputs: NULL tree returns zero. */
+        /* 3c. Tree handle invariants: nodes/n_nodes are non-NULL. */
         {
-            const real3_t pt = {.x = 1, .y = 0, .z = 0};
-            const real3_t res =
-                barnes_hut_tree_eval(NULL, coords_big, values_big, pt, BARNES_HUT_EVAL_SETTINGS_DEFAULT);
-            TEST_ASSERT(res.x == 0 && res.y == 0 && res.z == 0, "NULL tree must return zero");
-            printf("3c. NULL-tree guard: OK\n");
+            /* barnes_hut_tree_eval now uses asserts for input validation.
+             * Verify the built tree handles have valid state instead. */
+            TEST_ASSERT(tree.nodes != NULL, "built tree must have non-NULL nodes");
+            TEST_ASSERT(tree.n_nodes > 0, "built tree must have positive n_nodes");
+            printf("3c. Tree handle invariants: OK\n");
         }
 
         /* 3d. Opening-angle mode (theta=0.5): same far-field regime. */

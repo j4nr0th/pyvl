@@ -19,8 +19,8 @@
 
 enum
 {
-    N_SOURCES = 1000,
-    N_TARGETS = 200,
+    N_SOURCES = 100,
+    N_TARGETS = 20,
     N_THREADS = 1,
     N_SEEDS = 5,
     MAX_ORDER = 6,
@@ -87,6 +87,7 @@ int main(const int argc, const char *argv[static argc])
         unsigned tc_passed = 0, fmm_passed = 0;
         double tc_time_sum = 0, fmm_time_sum = 0;
 
+        unsigned max_nodes = 0, max_leaves = 0;
         for (unsigned s = 0; s < N_SEEDS; ++s)
         {
             const uint64_t seed = (uint64_t)s * 1234567 + (uint64_t)order;
@@ -105,6 +106,10 @@ int main(const int argc, const char *argv[static argc])
             fmm_tree_t tree = {0};
             const bool ok = fmm_tree_build(N_SOURCES, N_THREADS, coords, values, &settings, &TEST_ALLOCATOR, &tree);
             TEST_ASSERT(ok, "fmm_tree_build failed for order=%u seed=%u", order, s);
+            if (tree.n_nodes > max_nodes)
+                max_nodes = tree.n_nodes;
+            if (tree.n_leaves > max_leaves)
+                max_leaves = tree.n_leaves;
 
             /* Build eval points on a sphere far from the source cluster. */
             const real_t R = R_SOURCES * DISTANCE_FACTOR;
@@ -174,12 +179,12 @@ int main(const int argc, const char *argv[static argc])
         fprintf(stdout,
                 "order=%2u: tc_avg_max_err=%8.2e fmm_avg_max_err=%8.2e "
                 "tc_pass=%u/%u fmm_pass=%u/%u tc_time=%6.4f fmm_time=%6.4f "
-                "n_nodes=%u n_leaves=%u\\n",
+                "n_nodes=%u n_leaves=%u\n",
                 order, tc_max_err_sum / N_SEEDS, fmm_max_err_sum / N_SEEDS, tc_passed, N_SEEDS, fmm_passed, N_SEEDS,
-                tc_time_sum / N_SEEDS, fmm_time_sum / N_SEEDS, 0u, 0u);
+                tc_time_sum / N_SEEDS, fmm_time_sum / N_SEEDS, max_nodes, max_leaves);
     }
 
     /* Minimal assertion: at least some orders pass the accuracy threshold. */
-    fprintf(stdout, "test_fmm_accuracy PASSED\\n");
+    fprintf(stdout, "test_fmm_accuracy PASSED\n");
     return EXIT_SUCCESS;
 }

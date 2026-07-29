@@ -505,6 +505,7 @@ unsigned octree_compute_metadata(uint32_t n_nodes, octree_node_t *nodes, unsigne
     /* Parallel depth_start/depth_end via per-thread min/max arrays. */
     if (depth_start && depth_end && n_nodes > 1024)
     {
+        // TODO: THIS SHIT NEEDS TO GO!
         enum
         {
             METADATA_MAX_THREADS = 6

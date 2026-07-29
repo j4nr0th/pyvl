@@ -598,52 +598,59 @@ static PyObject *pyvl_fmm_tree_build(PyTypeObject *type, PyObject *const *args, 
  * ----------------------------------------------------------------
  */
 
-PyDoc_STRVAR(pyvl_fmm_tree_eval_doc, "eval(targets, /, *, theta=0.0, mode='tree_code', n_threads=None, out=None)\n"
-                                     "Evaluate the tree at one or more target points.\n"
-                                     "\n"
-                                     "Parameters\n"
-                                     "----------\n"
-                                     "targets : (..., 3) array_like\n"
-                                     "    Points at which to evaluate.  All leading dimensions are\n"
-                                     "    preserved in the output.\n"
-                                     "theta : float, default 0.0\n"
-                                     "    Multipole acceptance criterion (MAC).  Only used in\n"
-                                     "    ``\"tree_code\"`` mode.\n"
-                                     "mode : str, default \"tree_code\"\n"
-                                     "    Evaluation mode:\n"
-                                     "\n"
-                                     "    - ``\"tree_code\"`` -- per V-list multipole evaluation\n"
-                                     "      (compatible with :class:`BarnesHutTree`).\n"
-                                     "    - ``\"fmm\"`` -- use the precomputed local expansion (M2L)\n"
-                                     "      for true :math:`O(N)` evaluation.\n"
-                                     "n_threads : int or None, default None\n"
-                                     "    OpenMP thread count.  ``None`` uses the value passed to\n"
-                                     "    ``build()``.\n"
-                                     "out : (..., 3) ndarray, optional\n"
-                                     "    Output array.  Must have the same shape as *targets*, be\n"
-                                     "    writable, C-contiguous and aligned.\n"
-                                     "\n"
-                                     "Returns\n"
-                                     "-------\n"
-                                     "(..., 3) ndarray\n"
-                                     "    Induced vector at each target point.\n"
-                                     "\n"
-                                     "See Also\n"
-                                     "--------\n"
-                                     "FMMTree.build : Construct and populate a tree.\n"
-                                     "\n"
-                                     "Examples\n"
-                                     "--------\n"
-                                     ">>> import numpy as np\n"
-                                     ">>> from pyvl.cvl import FMMTree\n"
-                                     ">>> rng = np.random.default_rng(42)\n"
-                                     ">>> coords = rng.uniform(-1, 1, (100, 3))\n"
-                                     ">>> vals = rng.uniform(-1, 1, (100, 3))\n"
-                                     ">>> tree = FMMTree.build(coords, vals, order=4)\n"
-                                     ">>> pts = np.array([[10., 0., 0.], [0., 10., 0.]])\n"
-                                     ">>> result = tree.eval(pts)\n"
-                                     ">>> result.shape\n"
-                                     "(2, 3)\n");
+PyDoc_STRVAR(pyvl_fmm_tree_eval_doc,
+             "eval(targets, /, *, theta=0.0, mode='tree_code', hybrid_alpha=1.5, n_threads=None, out=None)\n"
+             "Evaluate the tree at one or more target points.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "targets : (..., 3) array_like\n"
+             "    Points at which to evaluate.  All leading dimensions are\n"
+             "    preserved in the output.\n"
+             "theta : float, default 0.0\n"
+             "    Multipole acceptance criterion (MAC).  Only used in\n"
+             "    ``\"tree_code\"`` mode.\n"
+             "mode : str, default \"tree_code\"\n"
+             "    Evaluation mode:\n"
+             "\n"
+             "    - ``\"tree_code\"`` -- per V-list multipole evaluation\n"
+             "      (compatible with :class:`BarnesHutTree`).\n"
+             "    - ``\"fmm\"`` -- use the precomputed local expansion (M2L)\n"
+             "      for true :math:`O(N)` evaluation.\n"
+             "    - ``\"hybrid\"`` -- stack-based ancestor local expansion\n"
+             "      traversal.  Works everywhere (interior + exterior).\n"
+             "hybrid_alpha : float, default 1.5\n"
+             "    Convergence safety factor for ``\"hybrid\"`` mode.\n"
+             "    Smaller = deeper traversal (more accurate).\n"
+             "    Larger = shallower traversal (faster, may diverge).\n"
+             "n_threads : int or None, default None\n"
+             "    OpenMP thread count.  ``None`` uses the value passed to\n"
+             "    ``build()``.\n"
+             "out : (..., 3) ndarray, optional\n"
+             "    Output array.  Must have the same shape as *targets*, be\n"
+             "    writable, C-contiguous and aligned.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "(..., 3) ndarray\n"
+             "    Induced vector at each target point.\n"
+             "\n"
+             "See Also\n"
+             "--------\n"
+             "FMMTree.build : Construct and populate a tree.\n"
+             "\n"
+             "Examples\n"
+             "--------\n"
+             ">>> import numpy as np\n"
+             ">>> from pyvl.cvl import FMMTree\n"
+             ">>> rng = np.random.default_rng(42)\n"
+             ">>> coords = rng.uniform(-1, 1, (100, 3))\n"
+             ">>> vals = rng.uniform(-1, 1, (100, 3))\n"
+             ">>> tree = FMMTree.build(coords, vals, order=4)\n"
+             ">>> pts = np.array([[10., 0., 0.], [0., 10., 0.]])\n"
+             ">>> result = tree.eval(pts)\n"
+             ">>> result.shape\n"
+             "(2, 3)\n");
 
 static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class, PyObject *const *args,
                                     const Py_ssize_t nargs, const PyObject *kwnames)
@@ -661,6 +668,7 @@ static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class
 
     PyObject *targets_obj;
     double theta = 0.0;
+    double hybrid_alpha = 1.5;
     PyObject *mode_obj = NULL;
     Py_ssize_t n_threads = -1; // -1 means "use self->n_threads"
     PyArrayObject *out = NULL;
@@ -671,6 +679,11 @@ static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class
                 {.type = CPYARG_TYPE_PYTHON,
                  .p_val = (void *)&mode_obj,
                  .kwname = "mode",
+                 .optional = true,
+                 .kw_only = true},
+                {.type = CPYARG_TYPE_DOUBLE,
+                 .p_val = &hybrid_alpha,
+                 .kwname = "hybrid_alpha",
                  .optional = true,
                  .kw_only = true},
                 {.type = CPYARG_TYPE_SSIZE,
@@ -755,7 +768,7 @@ static PyObject *pyvl_fmm_tree_eval(PyObject *self, PyTypeObject *defining_class
         }
     }
 
-    const fmm_eval_settings_t eval_cfg = {.theta = theta, .mode = eval_mode, .hybrid_alpha = 1.5};
+    const fmm_eval_settings_t eval_cfg = {.theta = theta, .mode = eval_mode, .hybrid_alpha = hybrid_alpha};
 
     const real3_t *targets_data = (const real3_t *)PyArray_DATA(targets_arr);
     const real3_t *src_coords = (const real3_t *)PyArray_DATA((PyArrayObject *)this->sources_coords);

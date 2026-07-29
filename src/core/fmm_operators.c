@@ -1,5 +1,6 @@
 #include "fmm_operators.h"
 
+#include <assert.h>
 #include <math.h>
 #include <string.h>
 
@@ -112,29 +113,21 @@ void multipole_to_local(const multipole_t *in, local_expansion_t *out, unsigned 
      * These re-express source-centred monomials in local-centred coords. */
     const size_t shift_dim = (size_t)work_order + 1;
     const size_t shift_plane = shift_dim * shift_dim;
-#pragma omp simd
-    for (unsigned d = 0; d < 3; ++d)
-    {
-        const real_t s = (d == 0) ? R_prime.x : (d == 1) ? R_prime.y : R_prime.z;
-        shift_exp[d * shift_plane] = 1.0;
-        for (unsigned e = 1; e <= work_order; ++e)
-        {
-            shift_exp[d * shift_plane + e * shift_dim] = s * shift_exp[d * shift_plane + (e - 1) * shift_dim];
-            for (unsigned i = 1; i <= e; ++i)
-            {
-                shift_exp[d * shift_plane + e * shift_dim + i] =
-                    shift_exp[d * shift_plane + (e - 1) * shift_dim + (i - 1)] +
-                    s * shift_exp[d * shift_plane + (e - 1) * shift_dim + i];
-            }
-            for (unsigned i = e + 1; i <= work_order; ++i)
-            {
-                shift_exp[d * shift_plane + e * shift_dim + i] = 0.0;
-            }
-        }
-    }
+    build_binomial_expansion(shift_exp, R_prime.x, R_prime.y, R_prime.z, work_order, shift_dim, shift_plane);
 
     const size_t n_coeffs = multipole_num_coeffs(work_order);
     const real_t inv_Rp2 = 1.0 / Rp2;
+
+    /* Precompute inv_Rp2^k for k = 0..work_order+1. */
+    enum
+    {
+        INV_RP2_POW_MAX = 256
+    };
+    real_t invRp2_pow[INV_RP2_POW_MAX];
+    assert(work_order + 2 <= INV_RP2_POW_MAX);
+    invRp2_pow[0] = 1.0;
+    for (unsigned k = 1; k <= work_order + 1; ++k)
+        invRp2_pow[k] = invRp2_pow[k - 1] * inv_Rp2;
 
     for (unsigned m = 0; m <= in_order; ++m)
     {
@@ -173,12 +166,10 @@ void multipole_to_local(const multipole_t *in, local_expansion_t *out, unsigned 
                     }
 
                     /* l = 0: denominator factor = 1.
-                     * Scale = inv_Rp2^{m+1} = inv_Rp2 * inv_Rp2^m. */
+                     * Scale = inv_Rp2^{m+1}. */
                     if (m <= out_order)
                     {
-                        real_t scale = inv_Rp2;
-                        for (unsigned pw = 0; pw < m; ++pw)
-                            scale *= inv_Rp2;
+                        const real_t scale = invRp2_pow[m + 1];
                         local_add_poly_to_order(pse, m, scale, cx, cy, cz, out);
                     }
 
@@ -198,9 +189,7 @@ void multipole_to_local(const multipole_t *in, local_expansion_t *out, unsigned 
                         binom = binom * (m + l) / (real_t)l;
                         if (m + l <= out_order)
                         {
-                            real_t scale = inv_Rp2;
-                            for (unsigned pw = 0; pw < m + l; ++pw)
-                                scale *= inv_Rp2;
+                            real_t scale = invRp2_pow[m + l + 1];
                             /* (-1)^l alternating sign from 1/(1+u) series. */
                             if (l & 1u)
                                 scale = -scale;
@@ -272,26 +261,7 @@ void local_expansion_shift(const local_expansion_t *in, local_expansion_t *out, 
     /* Build binomial expansions of (x + d_x)^e etc up to work_order. */
     const size_t shift_dim = (size_t)work_order + 1;
     const size_t shift_plane = shift_dim * shift_dim;
-#pragma omp simd
-    for (unsigned dd = 0; dd < 3; ++dd)
-    {
-        const real_t s = (dd == 0) ? d.x : (dd == 1) ? d.y : d.z;
-        shift_exp[dd * shift_plane] = 1.0;
-        for (unsigned e = 1; e <= work_order; ++e)
-        {
-            shift_exp[dd * shift_plane + e * shift_dim] = s * shift_exp[dd * shift_plane + (e - 1) * shift_dim];
-            for (unsigned i = 1; i <= e; ++i)
-            {
-                shift_exp[dd * shift_plane + e * shift_dim + i] =
-                    shift_exp[dd * shift_plane + (e - 1) * shift_dim + (i - 1)] +
-                    s * shift_exp[dd * shift_plane + (e - 1) * shift_dim + i];
-            }
-            for (unsigned i = e + 1; i <= work_order; ++i)
-            {
-                shift_exp[dd * shift_plane + e * shift_dim + i] = 0.0;
-            }
-        }
-    }
+    build_binomial_expansion(shift_exp, d.x, d.y, d.z, work_order, shift_dim, shift_plane);
 
     const size_t n_coeffs = multipole_num_coeffs(work_order);
 
@@ -415,6 +385,17 @@ void particle_to_local(local_expansion_t *out, const real3_t source_pos, const r
 
     const real_t inv_Rp2 = 1.0 / Rp2;
 
+    /* Precompute inv_Rp2^k for k = 0..order+1. */
+    enum
+    {
+        P2L_INV_RP2_POW_MAX = 256
+    };
+    real_t invRp2_pow[P2L_INV_RP2_POW_MAX];
+    assert(order + 2 <= P2L_INV_RP2_POW_MAX);
+    invRp2_pow[0] = 1.0;
+    for (unsigned k = 1; k <= order + 1; ++k)
+        invRp2_pow[k] = invRp2_pow[k - 1] * inv_Rp2;
+
     real_t *restrict const coeffs_x = out->coeffs_x;
     real_t *restrict const coeffs_y = out->coeffs_y;
     real_t *restrict const coeffs_z = out->coeffs_z;
@@ -435,9 +416,7 @@ void particle_to_local(local_expansion_t *out, const real3_t source_pos, const r
     for (unsigned m = 0; m <= order; ++m)
     {
         /* Scale for this order: inv_Rp2^{m+1}. */
-        real_t scale = inv_Rp2;
-        for (unsigned pw = 0; pw < m; ++pw)
-            scale *= inv_Rp2;
+        real_t scale = invRp2_pow[m + 1];
 
         /* Accumulate P_m into the coefficient arrays, with (-1)^m
          * alternating sign from the 1/(1+u) local series expansion. */

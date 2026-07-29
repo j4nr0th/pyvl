@@ -1,5 +1,6 @@
 #include "barnes_hut_tree.h"
 
+#include <assert.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -39,10 +40,12 @@ bool barnes_hut_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsig
                                 const barnes_hut_settings_t settings[restrict], octree_count_t *out_count,
                                 octree_scratch_t *out_scratch)
 {
-    if (scratch_buffer == NULL || out_count == NULL || out_scratch == NULL)
-        return false;
-    if (n_sources == 0 || settings == NULL || sources_coords == NULL)
-        return false;
+    assert(scratch_buffer != NULL);
+    assert(out_count != NULL);
+    assert(out_scratch != NULL);
+    assert(n_sources > 0);
+    assert(settings != NULL);
+    assert(sources_coords != NULL);
 
     const octree_scratch_sizes_t sz = octree_size_scratch(n_sources, (const octree_settings_t *)settings);
     if (scratch_size < octree_total_scratch_size(sz, n_threads))
@@ -59,8 +62,8 @@ bool barnes_hut_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsig
 
 size_t barnes_hut_work_size(unsigned n_sources, const barnes_hut_settings_t *settings, const octree_count_t *count)
 {
-    if (count == NULL || count->n_internal + count->n_multipole_leaves + count->n_particle_leaves == 0)
-        return 0;
+    assert(count != NULL);
+    assert(count->n_internal + count->n_multipole_leaves + count->n_particle_leaves > 0);
     const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, *count);
     return octree_total_work_size(ws);
 }
@@ -75,14 +78,17 @@ bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_
                             const octree_scratch_t *scratch, const allocator_t *allocator, void *buffer,
                             size_t buffer_size, barnes_hut_tree_t *out)
 {
-    if (!buffer || !out || !scratch || !count)
-        return false;
-    if (n_sources == 0 || settings == NULL || sources_coords == NULL || sources_values == NULL)
-        return false;
+    assert(buffer != NULL);
+    assert(out != NULL);
+    assert(scratch != NULL);
+    assert(count != NULL);
+    assert(n_sources > 0);
+    assert(settings != NULL);
+    assert(sources_coords != NULL);
+    assert(sources_values != NULL);
 
     const unsigned n_topo = count->n_internal + count->n_multipole_leaves + count->n_particle_leaves;
-    if (n_topo == 0)
-        return false;
+    assert(n_topo > 0);
 
     const octree_base_work_sizes_t ws = octree_size_work_buffer(n_sources, (const octree_settings_t *)settings, *count);
     if (buffer_size < octree_total_work_size(ws))
@@ -151,6 +157,11 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads, const real3_t
     scratch_buffer = octree_alloc(allocator, needed_scratch);
     if (!scratch_buffer)
         return false;
+
+    /* Zero scratch to prevent stale data propagating through the upward
+     * sweep's multipole_add_poly_to_order (which skips zero coefficients).
+     * Same root cause as the FMM tree build — see fmm_tree_build. */
+    memset(scratch_buffer, 0, needed_scratch);
 
     /* 3. Prepare scratch (partition + count). */
     octree_count_t count;
@@ -256,8 +267,9 @@ real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_AR
                              const real3_t CVL_ARRAY_ARG(sources_values, restrict), real3_t point,
                              barnes_hut_eval_settings_t eval_settings)
 {
-    if (tree == NULL || tree->nodes == NULL || tree->n_nodes == 0)
-        return (real3_t){.x = 0, .y = 0, .z = 0};
+    assert(tree != NULL);
+    assert(tree->nodes != NULL);
+    assert(tree->n_nodes > 0);
 
     real3_t result = {.x = 0, .y = 0, .z = 0};
 
@@ -309,6 +321,7 @@ real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_AR
                     const octree_node_t *child = node->data.internal.children[k];
                     if (CVL_EXPECT_CONDITION(child == NULL))
                         continue;
+                    assert((size_t)sp < EVAL_STACK_MAX);
                     if ((size_t)sp + 1 > EVAL_STACK_MAX)
                         break;
                     stack[sp++] = (uint32_t)(child - tree->nodes);
