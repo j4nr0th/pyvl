@@ -141,7 +141,6 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], un
     /* --- Evaluate selectors to pick platform + device type --- */
     cl_platform_id target_platform = NULL;
     cl_device_type target_type = CL_DEVICE_TYPE_ALL;
-    bool type_specified = false;
 
     for (const cvl_cl_device_sel_t *sel = selectors; sel->type != CVL_CL_DEVICE_SEL_NONE; ++sel)
     {
@@ -149,7 +148,6 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], un
         {
         case CVL_CL_DEVICE_SEL_TYPE:
             target_type = sel->device_type;
-            type_specified = true;
             break;
 
         case CVL_CL_DEVICE_SEL_PLATFORM_INDEX:

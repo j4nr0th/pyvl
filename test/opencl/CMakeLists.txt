@@ -39,5 +39,17 @@ add_cvl_cl_test(test_cvl_cl_kernel test_cvl_cl_kernel.c)
 # Test 5: Buffer management
 add_cvl_cl_test(test_cvl_cl_buffer test_cvl_cl_buffer.c)
 
-# Test 6: Full NDRange round-trip (write → kernel → read)
+# Test 6: Full NDRange round-trip (write -> kernel -> read)
 add_cvl_cl_test(test_cvl_cl_ndrange test_cvl_cl_ndrange.c)
+
+# Test 7: Host-side C17 .cl.h math validation (no OpenCL runtime needed)
+add_cvl_cl_test(test_cvl_cl_math_host test_cvl_cl_math_host.c)
+target_include_directories(test_cvl_cl_math_host PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_math_host PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 8: OpenCL device-side .cl.h compilation + cross-validation
+add_cvl_cl_test(test_cvl_cl_device_kernel_compile test_cvl_cl_device_kernel_compile.c)
+target_include_directories(test_cvl_cl_device_kernel_compile PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_device_kernel_compile PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+target_compile_definitions(test_cvl_cl_device_kernel_compile PRIVATE
+    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
