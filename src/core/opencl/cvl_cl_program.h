@@ -26,8 +26,9 @@ typedef enum
 typedef struct
 {
     cvl_cl_program_source_type_t source_type;
-    const char *source_string; /**< OpenCL C source code. */
-    const char *build_options; /**< Compiler options (e.g. "-cl-fast-relaxed-math"), or NULL. */
+    const char *source_string;    /**< OpenCL C source code. */
+    const char *build_options;    /**< Compiler options (e.g. "-cl-fast-relaxed-math"), or NULL. */
+    cvl_cl_precision_t precision; /**< FP32 or FP64 (default).  Controls real_t typedef in kernel. */
 } cvl_cl_program_desc_t;
 
 /* ------------------------------------------------------------------ */

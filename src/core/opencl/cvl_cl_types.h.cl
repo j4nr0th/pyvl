@@ -7,19 +7,29 @@
  * needed to write kernel function bodies that compile identically in
  * C17 (host side) and OpenCL C (device side).
  *
- * OpenCL C path: defines real_t as double and real3_t as a plain struct.
- * C17 path:     includes the project's common.h for the canonical types.
+ * OpenCL C path: defines real_t controlled by the compile-time define
+ *   CVL_CL_REAL_FP32  →  float (32-bit)
+ *   otherwise          →  double (64-bit, default)
+ * The cvl_cl_program module selects precision via a prepended header
+ * block.  See @ref cvl_cl_precision_t.
+ *
+ * C17 path: includes the project's common.h for the canonical types.
  */
 
 #ifdef __OPENCL_C_VERSION__
 
 /* ---- OpenCL C side ---- */
 
-typedef double real_t;
+#ifdef CVL_CL_REAL_FP32
+    typedef float real_t;
+#else
+    #pragma OPENCL EXTENSION cl_khr_fp64 : enable
+    typedef double real_t;
+#endif
 
 typedef struct
 {
-    double x, y, z;
+    real_t x, y, z;
 } real3_t;
 
 typedef struct

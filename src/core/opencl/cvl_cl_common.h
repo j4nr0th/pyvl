@@ -89,6 +89,29 @@ typedef enum
     CVL_CL_ERR_INTERNAL,      /**< Unexpected / unknown error. */
 } cvl_cl_status_t;
 
+/* ------------------------------------------------------------------ */
+/* Precision selection                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Floating-point precision used when compiling kernel programs.
+ *
+ * Kernels compiled with FP32 use `float` as the @c real_t type; FP64
+ * uses `double`.  FP64 is the default (matching the host-side real_t).
+ *
+ * When FP64 is selected, the @c cl_khr_fp64 extension pragma is
+ * automatically injected into the kernel source.
+ *
+ * Devices that lack @c cl_khr_fp64 support will fail to build programs
+ * in FP64 mode (build log will indicate the missing extension).
+ */
+typedef enum
+{
+    CVL_CL_PRECISION_DEFAULT = 0, /**< FP64 (double) – matches host real_t. */
+    CVL_CL_PRECISION_FP32,        /**< 32-bit float. */
+    CVL_CL_PRECISION_FP64,        /**< 64-bit double (same as DEFAULT). */
+} cvl_cl_precision_t;
+
 /**
  * @brief Return a human-readable string for a status code.
  * @param status Status code.

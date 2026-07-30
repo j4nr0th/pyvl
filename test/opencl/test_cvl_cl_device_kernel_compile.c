@@ -241,6 +241,92 @@ enum
 };
 
 /* ------------------------------------------------------------------ */
+/*  Test runner — builds, runs, and verifies the kernel                */
+/*  for a given precision mode and tolerance.                          */
+/* ------------------------------------------------------------------ */
+
+static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const char *full_source,
+                              cvl_cl_precision_t precision, double tolerance, const char *label)
+{
+    cvl_cl_status_t status = CVL_CL_SUCCESS;
+    cvl_cl_program_t program = {0};
+    cvl_cl_kernel_t kernel = {0};
+    cvl_cl_buffer_t buf_out = {0};
+    int ret = 1;
+
+    printf("  [%s] building program ...\n", label);
+
+    const cvl_cl_device_t *dev = cvl_cl_ctx_device(ctx);
+
+    cvl_cl_program_desc_t desc = {
+        .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
+        .source_string = full_source,
+        .precision = precision,
+    };
+    status = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(dev), &program);
+    if (status != CVL_CL_SUCCESS)
+    {
+        const char *log = cvl_cl_program_build_log(&program);
+        fprintf(stderr, "  [%s] Program build FAILED with status %s.\n", label, cvl_cl_status_str(status));
+        if (log)
+            fprintf(stderr, "  Build log:\n%s\n", log);
+        goto cleanup;
+    }
+    TEST_ASSERT(cvl_cl_program_program(&program) != NULL, "  [%s] Program handle NULL", label);
+    TEST_ASSERT(cvl_cl_program_build_log(&program) == NULL, "  [%s] Build log not NULL", label);
+
+    CVL_CL_CHECK(cvl_cl_kernel_create(&program, "test_kernel", &kernel), cleanup);
+
+    const size_t out_bytes = NUM_OUTPUTS * sizeof(double);
+    CVL_CL_CHECK(cvl_cl_buffer_create(
+                     ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_WRITE_ONLY, .size_bytes = out_bytes}, &buf_out),
+                 cleanup);
+
+    CVL_CL_CHECK(
+        cvl_cl_kernel_set_args(&kernel,
+                               (cvl_cl_karg_t[]){
+                                   {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_out)},
+                                   {},
+                               }),
+        cleanup);
+
+    {
+        const size_t global_work = 1;
+        const size_t local_work = 1;
+        CVL_CL_CHECK(cvl_cl_ndrange(queue, &kernel, 1, &global_work, &local_work, NULL, 0, NULL, NULL), cleanup);
+    }
+
+    CVL_CL_CHECK(cvl_cl_flush(queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_finish(queue), cleanup);
+
+    double host_out[NUM_OUTPUTS];
+    memset(host_out, 0, out_bytes);
+    CVL_CL_CHECK(cvl_cl_read_buffer(queue, &buf_out, 0, out_bytes, host_out, 0, NULL, NULL), cleanup);
+    CVL_CL_CHECK(cvl_cl_finish(queue), cleanup);
+
+    TEST_ASSERT(host_out[3] > 0, "  [%s] morton_3d output positive, got %g", label, host_out[3]);
+
+    for (int i = 0; i < NUM_OUTPUTS; ++i)
+    {
+        if (i == 3)
+            continue;
+        double abs_err = fabs(host_out[i] - EXPECTED_OUT[i]);
+        double rel_err = abs_err / (fabs(EXPECTED_OUT[i]) + 1e-30);
+        TEST_ASSERT(abs_err < tolerance || rel_err < tolerance, "  [%s] out[%d] = %.15g, expected %.15g", label, i,
+                    host_out[i], EXPECTED_OUT[i]);
+    }
+
+    printf("  [%s] passed.\n", label);
+    ret = 0;
+
+cleanup:
+    cvl_cl_buffer_destroy(&buf_out);
+    cvl_cl_kernel_destroy(&kernel);
+    cvl_cl_program_destroy(&program);
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -250,33 +336,20 @@ int main(void)
     cvl_cl_device_t device = {0};
     cvl_cl_ctx_t ctx = {0};
     cvl_cl_queue_t queue = {0};
-    cvl_cl_program_t program = {0};
-    cvl_cl_kernel_t kernel = {0};
-    cvl_cl_buffer_t buf_out = {0};
     unsigned count = 0;
+    int ret = 1;
 
-    char *types_src = NULL;
-    char *math_src = NULL;
-    char *multipole_src = NULL;
-    char *mpo_src = NULL;
-    char *fmm_src = NULL;
-    char *full_source = NULL;
+    char *types_src = NULL, *math_src = NULL, *multipole_src = NULL;
+    char *mpo_src = NULL, *fmm_src = NULL, *full_source = NULL;
 
-    /* ---- Discover device (GPU preferred, CPU fallback) ---- */
     status = cvl_cl_device_discover(
-        (cvl_cl_device_sel_t[]){
-            {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
-            {},
-        },
-        1, &count, &device);
+        (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
+        &device);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){
-                {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
-                {},
-            },
-            1, &count, &device);
+            (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1, &count,
+            &device);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {
@@ -284,20 +357,16 @@ int main(void)
         return 0;
     }
 
-    /* ---- Context ---- */
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
-
-    /* ---- Queue ---- */
     CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
 
-    /* ---- Read .cl.h source files ---- */
     types_src = read_cl_source("cvl_cl_types.h.cl");
     math_src = read_cl_source("cvl_cl_math.h.cl");
     multipole_src = read_cl_source("cvl_cl_multipole.h.cl");
     mpo_src = read_cl_source("cvl_cl_multipole_ops.h.cl");
     fmm_src = read_cl_source("cvl_cl_fmm_ops.h.cl");
 
-    /* ---- Concatenate in dependency order, stripping #include ---- */
+    /* Concatenate in dependency order, stripping #include */
     {
         size_t len_p = strlen(UINT64_T_PREAMBLE);
         size_t len_t = strlen(types_src);
@@ -311,7 +380,6 @@ int main(void)
         TEST_ASSERT(full_source != NULL, "calloc for full_source failed");
 
         size_t pos = 0;
-        /* Prepend uint64_t typedef BEFORE all .cl.h code */
         memcpy(full_source + pos, UINT64_T_PREAMBLE, len_p);
         pos += len_p;
         pos += skip_include_concat(full_source + pos, total - pos, types_src);
@@ -319,87 +387,17 @@ int main(void)
         pos += skip_include_concat(full_source + pos, total - pos, multipole_src);
         pos += skip_include_concat(full_source + pos, total - pos, mpo_src);
         pos += skip_include_concat(full_source + pos, total - pos, fmm_src);
-
-        /* Append the kernel wrapper */
-        size_t wrap_len = len_w;
-        TEST_ASSERT(pos + wrap_len < total, "Concatenated source overflow");
-        memcpy(full_source + pos, KERNEL_WRAPPER, wrap_len + 1);
+        TEST_ASSERT(pos + len_w < total, "Concatenated source overflow");
+        memcpy(full_source + pos, KERNEL_WRAPPER, len_w + 1);
     }
 
-    /* ---- Build the program ---- */
-    {
-        cvl_cl_program_desc_t desc = {
-            .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
-            .source_string = full_source,
-        };
-        status = cvl_cl_program_create(&ctx, &desc, cvl_cl_device_id(&device), &program);
-        if (status != CVL_CL_SUCCESS)
-        {
-            const char *log = cvl_cl_program_build_log(&program);
-            fprintf(stderr, "Program build FAILED with status %s.\n", cvl_cl_status_str(status));
-            if (log)
-                fprintf(stderr, "Build log:\n%s\n", log);
-            goto cleanup;
-        }
-        TEST_ASSERT(cvl_cl_program_program(&program) != NULL, "Program handle is NULL after successful creation");
-        TEST_ASSERT(cvl_cl_program_build_log(&program) == NULL, "Build log should be NULL when compilation succeeded");
-    }
+    printf("Precision test suite\n");
+    ret = run_precision_test(&ctx, &queue, full_source, CVL_CL_PRECISION_FP64, 1e-12, "FP64");
+    if (ret == 0)
+        ret = run_precision_test(&ctx, &queue, full_source, CVL_CL_PRECISION_FP32, 1e-5f, "FP32");
 
-    /* ---- Create kernel ---- */
-    CVL_CL_CHECK(cvl_cl_kernel_create(&program, "test_kernel", &kernel), cleanup);
-
-    /* ---- Create output buffer ---- */
-    const size_t out_bytes = NUM_OUTPUTS * sizeof(double);
-    CVL_CL_CHECK(cvl_cl_buffer_create(&ctx,
-                                      &(cvl_cl_buffer_desc_t){
-                                          .access = CVL_CL_BUF_WRITE_ONLY,
-                                          .size_bytes = out_bytes,
-                                      },
-                                      &buf_out),
-                 cleanup);
-
-    /* ---- Set kernel argument ---- */
-    CVL_CL_CHECK(
-        cvl_cl_kernel_set_args(&kernel,
-                               (cvl_cl_karg_t[]){
-                                   {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_out)},
-                                   {},
-                               }),
-        cleanup);
-
-    /* ---- Launch ---- */
-    {
-        const size_t global_work = 1;
-        const size_t local_work = 1;
-        CVL_CL_CHECK(cvl_cl_ndrange(&queue, &kernel, 1, &global_work, &local_work, NULL, 0, NULL, NULL), cleanup);
-    }
-
-    /* ---- Finish ---- */
-    CVL_CL_CHECK(cvl_cl_flush(&queue), cleanup);
-    CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
-
-    /* ---- Read back ---- */
-    double host_out[NUM_OUTPUTS];
-    memset(host_out, 0, out_bytes);
-    CVL_CL_CHECK(cvl_cl_read_buffer(&queue, &buf_out, 0, out_bytes, host_out, 0, NULL, NULL), cleanup);
-    CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
-
-    /* ---- Verify ---- */
-    TEST_ASSERT(host_out[3] > 0, "morton_3d output should be positive, got %g", host_out[3]);
-
-    for (int i = 0; i < NUM_OUTPUTS; ++i)
-    {
-        if (i == 3)
-            continue; /* morton_3d value: verified above */
-        double abs_err = fabs(host_out[i] - EXPECTED_OUT[i]);
-        double rel_err = abs_err / (fabs(EXPECTED_OUT[i]) + 1e-30);
-        TEST_ASSERT(abs_err < 1e-12 || rel_err < 1e-12, "out[%d] = %.15g, expected %.15g (abs_err=%g, rel_err=%g)", i,
-                    host_out[i], EXPECTED_OUT[i], abs_err, rel_err);
-    }
-
-    printf("All device kernel compile tests passed.\n");
-
-    status = CVL_CL_SUCCESS;
+    if (ret == 0)
+        printf("All device kernel compile tests passed.\n");
 
 cleanup:
     free(full_source);
@@ -408,14 +406,10 @@ cleanup:
     free(multipole_src);
     free(mpo_src);
     free(fmm_src);
-
-    cvl_cl_buffer_destroy(&buf_out);
-    cvl_cl_kernel_destroy(&kernel);
-    cvl_cl_program_destroy(&program);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
     cvl_cl_device_destroy(&device);
-    return status == CVL_CL_SUCCESS ? 0 : 1;
+    return ret;
 }
 
 #else /* !CVL_OPENCL */
