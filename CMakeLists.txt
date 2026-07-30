@@ -9,6 +9,7 @@ project(${SKBUILD_PROJECT_NAME} LANGUAGES C)
 set(CMAKE_C_STANDARD 17)
 
 find_package(OpenMP REQUIRED)
+find_package(OpenCL QUIET)
 # set(Python_FIND_VIRTUALENV ONLY) # Needed for UV
 find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)
 
@@ -82,6 +83,34 @@ list(
         src/core/fmm_tree.h
 )
 
+# ---- OpenCL (optional) ----
+if (OpenCL_FOUND)
+    add_definitions(-DCVL_OPENCL)
+
+    list(
+            APPEND CVL_CORE_SOURCE_FILES
+            src/core/opencl/cvl_cl_common.c
+            src/core/opencl/cvl_cl_device.c
+            src/core/opencl/cvl_cl_ctx.c
+            src/core/opencl/cvl_cl_program.c
+            src/core/opencl/cvl_cl_kernel.c
+            src/core/opencl/cvl_cl_buffer.c
+            src/core/opencl/cvl_cl_command.c
+    )
+
+    list(
+            APPEND CVL_CORE_HEADER_FILES
+            src/core/opencl/cvl_cl.h
+            src/core/opencl/cvl_cl_common.h
+            src/core/opencl/cvl_cl_device.h
+            src/core/opencl/cvl_cl_ctx.h
+            src/core/opencl/cvl_cl_program.h
+            src/core/opencl/cvl_cl_kernel.h
+            src/core/opencl/cvl_cl_buffer.h
+            src/core/opencl/cvl_cl_command.h
+    )
+endif ()
+
 add_library(static_cvl
         ${CVL_CORE_SOURCE_FILES}
         ${CVL_CORE_HEADER_FILES}
@@ -91,6 +120,9 @@ add_library(static_cvl
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_link_libraries(static_cvl PUBLIC OpenMP::OpenMP_C)
+if (OpenCL_FOUND)
+    target_link_libraries(static_cvl PUBLIC OpenCL::OpenCL)
+endif ()
 
 
 Python_add_library(cvl MODULE ${CVL_CORE_SOURCE_FILES} ${CVL_CORE_HEADER_FILES} ${CVL_MODULE_SOURCE_FILES}
@@ -109,6 +141,9 @@ target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DI
 add_subdirectory(cpyutl)
 
 target_link_libraries(cvl PRIVATE OpenMP::OpenMP_C ${Python_LIBRARIES} cpyutl)
+if (OpenCL_FOUND)
+    target_link_libraries(cvl PRIVATE OpenCL::OpenCL)
+endif ()
 
 if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(cvl PRIVATE -Wall -Wextra -Werror -fno-omit-frame-pointer)

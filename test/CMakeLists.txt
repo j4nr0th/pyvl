@@ -88,3 +88,8 @@ add_executable(test_fmm_accuracy math/test_fmm_accuracy.c ${TEST_COMMON_FILES})
 target_link_libraries(test_fmm_accuracy PRIVATE static_cvl ${TEST_MATH_LIB})
 add_test(NAME test_fmm_accuracy COMMAND test_fmm_accuracy)
 set_tests_properties(test_fmm_accuracy PROPERTIES TIMEOUT 120)
+
+# ---- OpenCL tests (optional) ----
+if (OpenCL_FOUND)
+    add_subdirectory(opencl)
+endif ()
