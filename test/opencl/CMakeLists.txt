@@ -16,6 +16,7 @@ macro(add_cvl_cl_test name source)
         "${CMAKE_SOURCE_DIR}/test/test_common.c"
         "${CMAKE_SOURCE_DIR}/test/test_common.h")
     target_include_directories(${name} PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+    target_include_directories(${name} PRIVATE "${CMAKE_SOURCE_DIR}/src/core/cl_compute")
     target_link_libraries(${name} PRIVATE static_cvl ${TEST_MATH_LIB} OpenCL::OpenCL)
     add_test(NAME ${name} COMMAND ${name})
 endmacro()
@@ -53,3 +54,6 @@ target_include_directories(test_cvl_cl_device_kernel_compile PRIVATE "${CMAKE_SO
 target_include_directories(test_cvl_cl_device_kernel_compile PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
 target_compile_definitions(test_cvl_cl_device_kernel_compile PRIVATE
     CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 9: End-to-end direct N-body GPU evaluation
+add_cvl_cl_test(test_cvl_cl_direct_sum test_cvl_cl_direct_sum.c)

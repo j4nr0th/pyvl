@@ -99,6 +99,13 @@ if (OpenCL_FOUND)
     )
 
     list(
+            APPEND CVL_CORE_SOURCE_FILES
+            src/core/cl_compute/cvl_cl_future.c
+            src/core/cl_compute/cvl_cl_staging_buffer.c
+            src/core/cl_compute/cvl_cl_compute.c
+    )
+
+    list(
             APPEND CVL_CORE_HEADER_FILES
             src/core/opencl/cvl_cl.h
             src/core/opencl/cvl_cl_common.h
@@ -108,6 +115,13 @@ if (OpenCL_FOUND)
             src/core/opencl/cvl_cl_kernel.h
             src/core/opencl/cvl_cl_buffer.h
             src/core/opencl/cvl_cl_command.h
+    )
+
+    list(
+            APPEND CVL_CORE_HEADER_FILES
+            src/core/cl_compute/cvl_cl_future.h
+            src/core/cl_compute/cvl_cl_staging_buffer.h
+            src/core/cl_compute/cvl_cl_compute.h
     )
 endif ()
 
@@ -119,6 +133,7 @@ add_library(static_cvl
         src/core/fmm_tree.c
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+target_include_directories(static_cvl PRIVATE src/core/opencl)
 target_link_libraries(static_cvl PUBLIC OpenMP::OpenMP_C)
 if (OpenCL_FOUND)
     target_link_libraries(static_cvl PUBLIC OpenCL::OpenCL)
@@ -136,7 +151,7 @@ target_compile_definitions(cvl PRIVATE CVL_ASSERTS)
 if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
     message(FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
-target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS})
+target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS} src/core/opencl)
 
 add_subdirectory(cpyutl)
 
