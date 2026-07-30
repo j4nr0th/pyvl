@@ -103,6 +103,9 @@ if (OpenCL_FOUND)
             src/core/cl_compute/cvl_cl_future.c
             src/core/cl_compute/cvl_cl_staging_buffer.c
             src/core/cl_compute/cvl_cl_compute.c
+            src/core/cl_compute/cvl_cl_flat_tree.c
+            src/core/cl_compute/cvl_cl_gpu_tree_build.c
+            src/core/cl_compute/cvl_cl_fmm_eval.c
     )
 
     list(
@@ -122,6 +125,9 @@ if (OpenCL_FOUND)
             src/core/cl_compute/cvl_cl_future.h
             src/core/cl_compute/cvl_cl_staging_buffer.h
             src/core/cl_compute/cvl_cl_compute.h
+            src/core/cl_compute/cvl_cl_flat_tree.h
+            src/core/cl_compute/cvl_cl_gpu_tree_build.h
+            src/core/cl_compute/cvl_cl_fmm_eval.h
     )
 endif ()
 

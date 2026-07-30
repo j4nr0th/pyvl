@@ -57,3 +57,23 @@ target_compile_definitions(test_cvl_cl_device_kernel_compile PRIVATE
 
 # Test 9: End-to-end direct N-body GPU evaluation
 add_cvl_cl_test(test_cvl_cl_direct_sum test_cvl_cl_direct_sum.c)
+
+# Test 10: Uniform flat octree builder validation
+add_cvl_cl_test(test_cvl_cl_flat_tree test_cvl_cl_flat_tree.c)
+
+# Test 11: BH flat-tree GPU evaluation (order=0, compare with CPU direct sum)
+add_cvl_cl_test(test_cvl_cl_bh_eval test_cvl_cl_bh_eval.c)
+
+# Test 12: GPU tree build pipeline + BH evaluation end-to-end
+add_cvl_cl_test(test_cvl_cl_gpu_build test_cvl_cl_gpu_build.c)
+target_include_directories(test_cvl_cl_gpu_build PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_gpu_build PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+target_compile_definitions(test_cvl_cl_gpu_build PRIVATE
+    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 13: GPU FMM evaluation (L2P) end-to-end — compare with CPU fmm_tree_eval
+add_cvl_cl_test(test_cvl_cl_fmm_eval test_cvl_cl_fmm_eval.c)
+target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+target_compile_definitions(test_cvl_cl_fmm_eval PRIVATE
+    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
