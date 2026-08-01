@@ -65,6 +65,79 @@ typedef struct
 _Static_assert(sizeof(fmm_eval_flat_node_t) == 64, "fmm_eval_flat_node_t must be 64 bytes");
 
 /**
+ * @brief Compact flat node layout for FP32 kernels.
+ *
+ * Mirrors fmm_l2p_flat_node_t in fmm_l2p.cl.h compiled with real_t=float:
+ *   center[3] (12) | half_size (4) | morton_code (8) | child_base (4) |
+ *   particle_begin (4) | child_mask (1) | kind (1) | particle_count (2) |
+ *   leaf_id (4) | pad (8)  → 48 bytes.
+ *
+ * The FP64 layout above is 64 bytes (real_t=double), so the host MUST
+ * convert before upload in FP32 mode — otherwise every field offset
+ * after `center` is wrong on the device and the kernel reads garbage
+ * particle_begin/count/leaf_id values.
+ */
+typedef struct
+{
+    float center[3];        /* 12 bytes  */
+    float half_size;        /*  4 bytes  */
+    uint64_t morton_code;   /*  8 bytes  (unused by the kernel) */
+    int32_t child_base;     /*  4 bytes  */
+    int32_t particle_begin; /*  4 bytes  */
+    uint8_t child_mask;     /*  1 byte   */
+    uint8_t kind;           /*  1 byte   */
+    int16_t particle_count; /*  2 bytes  */
+    int32_t leaf_id;        /*  4 bytes  */
+    uint8_t pad[8];         /*  8 bytes  → 48 total */
+} fmm_eval_flat_node_f32_t;
+
+_Static_assert(sizeof(fmm_eval_flat_node_f32_t) == 48, "fmm_eval_flat_node_f32_t must be 48 bytes");
+
+/**
+ * @brief Convert the FP64 flat-tree intermediate to the FP32 layout.
+ *
+ * @param tree         CPU-built FMM tree (dimensions only).
+ * @param src          FP64 flat nodes (from flatten_fmm_tree).
+ * @param src_centers  FP64 eval centres [3 * n_nodes].
+ * @param out_nodes    Pre-allocated [n_nodes] FP32 nodes.
+ * @param out_centers  Pre-allocated [3 * n_nodes] float centres.
+ */
+static void flatten_fmm_tree_f32(const fmm_tree_t *tree, const fmm_eval_flat_node_t *src, const real_t *src_centers,
+                                 fmm_eval_flat_node_f32_t *out_nodes, float *out_centers)
+{
+    const unsigned n_nodes = tree->n_nodes;
+    for (unsigned ni = 0; ni < n_nodes; ++ni)
+    {
+        const fmm_eval_flat_node_t *s = &src[ni];
+        fmm_eval_flat_node_f32_t *d = &out_nodes[ni];
+        d->center[0] = (float)s->center.x;
+        d->center[1] = (float)s->center.y;
+        d->center[2] = (float)s->center.z;
+        d->half_size = (float)s->half_size;
+        d->morton_code = s->morton_code;
+        d->child_base = s->child_base;
+        d->particle_begin = s->particle_begin;
+        d->child_mask = s->child_mask;
+        d->kind = s->kind;
+        d->particle_count = s->particle_count;
+        d->leaf_id = s->leaf_id;
+
+        out_centers[3u * ni + 0u] = (float)src_centers[3u * ni + 0u];
+        out_centers[3u * ni + 1u] = (float)src_centers[3u * ni + 1u];
+        out_centers[3u * ni + 2u] = (float)src_centers[3u * ni + 2u];
+    }
+}
+
+/**
+ * @brief Convert a double coefficient array to float.
+ */
+static void convert_coeffs_f32(const real_t *src, size_t n, float *dst)
+{
+    for (size_t i = 0; i < n; ++i)
+        dst[i] = (float)src[i];
+}
+
+/**
  * @brief Grow or create a device buffer to at least @p size_bytes.
  *
  * If the buffer does not exist yet, it is created via cvl_cl_buffer_create.
@@ -205,12 +278,26 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     real_t *eval_centers = NULL;
     int32_t *child_indices = NULL;
 
+    /* FP32 upload mirrors (allocated only in FP32 mode). */
+    fmm_eval_flat_node_f32_t *flat_nodes_f32 = NULL;
+    float *eval_centers_f32 = NULL;
+    float *local_coeffs_f32 = NULL;
+    float *mp_coeffs_f32 = NULL;
+
     /* Cached tree dimensions. */
     const unsigned n_nodes = tree->n_nodes;
     const unsigned n_sources = tree->n_sources;
     const unsigned order = tree->settings.order;
     const unsigned max_depth = tree->max_depth_reached;
     const size_t n_coeffs = multipole_num_coeffs(order);
+
+    /* The kernel's real_t is float in FP32 mode, so the flat node struct
+     * shrinks from 64 to 48 bytes and every real_t array halves in size.
+     * Buffer sizes and upload pointers must match the device precision. */
+    const bool is_f32 = (eval->precision == CVL_CL_PRECISION_FP32);
+    const size_t node_struct_bytes = is_f32 ? sizeof(fmm_eval_flat_node_f32_t) : sizeof(fmm_eval_flat_node_t);
+    const size_t real_bytes = is_f32 ? sizeof(float) : sizeof(real_t);
+    const size_t n_real = (size_t)3 * n_coeffs * n_nodes;
 
     /* ---- 1. Flatten the tree on the host ---- */
     flat_nodes = (fmm_eval_flat_node_t *)malloc(n_nodes * sizeof(fmm_eval_flat_node_t));
@@ -231,13 +318,31 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     }
     flatten_fmm_tree(tree, flat_nodes, eval_centers, child_indices);
 
+    /* In FP32 mode the kernel reads a compact float layout — convert the
+     * FP64 intermediate before upload. */
+    if (is_f32)
+    {
+        flat_nodes_f32 = (fmm_eval_flat_node_f32_t *)malloc((size_t)n_nodes * node_struct_bytes);
+        eval_centers_f32 = (float *)malloc((size_t)3 * n_nodes * sizeof(float));
+        local_coeffs_f32 = (float *)malloc(n_real * sizeof(float));
+        mp_coeffs_f32 = (float *)malloc(n_real * sizeof(float));
+        if (!flat_nodes_f32 || !eval_centers_f32 || !local_coeffs_f32 || !mp_coeffs_f32)
+        {
+            status = CVL_CL_ERR_MEMORY;
+            goto cleanup_host;
+        }
+        flatten_fmm_tree_f32(tree, flat_nodes, eval_centers, flat_nodes_f32, eval_centers_f32);
+        convert_coeffs_f32(tree->local_coeffs, n_real, local_coeffs_f32);
+        convert_coeffs_f32(tree->multipole_coeffs, n_real, mp_coeffs_f32);
+    }
+
     /* ---- 2. Ensure device buffers are large enough ---- */
-    const size_t nodes_bytes = (size_t)n_nodes * sizeof(fmm_eval_flat_node_t);
-    const size_t centers_bytes = (size_t)3 * n_nodes * sizeof(real_t);
+    const size_t nodes_bytes = (size_t)n_nodes * node_struct_bytes;
+    const size_t centers_bytes = (size_t)3 * n_nodes * real_bytes;
     const size_t child_idx_bytes = (size_t)8 * n_nodes * sizeof(int32_t);
-    const size_t mp_bytes = (size_t)3 * n_coeffs * n_nodes * sizeof(real_t);
+    const size_t mp_bytes = n_real * real_bytes;
     const size_t order_bytes = (size_t)n_sources * sizeof(unsigned);
-    const size_t local_bytes = (size_t)3 * n_coeffs * n_nodes * sizeof(real_t);
+    const size_t local_bytes = n_real * real_bytes;
     const size_t nflist_off_bytes = (size_t)(tree->n_leaves + 1) * sizeof(unsigned);
     const size_t nflist_idx_bytes = (size_t)tree->nflist_count * sizeof(unsigned);
     const size_t leaf_idx_bytes = (size_t)tree->n_leaves * sizeof(unsigned);
@@ -316,18 +421,23 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
 
     /* ---- 3. Upload tree + source data + targets ---- */
     {
-        /* Flat tree (raw buffers). */
-        status = cvl_cl_write_buffer(queue, &eval->buf_nodes, 0, nodes_bytes, flat_nodes, 0, NULL, NULL);
+        /* Flat tree (raw buffers) — use the precision-matched layout. */
+        const void *upload_nodes = is_f32 ? (const void *)flat_nodes_f32 : (const void *)flat_nodes;
+        const void *upload_centers = is_f32 ? (const void *)eval_centers_f32 : (const void *)eval_centers;
+        const void *upload_local = is_f32 ? (const void *)local_coeffs_f32 : (const void *)tree->local_coeffs;
+        const void *upload_mp = is_f32 ? (const void *)mp_coeffs_f32 : (const void *)tree->multipole_coeffs;
+
+        status = cvl_cl_write_buffer(queue, &eval->buf_nodes, 0, nodes_bytes, upload_nodes, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        status = cvl_cl_write_buffer(queue, &eval->buf_eval_centers, 0, centers_bytes, eval_centers, 0, NULL, NULL);
+        status = cvl_cl_write_buffer(queue, &eval->buf_eval_centers, 0, centers_bytes, upload_centers, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
         status =
             cvl_cl_write_buffer(queue, &eval->buf_particle_order, 0, order_bytes, tree->particle_order, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        status = cvl_cl_write_buffer(queue, &eval->buf_local_coeffs, 0, local_bytes, tree->local_coeffs, 0, NULL, NULL);
+        status = cvl_cl_write_buffer(queue, &eval->buf_local_coeffs, 0, local_bytes, upload_local, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
 
@@ -337,7 +447,7 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
             goto cleanup_host;
 
         /* Multipole coefficients (for fallback when target is outside bbox). */
-        status = cvl_cl_write_buffer(queue, &eval->buf_mp_coeffs, 0, mp_bytes, tree->multipole_coeffs, 0, NULL, NULL);
+        status = cvl_cl_write_buffer(queue, &eval->buf_mp_coeffs, 0, mp_bytes, upload_mp, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
 
@@ -434,6 +544,10 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     eval->max_depth = max_depth;
 
 cleanup_host:
+    free(mp_coeffs_f32);
+    free(local_coeffs_f32);
+    free(eval_centers_f32);
+    free(flat_nodes_f32);
     free(child_indices);
     free(eval_centers);
     free(flat_nodes);

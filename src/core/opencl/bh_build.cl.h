@@ -7,14 +7,15 @@
  *   2. kernel_radix_hist       – per-pass digit histogram   (call 8× for 64-bit keys)
  *   3. kernel_radix_scatter    – per-pass radix scatter     (call 8×)
  *   4. kernel_boundary         – boundary-depth detection + bd_histogram
- *   [host] read bd_hist → compute depth_counts / depth_offsets / n_total / n_leaves
- *   5. kernel_leaf_prefix      – per-WG inclusive prefix sum of leaf-start flags
- *   [host] read wg_sums → compute wg_carry[]
- *   6. kernel_leaf_build       – apply carry, build leaf nodes, scatter particles
- *   7. kernel_build_internal   – build one depth level of parent nodes
+ *   [host] read bd_hist + boundary array → compute depth_counts / depth_offsets
+ *          / n_total / n_leaves, and the deterministic leaf starts + per-parent
+ *          child ranges (see cvl_cl_gpu_tree_build.c stages 6/8/11)
+ *   5. kernel_fill_leaves      – build leaf nodes, scatter particles
+ *   6. kernel_build_internal   – build one depth level of parent nodes
  *                               (call for depth = max_depth-1 down to 0)
  *
- * All kernels assume global work size = n (or n_parents), local size = 256.
+ * The radix kernels assume global work size = ceil(n/256)*256 and local size
+ * 256 (the host enforces this at launch).
  */
 
 #ifdef __OPENCL_C_VERSION__
@@ -151,7 +152,18 @@ __kernel void kernel_radix_hist(__global const ulong *keys,                     
 /* ================================================================== */
 /*  One work-item per particle.  Uses pre-computed scatter offsets      */
 /*  (prefix[]) to place each key + its companion index into sorted     */
-/*  position.  prefix[] is shaped [n_groups × 256].                    */
+/*  position.  prefix[] is shaped [n_groups × 256] and holds, for each  */
+/*  (work-group, digit) pair, the global base offset:                   */
+/*      base[digit] + (digit-count of all work-groups before this one)  */
+/*  where base[digit] = total count of all digits < digit.              */
+/*                                                                      */
+/*  The within-work-group position is a STABLE rank: the number of      */
+/*  earlier (lower gid) items in the same work-group with the same      */
+/*  digit.  This preserves the previous pass's order inside each digit  */
+/*  block, which is what makes the LSD radix sort correct.              */
+/*                                                                      */
+/*  REQUIRES local work size = 256 (the host sizes prefix[] as          */
+/*  ceil(n/256) × 256 and the __local array below is 256 entries).      */
 /* ================================================================== */
 
 __kernel void kernel_radix_scatter(__global const ulong *keys_in,                       /* [n] */
@@ -160,32 +172,39 @@ __kernel void kernel_radix_scatter(__global const ulong *keys_in,               
                                    __global uint *indices_out,                          /* [n] */
                                    unsigned n, uint shift, __global const uint *prefix) /* [n_groups * 256] */
 {
-    __local uint digit_pos[256];
-    for (uint t = get_local_id(0); t < 256; t += get_local_size(0))
-        digit_pos[t] = 0;
+    __local uint ldig[256]; /* digit+1 of each item (0 = item absent / gid >= n) */
+
+    const uint lid = get_local_id(0);
+    const uint gid = get_global_id(0);
+    const uint g = get_group_id(0);
+
+    uint digit = 0;
+    if (gid < n)
+        digit = (uint)((keys_in[gid] >> shift) & 0xFFu);
+    ldig[lid] = digit + 1u; /* +1 so absent items never match */
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    uint gid = get_global_id(0);
-    uint g = get_group_id(0);
-    if (gid >= n)
-        return;
+    if (gid < n)
+    {
+        /* Stable rank within (digit, work-group): count earlier items in
+         * this work-group (lower lid == lower gid == earlier in the input)
+         * that share the same digit. */
+        uint rank = 0;
+        for (uint j = 0; j < lid; ++j)
+            if (ldig[j] == digit + 1u)
+                ++rank;
 
-    ulong key = keys_in[gid];
-    uint idx = indices_in[gid];
-    uint digit = (uint)((key >> shift) & 0xFFu);
-    uint pos = atomic_inc(&digit_pos[digit]);
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    uint dst = prefix[g * 256u + digit] + pos;
-    keys_out[dst] = key;
-    indices_out[dst] = idx;
+        const uint dst = prefix[g * 256u + digit] + rank;
+        keys_out[dst] = keys_in[gid];
+        indices_out[dst] = indices_in[gid];
+    }
 }
 
 /* ================================================================== */
 /*  Kernel 4 – Boundary-depth detection + histogram                    */
 /* ================================================================== */
 /*  One work-item per particle.  Computes the LCP-based boundary depth */
-/*  (ZBH’s bd(i)) and atomics-increments bd_hist[bd].                  */
+/*  (ZBH's bd(i)) and atomics-increments bd_hist[bd].                  */
 /*  bd_hist must be zeroed by the host before launching this kernel.   */
 /*  After the kernel, host computes:                                    */
 /*    depth_counts[d] = sum_{b=0..d} bd_hist[b]   (number of groups    */
@@ -194,6 +213,13 @@ __kernel void kernel_radix_scatter(__global const ulong *keys_in,               
 /*    depth_offsets[d+1] = depth_offsets[d] + depth_counts[d]          */
 /*    n_total = depth_offsets[max_depth+1]                             */
 /*    n_leaves = depth_counts[max_depth]                               */
+/*                                                                      */
+/*  bd(i) = depth at which particle i separates from particle i-1.     */
+/*  Two codes sharing `lz` top bits are in the same cell through depth */
+/*  floor(lz/3), so the separation depth is lz/3 + 1.  (NOT the depth  */
+/*  of the highest differing bit — using (63-lz)/3+1 collapses every   */
+/*  random input into a single group, a latent bug that only showed up */
+/*  on a working GPU backend.)                                         */
 /* ================================================================== */
 
 __kernel void kernel_boundary(__global const ulong *morton_codes,                         /* [n] — sorted */
@@ -214,12 +240,13 @@ __kernel void kernel_boundary(__global const ulong *morton_codes,               
         ulong diff = morton_codes[gid] ^ morton_codes[gid - 1];
         if (diff == 0)
         {
+            /* Identical codes never separate within the tree. */
             bd = (int)(max_depth + 1);
         }
         else
         {
-            uint lz = clz(diff); /* OpenCL built-in */
-            bd = (int)((63u - lz) / 3u + 1u);
+            uint lz = clz(diff); /* OpenCL built-in: number of shared leading bits */
+            bd = (int)(lz / 3u + 1u);
             if ((uint)bd > max_depth)
                 bd = (int)(max_depth + 1);
         }
@@ -230,39 +257,13 @@ __kernel void kernel_boundary(__global const ulong *morton_codes,               
 }
 
 /* ================================================================== */
-/*  Kernel 5 – Compact leaf-start positions (replaces leaf_prefix)     */
+/*  Kernel 5 – Leaf-node construction                                  */
 /* ================================================================== */
-/*  One work-item per particle.  If boundary depth <= max_depth (or    */
-/*  gid == 0), atomically records its position as a leaf start.        */
-/*  Output: leaf_starts[n_leaves] contiguous array of start positions; */
-/*  n_leaves_out[0] receives the total leaf count.                     */
-/*  The caller must zero n_leaves_out before launching.                */
-/* ================================================================== */
-
-__kernel void kernel_compact_leaves(__global const int *boundary, /* [n] */
-                                    unsigned n, unsigned max_depth,
-                                    __global volatile unsigned *n_leaves_out, /* single uint, zeroed by host */
-                                    __global unsigned *leaf_starts)           /* [n] (only first n_leaves valid) */
-{
-    uint gid = get_global_id(0);
-    if (gid >= n)
-        return;
-
-    int is_start = (boundary[gid] <= max_depth) || (gid == 0);
-    if (is_start)
-    {
-        uint leaf_id = atomic_inc(&n_leaves_out[0]);
-        leaf_starts[leaf_id] = gid;
-    }
-}
-
-/* ================================================================== */
-/*  Kernel 6 – Leaf-node construction (replaces leaf_build)            */
-/* ================================================================== */
-/*  One work-item per leaf.  Reads leaf_starts[lid], finds leaf end by */
-/*  scanning forward for the next start boundary, computes centroid     */
-/*  from the original (unsorted) coords via indices_sorted, and writes */
-/*  the leaf node + particle_order fragment.                           */
+/*  One work-item per leaf.  Reads leaf_starts[lid] (computed by the   */
+/*  HOST from the boundary array — see cvl_cl_gpu_tree_build.c), finds */
+/*  leaf end by scanning forward for the next start boundary, computes */
+/*  centroid from the original (unsorted) coords via indices_sorted,   */
+/*  and writes the leaf node + particle_order fragment.                */
 /*  A global particle_counter (second uint in leaf_counter, zeroed by  */
 /*  host) tracks the running offset into particle_order.               */
 /* ================================================================== */
@@ -336,12 +337,14 @@ __kernel void kernel_fill_leaves(__global const unsigned *leaf_starts,          
 }
 
 /* ================================================================== */
-/*  Kernel 7 – Build one internal level of the tree                    */
+/*  Kernel 6 – Build one internal level of the tree                    */
 /* ================================================================== */
-/*  Launch with n_parents work-items.  Each WI binary-searches the     */
-/*  child array to find the contiguous range of children (at depth+1)  */
-/*  belonging to its parent, then computes the parent's centroid and   */
-/*  mask.                                                              */
+/*  Launch with n_parents work-items.  Parent p reads its contiguous   */
+/*  child range [parent_starts[p], parent_starts[p+1]) — precomputed   */
+/*  by the HOST from the boundary array (see cvl_cl_gpu_tree_build.c   */
+/*  stage 11; the host, not an atomic compaction, is used so the node  */
+/*  array stays in Morton order) — then computes its centroid, octant  */
+/*  mask, and child base.                                              */
 /*  Call once per depth level, from max_depth-1 down to 0.            */
 /* ================================================================== */
 
@@ -350,7 +353,7 @@ __kernel void kernel_build_internal(__global bh_build_node_t *nodes, unsigned de
                                     unsigned parent_offset,                          /* depth_offsets[depth]        */
                                     unsigned child_offset,                           /* depth_offsets[depth+1]      */
                                     unsigned n_children,                             /* depth_counts[depth+1]       */
-                                    real_t root_half_size)
+                                    real_t root_half_size, __global const unsigned *parent_starts)
 {
     uint p = get_global_id(0);
     if (p >= n_parents)
@@ -359,57 +362,18 @@ __kernel void kernel_build_internal(__global bh_build_node_t *nodes, unsigned de
     uint ni = parent_offset + p;
     __global bh_build_node_t *parent = &nodes[ni];
 
-    /* Children belong to the same parent if the top 3*depth bits of
-       their Morton codes match.  Since children are stored at a deeper
-       level, we compare their code >> (64 - 3*depth). */
-    uint shift = 64u - 3u * depth;
+    uint child_start = parent_starts[p];
+    uint child_end = (p + 1 < n_parents) ? parent_starts[p + 1] : (child_offset + n_children);
 
-    /* The parent's representative code — take it from the first child.
-       If the child range is empty this parent is degenerate. */
-    if (child_offset >= child_offset + n_children || n_children == 0)
+    if (child_start >= child_end)
     {
+        /* Degenerate parent — no children (should not happen). */
         parent->child_base = -1;
         parent->child_mask = 0;
         parent->kind = BH_KIND_INTERNAL;
+        parent->morton_code = 0;
         return;
     }
-
-    ulong parent_code = nodes[child_offset].morton_code;
-
-    /* ---- lower bound ---- */
-    uint lo = child_offset, hi = child_offset + n_children;
-    while (lo < hi)
-    {
-        uint mid = lo + (hi - lo) / 2u;
-        ulong cc = nodes[mid].morton_code;
-        if ((cc >> shift) < (parent_code >> shift))
-            lo = mid + 1u;
-        else
-            hi = mid;
-    }
-    uint child_start = lo;
-
-    if (child_start >= child_offset + n_children)
-    {
-        parent->child_base = -1;
-        parent->child_mask = 0;
-        parent->kind = BH_KIND_INTERNAL;
-        return;
-    }
-
-    /* ---- upper bound ---- */
-    lo = child_start;
-    hi = child_offset + n_children;
-    while (lo < hi)
-    {
-        uint mid = lo + (hi - lo) / 2u;
-        ulong cc = nodes[mid].morton_code;
-        if ((cc >> shift) <= (parent_code >> shift))
-            lo = mid + 1u;
-        else
-            hi = mid;
-    }
-    uint child_end = lo;
 
     /* ---- accumulate child data ---- */
     real_t cx = 0, cy = 0, cz = 0;
@@ -419,7 +383,10 @@ __kernel void kernel_build_internal(__global bh_build_node_t *nodes, unsigned de
     for (uint ci = child_start; ci < child_end; ++ci)
     {
         bh_build_node_t ch = nodes[ci];
-        ulong ccode = ch.morton_code >> shift;
+        /* Octant of this child within the parent: the 3 bits right below the
+         * parent's 3*depth prefix, i.e. bits [64-3*(depth+1), 64-3*depth) of
+         * the child's code.  (The parent's children are at depth+1.) */
+        ulong ccode = ch.morton_code >> (61u - 3u * depth);
         uchar oct = (uchar)(ccode & 0x7u);
         mask |= (uchar)(1u << oct);
 

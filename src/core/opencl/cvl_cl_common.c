@@ -1,5 +1,6 @@
 #include "cvl_cl_common.h"
 #include <CL/cl.h>
+#include <stdio.h>
 
 const char *cvl_cl_status_str(const cvl_cl_status_t status)
 {
@@ -15,6 +16,8 @@ const char *cvl_cl_status_str(const cvl_cl_status_t status)
         return "Generic device error";
     case CVL_CL_ERR_INVALID_SELECTOR:
         return "Invalid device selection descriptor";
+    case CVL_CL_ERR_UNSUPPORTED_DEVICE:
+        return "Operation not supported on this OpenCL device";
     case CVL_CL_ERR_CONTEXT:
         return "Context creation failed";
     case CVL_CL_ERR_QUEUE:
@@ -114,6 +117,7 @@ cvl_cl_status_t cvl_cl_status_from_cl_int(const int err)
     case CL_PROFILING_INFO_NOT_AVAILABLE:
         return CVL_CL_ERR_INVALID_PARAM;
     default:
+        fprintf(stderr, "[cvl_cl] unmapped cl_int error: %d\n", (int)err);
         return CVL_CL_ERR_INTERNAL;
     }
 }

@@ -54,10 +54,12 @@ typedef enum
     CVL_CL_SUCCESS = 0,
 
     /* Platform / device errors. */
-    CVL_CL_ERR_PLATFORM,         /**< clGetPlatformIDs failed. */
-    CVL_CL_ERR_DEVICE_NOT_FOUND, /**< No matching device found (clGetDeviceIDs returned 0). */
-    CVL_CL_ERR_DEVICE,           /**< Generic device error. */
-    CVL_CL_ERR_INVALID_SELECTOR, /**< Device selection descriptor was invalid. */
+    CVL_CL_ERR_PLATFORM,           /**< clGetPlatformIDs failed. */
+    CVL_CL_ERR_DEVICE_NOT_FOUND,   /**< No matching device found (clGetDeviceIDs returned 0). */
+    CVL_CL_ERR_DEVICE,             /**< Generic device error. */
+    CVL_CL_ERR_INVALID_SELECTOR,   /**< Device selection descriptor was invalid. */
+    CVL_CL_ERR_UNSUPPORTED_DEVICE, /**< Operation refused on the selected device (e.g. original kernels on the
+                                        Intel NEO CPU backend — see intel-neo-cpu-bug.md). */
 
     /* Context / queue errors. */
     CVL_CL_ERR_CONTEXT, /**< clCreateContext failed. */

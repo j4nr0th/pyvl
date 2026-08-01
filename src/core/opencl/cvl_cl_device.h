@@ -150,3 +150,28 @@ static inline const cvl_cl_device_info_t *cvl_cl_device_info(const cvl_cl_device
 {
     return device ? &device->info : NULL;
 }
+
+/* ------------------------------------------------------------------ */
+/* Backend identification                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Detect the Intel NEO CPU OpenCL backend.
+ *
+ * The NEO CPU backend (the experimental `libcpu_device.so` / `libOclCpuBackEnd.so`
+ * path bundled with the Intel Graphics Compute Runtime) miscompiles kernels that
+ * index `__local` memory with data-dependent indices loaded from global memory —
+ * see `intel-neo-cpu-bug.md` at the repository root for the full report and the
+ * minimal repro.
+ *
+ * Detection is a conservative heuristic:
+ *   - device type is CPU,
+ *   - vendor contains "intel",
+ *   - CL_DEVICE_VERSION contains the NEO-CPU marker `(Build 0)`
+ *     (the classic Intel CPU runtime reports e.g. "OpenCL 2.1 LINUX" and
+ *     NEO GPU devices report e.g. "OpenCL 3.0 NEO").
+ *
+ * @param device Device handle (may be NULL).
+ * @return true if the device is the Intel NEO CPU backend, false otherwise.
+ */
+bool cvl_cl_device_is_intel_neo_cpu(const cvl_cl_device_t *device);

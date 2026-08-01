@@ -1,5 +1,6 @@
 #include "cvl_cl_device.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -259,4 +260,59 @@ void cvl_cl_device_destroy(cvl_cl_device_t *device)
     destroy_info(&device->info);
     device->id = NULL;
     device->platform_id = NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend identification                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @brief Portable case-insensitive substring search (avoids strcasestr,
+ *        which is not available on MSVC).
+ */
+static bool contains_ci(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle)
+        return false;
+
+    const size_t nlen = strlen(needle);
+    if (nlen == 0)
+        return true;
+
+    for (const char *p = haystack; *p; ++p)
+    {
+        size_t i = 0;
+        while (i < nlen && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i]))
+            ++i;
+        if (i == nlen)
+            return true;
+        if (!p[i])
+            break;
+    }
+    return false;
+}
+
+bool cvl_cl_device_is_intel_neo_cpu(const cvl_cl_device_t *device)
+{
+    if (!device || !device->id)
+        return false;
+
+    /* Must be a CPU device. */
+    cl_device_type type = 0;
+    if (clGetDeviceInfo(device->id, CL_DEVICE_TYPE, sizeof type, &type, NULL) != CL_SUCCESS)
+        return false;
+    if ((type & CL_DEVICE_TYPE_CPU) == 0)
+        return false;
+
+    /* Vendor must be Intel. */
+    if (!contains_ci(device->info.vendor, "intel"))
+        return false;
+
+    /* NEO CPU backend marker: "OpenCL 3.0 (Build 0)".
+     * The classic Intel CPU runtime reports e.g. "OpenCL 2.1 LINUX" and
+     * NEO GPU devices report e.g. "OpenCL 3.0 NEO". */
+    if (!device->info.version || !strstr(device->info.version, "(Build 0)"))
+        return false;
+
+    return true;
 }

@@ -211,6 +211,7 @@ int main(void)
     /* ----------------------------------------------------------------- */
     /* 1. Device discovery                                               */
     /* ----------------------------------------------------------------- */
+    bool use_cpu_fallback = false;
     {
         unsigned count = 0;
         status = cvl_cl_device_discover(
@@ -218,12 +219,30 @@ int main(void)
             &device);
         if (status != CVL_CL_SUCCESS || count == 0)
         {
-            /* GPU build kernels are designed for GPU devices.  The Intel CPU
-             * OpenCL runtime has known stability issues with complex kernels
-             * (radix sort, boundary detection).  Skip the test if only CPU
-             * OpenCL is available. */
-            fprintf(stderr, "No GPU OpenCL device found -- skipping GPU build test (CPU OpenCL not supported).\n");
-            return 0;
+            /* CPU fallback.  The Intel NEO CPU backend ("OpenCL 3.0 (Build 0)")
+             * has a clang-JIT miscompilation of data-dependent memory
+             * indexing (see intel-neo-cpu-bug.md).  The wrapper fixes
+             * (async-write UAF, boundary formula, host radix) stabilized the
+             * tree-BUILD kernels on NEO (observed 15/15), but bh_flat_eval
+             * still crashes ~25% of runs with JIT heap corruption, so the
+             * pipeline cannot run reliably there.  We keep the NEO skip. */
+            status = cvl_cl_device_discover(
+                (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
+                &count, &device);
+            if (status != CVL_CL_SUCCESS || count == 0)
+            {
+                fprintf(stderr, "No OpenCL device found -- skipping GPU build test.\n");
+                return 0;
+            }
+            if (cvl_cl_device_is_intel_neo_cpu(&device))
+            {
+                fprintf(stderr,
+                        "Intel NEO CPU backend detected -- its JIT is too unstable for the tree-build pipeline; "
+                        "skipping pipeline test (radix policy API is covered by test_cvl_cl_radix_workaround).\n");
+                return 0;
+            }
+            use_cpu_fallback = true;
+            fprintf(stderr, "No GPU device found -- running GPU build test on CPU with host-side radix sort.\n");
         }
     }
 
@@ -267,8 +286,8 @@ int main(void)
     /* ----------------------------------------------------------------- */
     {
         const char *kernels[] = {
-            "kernel_morton",         "kernel_radix_hist",  "kernel_radix_scatter",  "kernel_boundary",
-            "kernel_compact_leaves", "kernel_fill_leaves", "kernel_build_internal", "bh_flat_eval",
+            "kernel_morton",      "kernel_radix_hist",     "kernel_radix_scatter", "kernel_boundary",
+            "kernel_fill_leaves", "kernel_build_internal", "bh_flat_eval",
         };
         const unsigned n_kernels = sizeof(kernels) / sizeof(kernels[0]);
 
@@ -362,6 +381,8 @@ int main(void)
     /* 7. Initialize and run GPU tree build                              */
     /* ----------------------------------------------------------------- */
     CVL_CL_CHECK(cvl_cl_gpu_tree_build_init(&builder, &comp, MAX_DEPTH, CRIT, ORDER), cleanup);
+    if (use_cpu_fallback)
+        CVL_CL_CHECK(cvl_cl_gpu_tree_build_set_radix_policy(&builder, CVL_CL_RADIX_POLICY_WORKAROUND), cleanup);
     CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
     CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &buf_src_pos, N_SOURCES), cleanup);
 

@@ -18,6 +18,15 @@
  *   // builder.n_total, builder.n_internal etc. are populated
  *
  *   cvl_cl_gpu_tree_build_destroy(&builder);
+ *
+ * Radix-sort kernel selection:
+ *   The builder has a radix policy (cvl_cl_radix_policy_t, default AUTO).
+ *   The Intel NEO CPU OpenCL backend miscompiles the original __local-memory
+ *   radix kernels (heap corruption — see intel-neo-cpu-bug.md); AUTO therefore
+ *   switches the radix sort to a host-side stable sort on that backend.
+ *   Change the policy with cvl_cl_gpu_tree_build_set_radix_policy() after
+ *   init and before run; choosing ORIGINAL on a detected NEO CPU device
+ *   returns CVL_CL_ERR_UNSUPPORTED_DEVICE.
  */
 
 #include "../opencl/cvl_cl_buffer.h"
@@ -46,12 +55,39 @@ enum
     CVL_CL_GPU_NODE_SIZE = 64
 };
 
+/**
+ * @brief Radix-sort selection policy.
+ *
+ * The original radix kernels (kernel_radix_hist / kernel_radix_scatter in
+ * bh_build.cl.h) use per-work-group __local histograms indexed by a digit
+ * loaded from global memory.  The Intel NEO CPU OpenCL backend miscompiles
+ * that pattern and corrupts its own heap (see intel-neo-cpu-bug.md).
+ *
+ * The workaround mode avoids device kernels for the radix sort entirely:
+ * the Morton codes + index permutation are read back, sorted on the host
+ * with a stable qsort, and written back.  This is deterministic and does
+ * not exercise the broken JIT — kernel-only workarounds were observed to
+ * still crash on that backend with layout-dependent probability (see
+ * intel-neo-cpu-bug.md, section 7).
+ */
+typedef enum
+{
+    CVL_CL_RADIX_POLICY_AUTO = 0,   /**< Use the host-side sort iff the Intel NEO CPU backend is detected. */
+    CVL_CL_RADIX_POLICY_ORIGINAL,   /**< Always use the original device kernels; error on the NEO CPU backend. */
+    CVL_CL_RADIX_POLICY_WORKAROUND, /**< Always use the host-side stable sort. */
+} cvl_cl_radix_policy_t;
+
 typedef struct
 {
     /* Settings. */
     unsigned max_depth;
     unsigned critical_count;
     unsigned order;
+    cvl_cl_radix_policy_t radix_policy; /**< Radix sort selection (default AUTO = 0). */
+
+    /* Detected at init. */
+    bool intel_neo_cpu;  /**< Device was identified as the Intel NEO CPU backend. */
+    bool use_host_radix; /**< Effective radix mode: true → host-side stable sort. */
 
     /* Compute backend (borrowed — kernels live here). */
     cvl_cl_compute_t *compute;
@@ -86,6 +122,21 @@ typedef struct
 } cvl_cl_gpu_tree_build_t;
 
 /**
+ * @brief Set the radix-sort kernel policy.
+ *
+ * Call after @ref cvl_cl_gpu_tree_build_init and before the next
+ * @ref cvl_cl_gpu_tree_build_run.  Defaults to @ref CVL_CL_RADIX_POLICY_AUTO
+ * when not called.
+ *
+ * @param builder Builder (must be initialised).
+ * @param policy  One of the @ref cvl_cl_radix_policy_t values.
+ * @return CVL_CL_SUCCESS, CVL_CL_ERR_INVALID_PARAM, CVL_CL_ERR_NOT_FOUND
+ *         (kernels for the requested mode not registered) or
+ *         CVL_CL_ERR_UNSUPPORTED_DEVICE (ORIGINAL on the Intel NEO CPU backend).
+ */
+cvl_cl_status_t cvl_cl_gpu_tree_build_set_radix_policy(cvl_cl_gpu_tree_build_t *builder, cvl_cl_radix_policy_t policy);
+
+/**
  * @brief Initialise the GPU tree builder.
  *
  * Validates settings and verifies that all required kernels exist in the
@@ -93,9 +144,19 @@ typedef struct
  * the first run when @p n_sources is known).
  *
  * Required kernels (must be registered in @p compute):
- *   kernel_morton, kernel_radix_hist, kernel_radix_scatter,
- *   kernel_boundary, kernel_compact_leaves, kernel_fill_leaves,
+ *   kernel_morton, kernel_boundary, kernel_fill_leaves,
  *   kernel_build_internal
+ * plus the radix kernels when the effective mode is ORIGINAL:
+ *   kernel_radix_hist, kernel_radix_scatter
+ * (WORKAROUND / AUTO-on-NEO-CPU sorts on the host and needs no radix kernels).
+ *
+ * The leaf starts and the per-parent child ranges are computed on the host
+ * from the boundary depths (deterministic — the device-side atomic
+ * compaction does not preserve the Morton order).
+ *
+ * With @ref CVL_CL_RADIX_POLICY_ORIGINAL on a detected Intel NEO CPU
+ * device this returns @ref CVL_CL_ERR_UNSUPPORTED_DEVICE instead of
+ * crashing at run time (see intel-neo-cpu-bug.md).
  *
  * @param builder        Uninitialised builder.
  * @param compute        Compute backend (must have all bh_build kernels registered).

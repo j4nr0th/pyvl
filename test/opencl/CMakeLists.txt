@@ -77,3 +77,17 @@ target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src
 target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
 target_compile_definitions(test_cvl_cl_fmm_eval PRIVATE
     CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 14: Intel NEO CPU workaround radix kernels + radix policy API
+add_cvl_cl_test(test_cvl_cl_radix_workaround test_cvl_cl_radix_workaround.c)
+target_include_directories(test_cvl_cl_radix_workaround PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_radix_workaround PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+target_compile_definitions(test_cvl_cl_radix_workaround PRIVATE
+    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 14: Benchmark — performance + accuracy comparison
+add_cvl_cl_test(test_cvl_cl_benchmark test_cvl_cl_benchmark.c)
+target_include_directories(test_cvl_cl_benchmark PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_benchmark PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+target_compile_definitions(test_cvl_cl_benchmark PRIVATE
+    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
