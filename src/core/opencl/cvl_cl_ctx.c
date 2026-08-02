@@ -1,4 +1,5 @@
 #include "cvl_cl_ctx.h"
+#include "cvl_cl_device.h"
 
 #include <stdlib.h>
 
@@ -11,7 +12,7 @@ cvl_cl_status_t cvl_cl_ctx_create(const cvl_cl_device_t *device, cvl_cl_ctx_t *o
     out_ctx->device = NULL;
 
     cl_int err;
-    cl_device_id dev_id = cvl_cl_device_id(device);
+    cl_device_id dev_id = device->id;
     cl_context ctx = clCreateContext(NULL, 1, &dev_id, NULL, NULL, &err);
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
@@ -66,10 +67,9 @@ cvl_cl_status_t cvl_cl_queue_create(const cvl_cl_ctx_t *ctx, const cvl_cl_queue_
         prop_list[np++] = (cl_queue_properties)qprops;
     }
     prop_list[np] = 0;
-    cl_command_queue q =
-        clCreateCommandQueueWithProperties(ctx->context, cvl_cl_device_id(ctx->device), prop_list, &err);
+    cl_command_queue q = clCreateCommandQueueWithProperties(ctx->context, ctx->device->id, prop_list, &err);
 #else
-    cl_command_queue q = clCreateCommandQueue(ctx->context, cvl_cl_device_id(ctx->device), qprops, &err);
+    cl_command_queue q = clCreateCommandQueue(ctx->context, ctx->device->id, qprops, &err);
 #endif
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);

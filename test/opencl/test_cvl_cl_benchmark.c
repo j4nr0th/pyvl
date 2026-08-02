@@ -629,10 +629,7 @@ int main(void)
     /* ----------------------------------------------------------------- */
     {
         unsigned count = 0;
-        status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device, NULL);
-        if (status != CVL_CL_SUCCESS || count == 0)
+        if (cvl_cl_device_first_gpu(&device) != CVL_CL_SUCCESS)
         {
             fprintf(stderr, "No GPU OpenCL device found -- skipping benchmark (CPU OpenCL not supported).\n");
             return 0;
@@ -1314,7 +1311,6 @@ cleanup:
 
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
-    cvl_cl_device_destroy(&device);
     return ret;
 }
 

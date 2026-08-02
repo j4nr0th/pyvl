@@ -23,7 +23,7 @@ cvl_cl_status_t cvl_cl_compute_init(cvl_cl_compute_t *comp, const cvl_cl_ctx_t *
 
     /* Cache device info. */
     {
-        const cvl_cl_device_info_t *info = cvl_cl_device_info(device);
+        const cvl_cl_device_info_t *info = &device->info;
         if (info)
         {
             comp->max_work_group_size = info->max_work_group_size;
@@ -33,8 +33,7 @@ cvl_cl_status_t cvl_cl_compute_init(cvl_cl_compute_t *comp, const cvl_cl_ctx_t *
     /* Query unified memory. */
     {
         cl_bool unified = CL_FALSE;
-        cl_int err =
-            clGetDeviceInfo(cvl_cl_device_id(device), CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof(unified), &unified, NULL);
+        cl_int err = clGetDeviceInfo(device->id, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof(unified), &unified, NULL);
         comp->unified_memory = (err == CL_SUCCESS && unified);
     }
 
@@ -44,7 +43,7 @@ cvl_cl_status_t cvl_cl_compute_init(cvl_cl_compute_t *comp, const cvl_cl_ctx_t *
         .source_string = kernel_source,
         .precision = precision,
     };
-    cvl_cl_status_t st = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(device), &comp->program, NULL);
+    cvl_cl_status_t st = cvl_cl_program_create(ctx, &desc, device->id, &comp->program, NULL);
     if (st != CVL_CL_SUCCESS)
         return st;
 

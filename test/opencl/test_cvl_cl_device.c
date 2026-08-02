@@ -11,12 +11,7 @@ int main(void)
     unsigned count = 0;
 
     /* ---- GPU discovery ---- */
-    status = cvl_cl_device_discover(
-        (cvl_cl_device_sel_t[]){
-            {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
-            {},
-        },
-        1, &count, &gpu_dev, NULL);
+    status = cvl_cl_device_discover((cvl_cl_platform_filter_t){0}, 1, &gpu_dev, CL_DEVICE_TYPE_GPU, &count);
 
     if (status == CVL_CL_SUCCESS && count > 0)
     {
@@ -26,16 +21,11 @@ int main(void)
                     gpu_dev.info.max_work_group_size);
         TEST_ASSERT(gpu_dev.info.available, "GPU device should be available");
     }
-    /* else: no GPU on this system – skip GPU checks */
+    /* else: no GPU on this system - skip GPU checks */
 
     /* ---- CPU discovery ---- */
     count = 0;
-    status = cvl_cl_device_discover(
-        (cvl_cl_device_sel_t[]){
-            {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
-            {},
-        },
-        1, &count, &cpu_dev, NULL);
+    status = cvl_cl_device_discover((cvl_cl_platform_filter_t){0}, 1, &cpu_dev, CL_DEVICE_TYPE_CPU, &count);
 
     if (status == CVL_CL_SUCCESS && count > 0)
     {
@@ -45,14 +35,7 @@ int main(void)
                     cpu_dev.info.max_work_group_size);
         TEST_ASSERT(cpu_dev.info.available, "CPU device should be available");
     }
-    /* else: no CPU on this system – skip CPU checks */
-
-    /* ---- NULL destroy (must not crash) ---- */
-    cvl_cl_device_destroy(NULL);
-
-    /* ---- Destroy valid handles ---- */
-    cvl_cl_device_destroy(&gpu_dev);
-    cvl_cl_device_destroy(&cpu_dev);
+    /* else: no CPU on this system - skip CPU checks */
 
     return 0;
 }
@@ -62,7 +45,7 @@ int main(void)
 #include <stdio.h>
 int main(void)
 {
-    printf("OpenCL not available – skipping test.\n");
+    printf("OpenCL not available - skipping test.\n");
     return 0;
 }
 

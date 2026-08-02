@@ -18,9 +18,8 @@ cvl_cl_status_t cvl_cl_kernel_create(const cvl_cl_program_t *program, const char
 
     /* Cache preferred work-group size multiple. */
     size_t wg_multiple = 0;
-    err =
-        clGetKernelWorkGroupInfo(k, cvl_cl_device_id(cvl_cl_ctx_device(program->ctx)),
-                                 CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(wg_multiple), &wg_multiple, NULL);
+    err = clGetKernelWorkGroupInfo(k, cvl_cl_ctx_device(program->ctx)->id, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
+                                   sizeof(wg_multiple), &wg_multiple, NULL);
     if (err != CL_SUCCESS)
     {
         /* Non-fatal: just leave it as 0.  The runtime will pick a valid

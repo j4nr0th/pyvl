@@ -109,7 +109,7 @@ typedef enum
  */
 typedef enum
 {
-    CVL_CL_PRECISION_DEFAULT = 0, /**< FP64 (double) – matches host real_t. */
+    CVL_CL_PRECISION_DEFAULT = 0, /**< FP64 (double) - matches host real_t. */
     CVL_CL_PRECISION_FP32,        /**< 32-bit float. */
     CVL_CL_PRECISION_FP64,        /**< 64-bit double (same as DEFAULT). */
 } cvl_cl_precision_t;

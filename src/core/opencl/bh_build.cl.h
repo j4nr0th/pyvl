@@ -3,15 +3,15 @@
  * OpenCL C kernels for building the uniform flat octree on GPU.
  *
  * Pipeline (call in order):
- *   1. kernel_morton           – compute 63-bit Morton codes for all particles
- *   2. kernel_radix_hist       – per-pass digit histogram   (call 8× for 64-bit keys)
- *   3. kernel_radix_scatter    – per-pass radix scatter     (call 8×)
- *   4. kernel_boundary         – boundary-depth detection + bd_histogram
+ *   1. kernel_morton           - compute 63-bit Morton codes for all particles
+ *   2. kernel_radix_hist       - per-pass digit histogram   (call 8× for 64-bit keys)
+ *   3. kernel_radix_scatter    - per-pass radix scatter     (call 8×)
+ *   4. kernel_boundary         - boundary-depth detection + bd_histogram
  *   [host] read bd_hist + boundary array → compute depth_counts / depth_offsets
  *          / n_total / n_leaves, and the deterministic leaf starts + per-parent
  *          child ranges (see cvl_cl_gpu_tree_build.c stages 6/8/11)
- *   5. kernel_fill_leaves      – build leaf nodes, scatter particles
- *   6. kernel_build_internal   – build one depth level of parent nodes
+ *   5. kernel_fill_leaves      - build leaf nodes, scatter particles
+ *   6. kernel_build_internal   - build one depth level of parent nodes
  *                               (call for depth = max_depth-1 down to 0)
  *
  * The radix kernels assume global work size = ceil(n/256)*256 and local size
@@ -95,7 +95,7 @@ static inline ulong bd_morton_3d(real_t px, real_t py, real_t pz, real_t cx, rea
 }
 
 /* ================================================================== */
-/*  Kernel 1 – Morton codes                                            */
+/*  Kernel 1 - Morton codes                                            */
 /* ================================================================== */
 /*  One work-item per particle.  Reads coords[3*gid] and writes        */
 /*  morton_out[gid] = 63-bit Z-order code.                             */
@@ -114,7 +114,7 @@ __kernel void kernel_morton(__global const real_t *coords, /* [3 * n] */
 }
 
 /* ================================================================== */
-/*  Kernel 2 – Radix-sort digit histogram (one pass)                   */
+/*  Kernel 2 - Radix-sort digit histogram (one pass)                   */
 /* ================================================================== */
 /*  One work-item per particle.  Each WG builds a local 256-bin        */
 /*  histogram of the digit `(key >> shift) & 0xFF`, then writes it     */
@@ -148,7 +148,7 @@ __kernel void kernel_radix_hist(__global const ulong *keys,                     
 }
 
 /* ================================================================== */
-/*  Kernel 3 – Radix-sort scatter (one pass)                           */
+/*  Kernel 3 - Radix-sort scatter (one pass)                           */
 /* ================================================================== */
 /*  One work-item per particle.  Uses pre-computed scatter offsets      */
 /*  (prefix[]) to place each key + its companion index into sorted     */
@@ -201,7 +201,7 @@ __kernel void kernel_radix_scatter(__global const ulong *keys_in,               
 }
 
 /* ================================================================== */
-/*  Kernel 4 – Boundary-depth detection + histogram                    */
+/*  Kernel 4 - Boundary-depth detection + histogram                    */
 /* ================================================================== */
 /*  One work-item per particle.  Computes the LCP-based boundary depth */
 /*  (ZBH's bd(i)) and atomics-increments bd_hist[bd].                  */
@@ -257,7 +257,7 @@ __kernel void kernel_boundary(__global const ulong *morton_codes,               
 }
 
 /* ================================================================== */
-/*  Kernel 5 – Leaf-node construction                                  */
+/*  Kernel 5 - Leaf-node construction                                  */
 /* ================================================================== */
 /*  One work-item per leaf.  Reads leaf_starts[lid] (computed by the   */
 /*  HOST from the boundary array - see cvl_cl_gpu_tree_build.c), finds */
@@ -337,7 +337,7 @@ __kernel void kernel_fill_leaves(__global const unsigned *leaf_starts,          
 }
 
 /* ================================================================== */
-/*  Kernel 6 – Build one internal level of the tree                    */
+/*  Kernel 6 - Build one internal level of the tree                    */
 /* ================================================================== */
 /*  Launch with n_parents work-items.  Parent p reads its contiguous   */
 /*  child range [parent_starts[p], parent_starts[p+1]) - precomputed   */

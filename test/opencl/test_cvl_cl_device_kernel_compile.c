@@ -263,7 +263,7 @@ static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const ch
         .source_string = full_source,
         .precision = precision,
     };
-    status = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(dev), &program, NULL);
+    status = cvl_cl_program_create(ctx, &desc, dev->id, &program, NULL);
     if (status != CVL_CL_SUCCESS)
     {
         const char *log = cvl_cl_program_build_log(&program);
@@ -342,16 +342,12 @@ int main(void)
     char *types_src = NULL, *math_src = NULL, *multipole_src = NULL;
     char *mpo_src = NULL, *fmm_src = NULL, *full_source = NULL;
 
-    status = cvl_cl_device_discover(
-        (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-        &device, NULL);
-    if (status != CVL_CL_SUCCESS || count == 0)
+    status = cvl_cl_device_first_gpu(&device);
+    if (status != CVL_CL_SUCCESS)
     {
-        status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1, &count,
-            &device, NULL);
+        status = cvl_cl_device_first_cpu(&device);
     }
-    if (status != CVL_CL_SUCCESS || count == 0)
+    if (status != CVL_CL_SUCCESS)
     {
         fprintf(stderr, "No OpenCL device found -- skipping test.\n");
         return 0;
@@ -408,7 +404,6 @@ cleanup:
     free(fmm_src);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
-    cvl_cl_device_destroy(&device);
     return ret;
 }
 

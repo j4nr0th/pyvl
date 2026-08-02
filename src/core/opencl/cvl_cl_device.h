@@ -32,45 +32,50 @@
 
 typedef enum
 {
-    CVL_CL_DEVICE_SEL_NONE,           /**< Terminator - marks end of the selection array. */
-    CVL_CL_DEVICE_SEL_TYPE,           /**< Select by CL_DEVICE_TYPE (GPU, CPU, etc.). */
-    CVL_CL_DEVICE_SEL_PLATFORM_INDEX, /**< Select a specific platform by index. */
-    CVL_CL_DEVICE_SEL_PLATFORM_NAME,  /**< Select platform whose name contains @ref platform_name_substring. */
-} cvl_cl_device_sel_type_t;
+    CVL_CL_PLATFORM_FILTER_NONE,  /**< No platform filtering (all platforms are candidates). */
+    CVL_CL_PLATFORM_FILTER_INDEX, /**< Select a specific platform by index. */
+    CVL_CL_PLATFORM_FILTER_NAME,  /**< Select platform whose name contains @ref platform_name_substring. */
+} cvl_cl_platform_filter_type_t;
 
 typedef struct
 {
-    cvl_cl_device_sel_type_t type;
+    cvl_cl_platform_filter_type_t type;
     union {
-        cl_device_type device_type; /**< For CVL_CL_DEVICE_SEL_TYPE. */
-        unsigned platform_index;    /**< For CVL_CL_DEVICE_SEL_PLATFORM_INDEX. */
+        unsigned platform_index; /**< For CVL_CL_DEVICE_SEL_PLATFORM_INDEX. */
         const char
             *platform_name_substring; /**< For CVL_CL_DEVICE_SEL_PLATFORM_NAME (case-sensitive substring match). */
     };
-} cvl_cl_device_sel_t;
+} cvl_cl_platform_filter_t;
 
 /* ------------------------------------------------------------------ */
 /* Cached device info (filled once during discovery)                   */
 /* ------------------------------------------------------------------ */
 
+enum
+{
+    CVL_DEVICE_VERSION_MAX_LEN = 64, /**< Maximum length of the CL_DEVICE_VERSION string. */
+    CVL_DEVICE_NAME_MAX_LEN = 128,   /**< Maximum length of the CL_DEVICE_NAME string. */
+    CVL_DEVICE_VENDOR_MAX_LEN = 64,  /**< Maximum length of the CL_DEVICE_VENDOR string. */
+    CVL_DEVICE_DRIVER_MAX_LEN = 64,  /**< Maximum length of the CL_DRIVER_VERSION string. */
+};
+
 typedef struct
 {
-    const allocator_t *allocator;  /**< Allocator used for info strings (NULL = default). */
-    char *name;                    /**< CL_DEVICE_NAME. */
-    char *vendor;                  /**< CL_DEVICE_VENDOR. */
-    char *version;                 /**< CL_DEVICE_VERSION string (e.g. "OpenCL 3.0"). */
-    char *driver_version;          /**< CL_DRIVER_VERSION. */
-    size_t max_work_group_size;    /**< CL_DEVICE_MAX_WORK_GROUP_SIZE. */
-    size_t max_work_item_dims;     /**< CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS (max 3). */
-    size_t max_work_item_sizes[3]; /**< CL_DEVICE_MAX_WORK_ITEM_SIZES. */
-    cl_ulong local_mem_size;       /**< CL_DEVICE_LOCAL_MEM_SIZE (bytes). */
-    cl_ulong global_mem_size;      /**< CL_DEVICE_GLOBAL_MEM_SIZE (bytes). */
-    cl_ulong max_mem_alloc_size;   /**< CL_DEVICE_MAX_MEM_ALLOC_SIZE (bytes). */
-    cl_uint max_compute_units;     /**< CL_DEVICE_MAX_COMPUTE_UNITS. */
-    cl_uint address_bits;          /**< CL_DEVICE_ADDRESS_BITS. */
-    cl_bool available;             /**< CL_DEVICE_AVAILABLE. */
-    cl_bool compiler_available;    /**< CL_DEVICE_COMPILER_AVAILABLE. */
-    size_t preferred_wg_multiple;  /**< 0 until queried via a specific kernel (filled lazily). */
+    char name[CVL_DEVICE_NAME_MAX_LEN];             /**< CL_DEVICE_NAME. */
+    char vendor[CVL_DEVICE_VENDOR_MAX_LEN];         /**< CL_DEVICE_VENDOR. */
+    char version[CVL_DEVICE_VERSION_MAX_LEN];       /**< CL_DEVICE_VERSION string (e.g. "OpenCL 3.0"). */
+    char driver_version[CVL_DEVICE_DRIVER_MAX_LEN]; /**< CL_DRIVER_VERSION. */
+    size_t max_work_group_size;                     /**< CL_DEVICE_MAX_WORK_GROUP_SIZE. */
+    size_t max_work_item_dims;                      /**< CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS (max 3). */
+    size_t max_work_item_sizes[3];                  /**< CL_DEVICE_MAX_WORK_ITEM_SIZES. */
+    cl_ulong local_mem_size;                        /**< CL_DEVICE_LOCAL_MEM_SIZE (bytes). */
+    cl_ulong global_mem_size;                       /**< CL_DEVICE_GLOBAL_MEM_SIZE (bytes). */
+    cl_ulong max_mem_alloc_size;                    /**< CL_DEVICE_MAX_MEM_ALLOC_SIZE (bytes). */
+    cl_uint max_compute_units;                      /**< CL_DEVICE_MAX_COMPUTE_UNITS. */
+    cl_uint address_bits;                           /**< CL_DEVICE_ADDRESS_BITS. */
+    cl_bool available;                              /**< CL_DEVICE_AVAILABLE. */
+    cl_bool compiler_available;                     /**< CL_DEVICE_COMPILER_AVAILABLE. */
+    size_t preferred_wg_multiple;                   /**< 0 until queried via a specific kernel (filled lazily). */
 } cvl_cl_device_info_t;
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +102,7 @@ struct cvl_cl_device_t
  * set.  After all criteria are processed, the first remaining device
  * is selected.
  *
+ * TODO: Update the example to reflect the new function signature.
  * Typical usage with a single selection criterion:
  * @code
  *   cvl_cl_device_t dev;
@@ -115,44 +121,30 @@ struct cvl_cl_device_t
  * @param out_count   Filled with the number of matching devices found (may exceed max_devices).
  * @param out_devices Array of @p max_devices device handles.  Each handle
  *                    must be destroyed via @ref cvl_cl_device_destroy.
- * @param allocator   Allocator for info strings (NULL = default).
  * @return CVL_CL_SUCCESS on success, or an error code on failure.
  *         CVL_CL_ERR_DEVICE_NOT_FOUND if selectors matched nothing.
  */
-cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], unsigned max_devices, unsigned *out_count,
-                                       cvl_cl_device_t out_devices[], const allocator_t *allocator);
+cvl_cl_status_t cvl_cl_device_discover(cvl_cl_platform_filter_t platform_filter, unsigned max_devices,
+                                       cvl_cl_device_t out_devices[max_devices], const cl_device_type desired_types,
+                                       unsigned *out_count);
 
 /**
- * @brief Destroy a device handle, freeing cached info strings.
+ * @brief Convenience wrapper around @ref cvl_cl_device_discover to find the first GPU device.
  *
- * Does NOT call clReleaseDevice (the device handle remains valid for
- * the lifetime of the context).  Frees host-side allocations.
+ * @param out_device Pointer to a single device handle to fill.
  *
- * @param device Device handle to destroy (may be NULL).
+ * @return CVL_CL_SUCCESS on success, or an error code on failure.
  */
-void cvl_cl_device_destroy(cvl_cl_device_t *device);
+cvl_cl_status_t cvl_cl_device_first_gpu(cvl_cl_device_t *out_device);
 
-/* ------------------------------------------------------------------ */
-/* Accessors                                                          */
-/* ------------------------------------------------------------------ */
-
-/** @brief Return the raw cl_device_id. */
-static inline cl_device_id cvl_cl_device_id(const cvl_cl_device_t *device)
-{
-    return device ? device->id : NULL;
-}
-
-/** @brief Return the platform_id associated with this device. */
-static inline cl_platform_id cvl_cl_device_platform_id(const cvl_cl_device_t *device)
-{
-    return device ? device->platform_id : NULL;
-}
-
-/** @brief Return the cached device info struct. */
-static inline const cvl_cl_device_info_t *cvl_cl_device_info(const cvl_cl_device_t *device)
-{
-    return device ? &device->info : NULL;
-}
+/**
+ * @brief Convenience wrapper around @ref cvl_cl_device_discover to find the first CPU device.
+ *
+ * @param out_device Pointer to a single device handle to fill.
+ *
+ * @return CVL_CL_SUCCESS on success, or an error code on failure.
+ */
+cvl_cl_status_t cvl_cl_device_first_cpu(cvl_cl_device_t *out_device);
 
 /* ------------------------------------------------------------------ */
 /* Backend identification                                             */

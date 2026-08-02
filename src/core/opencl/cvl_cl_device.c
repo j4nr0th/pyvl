@@ -35,51 +35,57 @@ enum
  * @param allocator  Allocator for string properties (NULL = default).
  * @return CVL_CL_SUCCESS or error.
  */
-static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t *info, const allocator_t *allocator)
+static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t *info)
 {
     cl_int err;
 
     /* Clear the struct first (preserving allocator). */
-    const allocator_t *saved = info->allocator;
     memset(info, 0, sizeof(*info));
-    info->allocator = saved;
 
     /* String properties - query size, allocate, then query. */
     struct
     {
         cl_device_info param;
-        char **p_str;
+        char *p_str;
+        size_t max_len;
     } strings[] = {
-        {CL_DEVICE_NAME, &info->name},
-        {CL_DEVICE_VENDOR, &info->vendor},
-        {CL_DEVICE_VERSION, &info->version},
-        {CL_DRIVER_VERSION, &info->driver_version},
+        {CL_DEVICE_NAME, info->name, CVL_DEVICE_NAME_MAX_LEN},
+        {CL_DEVICE_VENDOR, info->vendor, CVL_DEVICE_VENDOR_MAX_LEN},
+        {CL_DEVICE_VERSION, info->version, CVL_DEVICE_VERSION_MAX_LEN},
+        {CL_DRIVER_VERSION, info->driver_version, CVL_DEVICE_DRIVER_MAX_LEN},
     };
     for (size_t i = 0; i < sizeof(strings) / sizeof(strings[0]); ++i)
     {
         size_t sz = 0;
-        err = clGetDeviceInfo(dev, strings[i].param, 0, NULL, &sz);
-        if (err != CL_SUCCESS)
-            return cvl_cl_status_from_cl_int(err);
-        *strings[i].p_str = (char *)cl_alloc(allocator, sz);
-        if (!*strings[i].p_str)
-            return CVL_CL_ERR_MEMORY;
-        err = clGetDeviceInfo(dev, strings[i].param, sz, *strings[i].p_str, NULL);
-        if (err != CL_SUCCESS)
+        err = clGetDeviceInfo(dev, strings[i].param, strings[i].max_len, strings[i].p_str, &sz);
+        if (sz > strings[i].max_len)
+        {
+            // Buffer might be too small, so try with a bigger static buffer, then truncate to our output buffer size.
+            enum
+            {
+                TMP_BUF_SIZE = 512
+            };
+            if (sz > TMP_BUF_SIZE)
+                // Too bad, we tried
+                return cvl_cl_status_from_cl_int(err);
+
+            char tmp[TMP_BUF_SIZE];
+            err = clGetDeviceInfo(dev, strings[i].param, TMP_BUF_SIZE, tmp, NULL);
+            if (err != CL_SUCCESS)
+                return cvl_cl_status_from_cl_int(err);
+            memcpy(strings[i].p_str, tmp, strings[i].max_len - 1);
+            strings[i].p_str[strings[i].max_len - 1] = '\0';
+        }
+        else if (err != CL_SUCCESS)
             return cvl_cl_status_from_cl_int(err);
     }
 
-/* Scalar queries using a helper macro. */
-#define QUERY(param, field)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        err = clGetDeviceInfo(dev, (param), sizeof(info->field), &info->field, NULL);                                  \
-        if (err != CL_SUCCESS)                                                                                         \
-            return cvl_cl_status_from_cl_int(err);                                                                     \
-    } while (0)
+    // Helper macro
+#define QUERY_FIELD(param, field) (err = clGetDeviceInfo(dev, (param), sizeof(info->field), &info->field, NULL))
 
-    QUERY(CL_DEVICE_MAX_WORK_GROUP_SIZE, max_work_group_size);
-    QUERY(CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, max_work_item_dims);
+    if (QUERY_FIELD(CL_DEVICE_MAX_WORK_GROUP_SIZE, max_work_group_size) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, max_work_item_dims) != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
 
     /* CL_DEVICE_MAX_WORK_ITEM_SIZES is an array - special handling. */
     {
@@ -93,196 +99,81 @@ static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t 
             info->max_work_item_sizes[d] = raw[d];
     }
 
-    QUERY(CL_DEVICE_LOCAL_MEM_SIZE, local_mem_size);
-    QUERY(CL_DEVICE_GLOBAL_MEM_SIZE, global_mem_size);
-    QUERY(CL_DEVICE_MAX_MEM_ALLOC_SIZE, max_mem_alloc_size);
-    QUERY(CL_DEVICE_MAX_COMPUTE_UNITS, max_compute_units);
-    QUERY(CL_DEVICE_ADDRESS_BITS, address_bits);
-    QUERY(CL_DEVICE_AVAILABLE, available);
-    QUERY(CL_DEVICE_COMPILER_AVAILABLE, compiler_available);
+    if (QUERY_FIELD(CL_DEVICE_LOCAL_MEM_SIZE, local_mem_size) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_GLOBAL_MEM_SIZE, global_mem_size) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_MAX_MEM_ALLOC_SIZE, max_mem_alloc_size) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_MAX_COMPUTE_UNITS, max_compute_units) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_ADDRESS_BITS, address_bits) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_AVAILABLE, available) != CL_SUCCESS ||
+        QUERY_FIELD(CL_DEVICE_COMPILER_AVAILABLE, compiler_available) != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
 
-#undef QUERY
+#undef QUERY_FIELD
 
     return CVL_CL_SUCCESS;
 }
-
-/* ------------------------------------------------------------------ */
-/* destroy helper (free strings)                                       */
-/* ------------------------------------------------------------------ */
 
 /**
- * @brief Free all string fields in a device info struct.
+ * @brief Check the platform for devices of desired types and fill the output array.
  *
- * @param info  Device info whose strings were allocated via info->allocator.
+ * @param pi            Platform index.
+ * @param plat          Platform ID.
+ * @param target_types  Desired device types (bitfield).
+ * @param max_devices   Maximum number of devices to fill in out_devices.
+ * @param out_devices   Output array of devices (must have capacity for max_devices).
+ * @param out_count     Filled with the number of devices found (may exceed max_devices).
+ *
+ * @return CVL_CL_SUCCESS on success, or an error code on failure.
  */
-static void destroy_info(cvl_cl_device_info_t *info)
+static cvl_cl_status_t check_platform_for_devices(const unsigned pi, const cl_platform_id plat,
+                                                  const cl_device_type target_types, const unsigned max_devices,
+                                                  cvl_cl_device_t out_devices[max_devices], unsigned *out_count)
 {
-    const allocator_t *a = info->allocator;
-    cl_free(a, info->name);
-    cl_free(a, info->vendor);
-    cl_free(a, info->version);
-    cl_free(a, info->driver_version);
-    info->name = NULL;
-    info->vendor = NULL;
-    info->version = NULL;
-    info->driver_version = NULL;
-}
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                         */
-/* ------------------------------------------------------------------ */
-
-cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], unsigned max_devices, unsigned *out_count,
-                                       cvl_cl_device_t out_devices[], const allocator_t *allocator)
-{
-    if (!selectors || !out_count || (!out_devices && max_devices > 0))
-        return CVL_CL_ERR_INVALID_PARAM;
-
-    const allocator_t *a = cl_resolve_allocator(allocator);
-    *out_count = 0;
-
-    /* --- Enumerate platforms --- */
-    cl_uint n_platforms = 0;
-    cl_int err = clGetPlatformIDs(0, NULL, &n_platforms);
+    cl_uint n_devs = 0;
+    cl_int err = clGetDeviceIDs(plat, target_types, 0, NULL, &n_devs);
     if (err != CL_SUCCESS)
-        return cvl_cl_status_from_cl_int(err);
-    if (n_platforms == 0)
-        return CVL_CL_ERR_DEVICE_NOT_FOUND;
-    if (n_platforms > CVL_CL_MAX_PLATFORMS)
-        n_platforms = CVL_CL_MAX_PLATFORMS;
-
-    cl_platform_id platforms[CVL_CL_MAX_PLATFORMS];
-    err = clGetPlatformIDs(n_platforms, platforms, NULL);
-    if (err != CL_SUCCESS)
-        return cvl_cl_status_from_cl_int(err);
-
-    /* --- Evaluate selectors to pick platform + device type --- */
-    cl_platform_id target_platform = NULL;
-    cl_device_type target_type = CL_DEVICE_TYPE_ALL;
-
-    for (const cvl_cl_device_sel_t *sel = selectors; sel->type != CVL_CL_DEVICE_SEL_NONE; ++sel)
     {
-        switch (sel->type)
-        {
-        case CVL_CL_DEVICE_SEL_TYPE:
-            target_type = sel->device_type;
-            break;
-
-        case CVL_CL_DEVICE_SEL_PLATFORM_INDEX:
-            if (sel->platform_index < n_platforms)
-                target_platform = platforms[sel->platform_index];
-            break;
-
-        case CVL_CL_DEVICE_SEL_PLATFORM_NAME: {
-            /* Find the first platform whose name contains the substring. */
-            for (cl_uint p = 0; p < n_platforms; ++p)
-            {
-                size_t sz = 0;
-                err = clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, 0, NULL, &sz);
-                if (err != CL_SUCCESS)
-                    return cvl_cl_status_from_cl_int(err);
-                char *name = (char *)cl_alloc(a, sz);
-                if (!name)
-                    return CVL_CL_ERR_MEMORY;
-                err = clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, sz, name, NULL);
-                if (err != CL_SUCCESS)
-                {
-                    cl_free(a, name);
-                    return cvl_cl_status_from_cl_int(err);
-                }
-                if (strstr(name, sel->platform_name_substring) != NULL)
-                {
-                    target_platform = platforms[p];
-                    cl_free(a, name);
-                    break;
-                }
-                cl_free(a, name);
-            }
-            break;
-        }
-
-        default:
-            return CVL_CL_ERR_INVALID_SELECTOR;
-        }
+        /* CL_DEVICE_NOT_FOUND for this type on this platform - skip. */
+        if (err == CL_DEVICE_NOT_FOUND)
+            return CVL_CL_SUCCESS;
+        return cvl_cl_status_from_cl_int(err);
     }
+    if (n_devs > CVL_CL_MAX_DEVICES_PER_PLATFORM)
+        n_devs = CVL_CL_MAX_DEVICES_PER_PLATFORM;
+    if (n_devs == 0)
+        return CVL_CL_SUCCESS;
 
-    /* --- Enumerate devices on the selected (or all) platform(s) --- */
-    cl_uint n_platforms_to_search = (target_platform != NULL) ? 1 : n_platforms;
-    cl_uint write_idx = 0;
-    cvl_cl_status_t status = CVL_CL_SUCCESS;
+    cl_device_id dev_ids[CVL_CL_MAX_DEVICES_PER_PLATFORM];
+    err = clGetDeviceIDs(plat, target_types, n_devs, dev_ids, NULL);
+    if (err != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
 
-    for (cl_uint p = 0; p < n_platforms_to_search; ++p)
+    unsigned found = 0;
+    for (cl_uint d = 0; d < n_devs && found < max_devices; ++d)
     {
-        const cl_uint pi = (target_platform != NULL) ? 0 : p;
-        const cl_platform_id plat = (target_platform != NULL) ? target_platform : platforms[p];
-
-        cl_uint n_devs = 0;
-        err = clGetDeviceIDs(plat, target_type, 0, NULL, &n_devs);
+        /* Check if device is available. */
+        cl_bool available = CL_FALSE;
+        err = clGetDeviceInfo(dev_ids[d], CL_DEVICE_AVAILABLE, sizeof(available), &available, NULL);
         if (err != CL_SUCCESS)
-        {
-            /* CL_DEVICE_NOT_FOUND for this type on this platform - skip. */
-            if (err == CL_DEVICE_NOT_FOUND)
-                continue;
-            return cvl_cl_status_from_cl_int(err);
-        }
-        if (n_devs > CVL_CL_MAX_DEVICES_PER_PLATFORM)
-            n_devs = CVL_CL_MAX_DEVICES_PER_PLATFORM;
-        if (n_devs == 0)
+            continue;
+        if (!available)
             continue;
 
-        cl_device_id dev_ids[CVL_CL_MAX_DEVICES_PER_PLATFORM];
-        err = clGetDeviceIDs(plat, target_type, n_devs, dev_ids, NULL);
-        if (err != CL_SUCCESS)
-            return cvl_cl_status_from_cl_int(err);
+        cvl_cl_device_t *dev = out_devices + found;
+        dev->id = dev_ids[d];
+        dev->platform_id = plat;
+        dev->platform_index = pi;
 
-        for (cl_uint d = 0; d < n_devs && write_idx < max_devices; ++d)
-        {
-            /* Check if device is available. */
-            cl_bool available = CL_FALSE;
-            err = clGetDeviceInfo(dev_ids[d], CL_DEVICE_AVAILABLE, sizeof(available), &available, NULL);
-            if (err != CL_SUCCESS)
-                continue;
-            if (!available)
-                continue;
+        const cvl_cl_status_t status = query_device_info(dev_ids[d], &dev->info);
+        if (status != CVL_CL_SUCCESS)
+            return status;
 
-            cvl_cl_device_t *dev = &out_devices[write_idx];
-            dev->id = dev_ids[d];
-            dev->platform_id = plat;
-            dev->platform_index = pi;
-            dev->info.allocator = a;
-
-            status = query_device_info(dev_ids[d], &dev->info, a);
-            if (status != CVL_CL_SUCCESS)
-            {
-                /* On failure, destroy what we have so far and return. */
-                for (unsigned ci = 0; ci < write_idx; ++ci)
-                    destroy_info(&out_devices[ci].info);
-                return status;
-            }
-
-            write_idx++;
-        }
+        found += 1;
     }
-
-    *out_count = write_idx;
-    if (write_idx == 0)
-        return CVL_CL_ERR_DEVICE_NOT_FOUND;
-
+    *out_count = found;
     return CVL_CL_SUCCESS;
 }
-
-void cvl_cl_device_destroy(cvl_cl_device_t *device)
-{
-    if (!device)
-        return;
-    destroy_info(&device->info);
-    device->id = NULL;
-    device->platform_id = NULL;
-}
-
-/* ------------------------------------------------------------------ */
-/* Backend identification                                              */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief Portable case-insensitive substring search (avoids strcasestr,
@@ -310,6 +201,149 @@ static bool contains_ci(const char *haystack, const char *needle)
     return false;
 }
 
+/* ------------------------------------------------------------------ */
+/* Public API                                                         */
+/* ------------------------------------------------------------------ */
+
+cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_platform_filter_t platform_filter, unsigned max_devices,
+                                       cvl_cl_device_t out_devices[max_devices],
+                                       const cl_device_type desired_device_types, unsigned *out_count)
+{
+    if (!out_count || (!out_devices && max_devices > 0))
+        return CVL_CL_ERR_INVALID_PARAM;
+
+    *out_count = 0;
+
+    /* --- Enumerate platforms --- */
+    cl_uint n_platforms = 0;
+    cl_int err = clGetPlatformIDs(0, NULL, &n_platforms);
+    if (err != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
+
+    if (n_platforms == 0)
+        return CVL_CL_ERR_DEVICE_NOT_FOUND;
+    if (n_platforms > CVL_CL_MAX_PLATFORMS)
+        n_platforms = CVL_CL_MAX_PLATFORMS;
+
+    cl_platform_id platforms[CVL_CL_MAX_PLATFORMS];
+    err = clGetPlatformIDs(n_platforms, platforms, NULL);
+    if (err != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
+
+    /* --- Evaluate selectors to pick platform + device type --- */
+    cl_uint p = n_platforms;
+
+    switch (platform_filter.type)
+    {
+    case CVL_CL_PLATFORM_FILTER_NAME:
+        /* Find the first platform whose name contains the substring. */
+        for (p = 0; p < n_platforms; ++p)
+        {
+            enum
+            {
+                PLATFORM_NAME_MAX_LEN = 128,
+            };
+            // Contain the name substring in this scope
+            {
+                size_t sz = 0;
+                char name[PLATFORM_NAME_MAX_LEN];
+                err = clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, PLATFORM_NAME_MAX_LEN, name, &sz);
+                if (err != CL_SUCCESS)
+                    return cvl_cl_status_from_cl_int(err);
+
+                if (!contains_ci(name, platform_filter.platform_name_substring))
+                {
+                    continue;
+                }
+            }
+            break;
+        }
+        if (p == n_platforms)
+            return CVL_CL_ERR_NOT_FOUND; // No platform matched the substring
+
+        break;
+
+    case CVL_CL_PLATFORM_FILTER_INDEX:
+        p = platform_filter.platform_index;
+        if (p >= n_platforms)
+            return CVL_CL_ERR_NOT_FOUND; // Index out of range.
+        break;
+
+    case CVL_CL_PLATFORM_FILTER_NONE:
+        break;
+
+    default:
+        return CVL_CL_ERR_INVALID_SELECTOR;
+    }
+
+    if (p < n_platforms)
+    {
+        /* If a platform was selected search it for desired device(s). */
+        unsigned n_devs = 0;
+        const cvl_cl_status_t status =
+            check_platform_for_devices(p, platforms[p], desired_device_types, max_devices, out_devices, &n_devs);
+        if (status != CVL_CL_SUCCESS)
+            return status;
+        if (n_devs == 0)
+            return CVL_CL_ERR_DEVICE_NOT_FOUND;
+        *out_count = n_devs;
+        return CVL_CL_SUCCESS;
+    }
+
+    // We are searching all platforms, so enumerate them and fill the output array.
+
+    cl_uint write_idx = 0;
+    cvl_cl_status_t status = CVL_CL_SUCCESS;
+
+    for (cl_uint p = 0; p < n_platforms; ++p)
+    {
+        const cl_uint pi = p;
+        const cl_platform_id plat = platforms[p];
+
+        unsigned n_devs = 0;
+        status = check_platform_for_devices(pi, plat, desired_device_types, max_devices - write_idx,
+                                            out_devices + write_idx, &n_devs);
+        if (status != CVL_CL_SUCCESS)
+            return status;
+
+        write_idx += n_devs;
+    }
+
+    /* --- Enumerate devices on the selected (or all) platform(s) --- */
+
+    *out_count = write_idx;
+    if (write_idx == 0)
+        return CVL_CL_ERR_DEVICE_NOT_FOUND;
+
+    return CVL_CL_SUCCESS;
+}
+
+cvl_cl_status_t cvl_cl_device_first_gpu(cvl_cl_device_t *out_device)
+{
+    unsigned count = 0;
+    cvl_cl_status_t status =
+        cvl_cl_device_discover((cvl_cl_platform_filter_t){0}, 1, out_device, CL_DEVICE_TYPE_GPU, &count);
+    if (status != CVL_CL_SUCCESS || count == 0)
+        return CVL_CL_ERR_DEVICE_NOT_FOUND;
+
+    return CVL_CL_SUCCESS;
+}
+
+cvl_cl_status_t cvl_cl_device_first_cpu(cvl_cl_device_t *out_device)
+{
+    unsigned count = 0;
+    cvl_cl_status_t status =
+        cvl_cl_device_discover((cvl_cl_platform_filter_t){0}, 1, out_device, CL_DEVICE_TYPE_CPU, &count);
+    if (status != CVL_CL_SUCCESS || count == 0)
+        return CVL_CL_ERR_DEVICE_NOT_FOUND;
+
+    return CVL_CL_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend identification                                              */
+/* ------------------------------------------------------------------ */
+
 bool cvl_cl_device_is_intel_neo_cpu(const cvl_cl_device_t *device)
 {
     if (!device || !device->id)
@@ -329,7 +363,7 @@ bool cvl_cl_device_is_intel_neo_cpu(const cvl_cl_device_t *device)
     /* NEO CPU backend marker: "OpenCL 3.0 (Build 0)".
      * The classic Intel CPU runtime reports e.g. "OpenCL 2.1 LINUX" and
      * NEO GPU devices report e.g. "OpenCL 3.0 NEO". */
-    if (!device->info.version || !strstr(device->info.version, "(Build 0)"))
+    if (!strstr(device->info.version, "(Build 0)"))
         return false;
 
     return true;

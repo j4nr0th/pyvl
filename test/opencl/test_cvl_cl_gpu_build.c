@@ -217,10 +217,8 @@ int main(void)
     bool use_cpu_fallback = false;
     {
         unsigned count = 0;
-        status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device, NULL);
-        if (status != CVL_CL_SUCCESS || count == 0)
+        status = cvl_cl_device_first_gpu(&device);
+        if (status != CVL_CL_SUCCESS)
         {
             /* CPU fallback.  The Intel NEO CPU backend ("OpenCL 3.0 (Build 0)")
              * has a clang-JIT miscompilation of data-dependent memory
@@ -229,10 +227,8 @@ int main(void)
              * tree-BUILD kernels on NEO (observed 15/15), but bh_flat_eval
              * still crashes ~25% of runs with JIT heap corruption, so the
              * pipeline cannot run reliably there.  We keep the NEO skip. */
-            status = cvl_cl_device_discover(
-                (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
-                &count, &device, NULL);
-            if (status != CVL_CL_SUCCESS || count == 0)
+            status = cvl_cl_device_first_cpu(&device);
+            if (status != CVL_CL_SUCCESS)
             {
                 fprintf(stderr, "No OpenCL device found -- skipping GPU build test.\n");
                 return 0;
@@ -600,7 +596,6 @@ cleanup:
     cvl_cl_compute_destroy(&comp);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
-    cvl_cl_device_destroy(&device);
     return ret;
 }
 

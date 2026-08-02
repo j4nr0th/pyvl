@@ -15,7 +15,7 @@ static const char *VALID_KERNEL_SOURCE =
     "}\n";
 
 /*
- * Invalid kernel – syntax error that must trigger a build failure.
+ * Invalid kernel - syntax error that must trigger a build failure.
  */
 static const char *INVALID_KERNEL_SOURCE = "__kernel void broken(__global const double *a) {\n"
                                            "  this is not valid OpenCL C syntax\n"
@@ -32,24 +32,14 @@ int main(void)
     unsigned count = 0;
 
     /* ---- Discover device (GPU preferred, CPU fallback) ---- */
-    status = cvl_cl_device_discover(
-        (cvl_cl_device_sel_t[]){
-            {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
-            {},
-        },
-        1, &count, &device, NULL);
-    if (status != CVL_CL_SUCCESS || count == 0)
+    status = cvl_cl_device_first_gpu(&device);
+    if (status != CVL_CL_SUCCESS)
     {
-        status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){
-                {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
-                {},
-            },
-            1, &count, &device, NULL);
+        status = cvl_cl_device_first_cpu(&device);
     }
-    if (status != CVL_CL_SUCCESS || count == 0)
+    if (status != CVL_CL_SUCCESS)
     {
-        fprintf(stderr, "No OpenCL device found – skipping test.\n");
+        fprintf(stderr, "No OpenCL device found - skipping test.\n");
         return 0;
     }
 
@@ -67,21 +57,21 @@ int main(void)
                                            .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                            .source_string = VALID_KERNEL_SOURCE,
                                        },
-                                       cvl_cl_device_id(&device), &valid_prog, NULL),
+                                       device.id, &valid_prog, NULL),
                  cleanup);
     TEST_ASSERT(cvl_cl_program_program(&valid_prog) != NULL, "Valid program handle is NULL after successful creation");
     TEST_ASSERT(cvl_cl_program_build_log(&valid_prog) == NULL, "Build log should be NULL when compilation succeeded");
     TEST_ASSERT(cvl_cl_program_ctx(&valid_prog) == &ctx, "Program context does not match");
 
     /* ================================================================ */
-    /*  Test 2: Compile an invalid program – expect build failure + log */
+    /*  Test 2: Compile an invalid program - expect build failure + log */
     /* ================================================================ */
     status = cvl_cl_program_create(&ctx,
                                    &(cvl_cl_program_desc_t){
                                        .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                        .source_string = INVALID_KERNEL_SOURCE,
                                    },
-                                   cvl_cl_device_id(&device), &invalid_prog, NULL);
+                                   device.id, &invalid_prog, NULL);
     TEST_ASSERT(status == CVL_CL_ERR_PROGRAM_BUILD, "Invalid kernel should yield PROGRAM_BUILD error, got %s",
                 cvl_cl_status_str(status));
 
@@ -101,7 +91,6 @@ cleanup:
     cvl_cl_program_destroy(&valid_prog);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
-    cvl_cl_device_destroy(&device);
     return status == CVL_CL_SUCCESS ? 0 : 1;
 }
 
@@ -110,7 +99,7 @@ cleanup:
 #include <stdio.h>
 int main(void)
 {
-    printf("OpenCL not available – skipping test.\n");
+    printf("OpenCL not available - skipping test.\n");
     return 0;
 }
 

@@ -153,16 +153,13 @@ int main(void)
     /* ----------------------------------------------------------------- */
     {
         unsigned count = 0;
-        status = cvl_cl_device_discover(
-            (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device, NULL);
-        if (status != CVL_CL_SUCCESS || count == 0)
+        status = cvl_cl_device_first_gpu(&device);
+
+        if (status != CVL_CL_SUCCESS)
         {
-            status = cvl_cl_device_discover(
-                (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
-                &count, &device, NULL);
+            status = cvl_cl_device_first_cpu(&device);
         }
-        if (status != CVL_CL_SUCCESS || count == 0)
+        if (status != CVL_CL_SUCCESS)
         {
             fprintf(stderr, "No OpenCL device found -- skipping test.\n");
             return 0;
@@ -403,7 +400,6 @@ cleanup:
     cvl_cl_compute_destroy(&comp);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
-    cvl_cl_device_destroy(&device);
     return ret;
 }
 
