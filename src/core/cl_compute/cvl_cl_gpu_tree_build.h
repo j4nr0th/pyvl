@@ -131,7 +131,7 @@ typedef struct
  * @param n_sources  Number of particles.
  * @return Required work-buffer size in bytes.
  */
-size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources);
+size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources, unsigned max_depth);
 
 /**
  * @brief Set the radix-sort kernel policy.

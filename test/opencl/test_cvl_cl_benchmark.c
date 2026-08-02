@@ -1002,7 +1002,7 @@ int main(void)
         CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup_build);
 
         /* Time the GPU tree build. */
-        size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES);
+        size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES, MAX_DEPTH);
         void *gpu_work = malloc(gpu_work_sz);
         TEST_ASSERT(gpu_work != NULL, "malloc(%zu) for GPU tree build work buffer failed", gpu_work_sz);
         const double t0 = now_seconds();

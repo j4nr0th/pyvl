@@ -330,12 +330,12 @@ static cvl_cl_status_t resolve_radix_mode(cvl_cl_gpu_tree_build_t *builder)
  * @param n_sources  Number of particles.
  * @return Required work-buffer size in bytes.
  */
-size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources)
+size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources, unsigned max_depth)
 {
-    /* Note: n_total ≤ 2 * n_sources is a safe upper bound (each source
-     * creates at most one leaf plus at most one internal ancestor per
-     * depth level; total ≤ n_sources + n_sources = 2*n_sources). */
-    const size_t max_n_total = (size_t)n_sources * 2u;
+    /* A source can contribute an internal ancestor at every tree depth, so
+     * the node count is not bounded by 2 * n_sources.  Use the maximum
+     * representable depth because this API now receives max_depth. */
+    const size_t max_n_total = (size_t)n_sources * (max_depth + 1u);
 
     size_t sz = 0;
     sz += (size_t)n_sources * sizeof(real3_t);         /* coords_host */
@@ -420,6 +420,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
 {
     cvl_cl_status_t st;
     cvl_cl_status_t status = CVL_CL_SUCCESS;
+    const unsigned max_depth = builder->max_depth;
 
     /* ---- Validate ---- */
     if (!builder || !builder->initialized)
@@ -428,7 +429,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         return CVL_CL_ERR_INVALID_PARAM;
     if (n_sources == 0 || n_sources > (unsigned)-1)
         return CVL_CL_ERR_INVALID_PARAM;
-    if (!work || work_size < cvl_cl_gpu_tree_build_work_size(n_sources))
+    if (!work || work_size < cvl_cl_gpu_tree_build_work_size(n_sources, max_depth))
         return CVL_CL_ERR_BUFFER_SIZE;
 
     /* Safety net: ORIGINAL radix kernels on the Intel NEO CPU backend
@@ -438,8 +439,6 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         return CVL_CL_ERR_UNSUPPORTED_DEVICE;
 
     builder->n_sources = n_sources;
-
-    const unsigned max_depth = builder->max_depth;
 
     /* ---- Partition work buffer ---- */
     uint8_t *bp = (uint8_t *)work;
@@ -838,6 +837,8 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
             const unsigned zero_pc = 0;
             st = cvl_cl_write_buffer(queue, &builder->buf_leaf_counter, sizeof(unsigned), sizeof(unsigned), &zero_pc, 0,
                                      NULL, NULL);
+            if (st == CVL_CL_SUCCESS)
+                st = cvl_cl_finish(queue);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;

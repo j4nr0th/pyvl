@@ -386,7 +386,7 @@ int main(void)
     if (use_cpu_fallback)
         CVL_CL_CHECK(cvl_cl_gpu_tree_build_set_radix_policy(&builder, CVL_CL_RADIX_POLICY_WORKAROUND), cleanup);
     CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
-    size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES);
+    size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES, MAX_DEPTH);
     void *gpu_work = malloc(gpu_work_sz);
     TEST_ASSERT(gpu_work != NULL, "malloc(%zu) for GPU tree build work buffer failed", gpu_work_sz);
     CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &buf_src_pos, N_SOURCES, gpu_work, gpu_work_sz),
