@@ -164,7 +164,7 @@ size_t fmm_work_size(unsigned n_sources, const fmm_settings_t *settings, const o
                      unsigned n_threads);
 
 /**
- * @brief Insert pass — full build pipeline into pre-sized work buffer.
+ * @brief Insert pass - full build pipeline into pre-sized work buffer.
  *
  * Runs all pipeline stages: materialise, descend, metadata, fill, centroids,
  * P2M, M2M, Morton sort, leaf V-list + NF-list, per-node M2L interaction lists,

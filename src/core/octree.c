@@ -1,4 +1,5 @@
 #include "octree.h"
+#include "cvl_radix_sort.h"
 
 #include <assert.h>
 
@@ -16,12 +17,6 @@ enum
 {
     /** @brief Max tree depth (uint8_t depth field → max 255). */
     OCTREE_MAX_DEPTH = 256u,
-    /** @brief Number of bits per radix sort pass. */
-    RADIX_BITS = 8u,
-    /** @brief Number of histogram bins (2^RADIX_BITS). */
-    RADIX_BINS = (1u << RADIX_BITS),
-    /** @brief Number of passes for 64-bit keys (64 / RADIX_BITS). */
-    RADIX_PASSES = (64u / RADIX_BITS),
 };
 
 /* ================================================================ */
@@ -61,32 +56,6 @@ static inline bool should_subdivide_centroid(real3_t pos, real3_t center, real_t
     const real3_t diff = real3_sub(pos, center);
     return real3_mag(diff) > s->alpha_centroid * half_size;
 }
-
-/* ================================================================ */
-/* Default allocator implementation                                 */
-/* ================================================================ */
-
-static void *cvl_default_allocate(void *state, size_t size)
-{
-    (void)state;
-    return malloc(size);
-}
-static void cvl_default_deallocate(void *state, void *ptr)
-{
-    (void)state;
-    free(ptr);
-}
-static void *cvl_default_reallocate(void *state, void *ptr, size_t new_size)
-{
-    (void)state;
-    return realloc(ptr, new_size);
-}
-const allocator_t CVL_DEFAULT_ALLOCATOR = {
-    .allocate = cvl_default_allocate,
-    .deallocate = cvl_default_deallocate,
-    .reallocate = cvl_default_reallocate,
-    .state = NULL,
-};
 
 static inline bool settings_valid(const octree_settings_t *s)
 {
@@ -258,7 +227,7 @@ octree_scratch_sizes_t octree_size_scratch(unsigned n_sources, const octree_sett
     const unsigned work_order = octree_resolve_work_order(settings);
     const size_t shift_exp_per_thread = 3u * (size_t)(work_order + 1) * (size_t)(work_order + 1) * sizeof(real_t);
     const size_t pse_per_thread = 2u * multipole_num_coeffs(work_order) * sizeof(real_t);
-    const size_t radix_hist_per_thread = (size_t)RADIX_BINS * sizeof(unsigned);
+    const size_t radix_hist_per_thread = (size_t)CVL_RADIX_BINS * sizeof(unsigned);
 
     return (octree_scratch_sizes_t){
         .size_topo = topo_bytes,
@@ -927,128 +896,12 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
 }
 
 /* ================================================================ */
-/* Morton sort — parallel LSD radix sort                            */
+/* Morton sort - parallel LSD radix sort                            */
 /* ================================================================ */
-
-/** @brief Internal: scatter (Morton code, index) pairs from src to dst using per-thread offsets. */
-static void radix_scatter(const uint8_t *src, uint8_t *dst, size_t ndepth, size_t pair_size, unsigned shift,
-                          const unsigned *thread_offsets, unsigned n_threads)
-{
-#pragma omp parallel default(none) shared(src, dst, ndepth, pair_size, shift, thread_offsets, n_threads)               \
-    num_threads(n_threads)
-    {
-        const unsigned tid = (unsigned)omp_get_thread_num();
-        const size_t chunk = (ndepth + (size_t)n_threads - 1) / (size_t)n_threads;
-        const size_t start = (size_t)tid * chunk;
-        const size_t end = start + chunk > ndepth ? ndepth : start + chunk;
-
-        /* Copy per-thread offsets to local array (no cross-thread reads after this). */
-        unsigned my_offsets[RADIX_BINS];
-        const unsigned *src_off = thread_offsets + (size_t)tid * RADIX_BINS;
-        for (unsigned b = 0; b < RADIX_BINS; ++b)
-            my_offsets[b] = src_off[b];
-
-        for (size_t i = start; i < end; ++i)
-        {
-            const uint64_t key = *(const uint64_t *)(src + i * pair_size);
-            const unsigned bin = (unsigned)((key >> shift) & (RADIX_BINS - 1));
-            const size_t dst_idx = (size_t)my_offsets[bin] * pair_size;
-            memcpy(dst + dst_idx, src + i * pair_size, pair_size);
-            my_offsets[bin]++;
-        }
-    }
-}
-
-/**
- * @brief Parallel LSD radix sort for (Morton code, index) pairs.
- *
- * Sorts @p ndepth pairs in @p pairs (each @p pair_size bytes) in-place
- * using @p radix_hist as per-thread histogram scratch [n_threads * RADIX_BINS].
- * @p pairs_alt must be a same-sized temp buffer for ping-pong.
- */
-static void radix_sort_pairs(uint8_t *pairs, uint8_t *pairs_alt, size_t ndepth, size_t pair_size,
-                             unsigned radix_hist[restrict], unsigned n_threads)
-{
-    for (unsigned pass = 0; pass < RADIX_PASSES; ++pass)
-    {
-        const unsigned shift = pass * RADIX_BITS;
-
-        /* Zero per-thread histograms. */
-#pragma omp parallel for default(none) shared(n_threads, radix_hist) schedule(static) num_threads(n_threads)
-        for (unsigned t = 0; t < n_threads; ++t)
-        {
-            unsigned *h = radix_hist + (size_t)t * RADIX_BINS;
-#pragma omp simd
-            for (unsigned i = 0; i < RADIX_BINS; ++i)
-                h[i] = 0;
-        }
-
-        /* Histogram: each thread counts its chunk (manual chunking, matching radix_scatter). */
-#pragma omp parallel default(none) shared(ndepth, pairs, shift, radix_hist, n_threads, pair_size) num_threads(n_threads)
-        {
-            const unsigned tid = (unsigned)omp_get_thread_num();
-            unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
-            const size_t chunk = (ndepth + (size_t)n_threads - 1) / (size_t)n_threads;
-            const size_t start = (size_t)tid * chunk;
-            const size_t end = start + chunk > ndepth ? ndepth : start + chunk;
-            for (size_t i = start; i < end; ++i)
-            {
-                const uint64_t key = *(const uint64_t *)(pairs + i * pair_size);
-                h[(key >> shift) & (RADIX_BINS - 1)]++;
-            }
-        }
-
-        /* Reduce + prefix-sum: combine all thread histograms into global offsets.
-         * Pre-compute per-thread scatter offsets in radix_hist (serial, no race). */
-        unsigned global_hist[RADIX_BINS];
-        {
-            /* Compute global histogram directly from per-thread counts in radix_hist
-             * (no intermediate copy needed — radix_hist is not modified until after). */
-            for (unsigned b = 0; b < RADIX_BINS; ++b)
-            {
-                unsigned sum = 0;
-                for (unsigned t = 0; t < n_threads; ++t)
-                    sum += radix_hist[(size_t)t * RADIX_BINS + b];
-                global_hist[b] = sum;
-            }
-            /* Prefix-sum for global offsets. */
-            unsigned acc = 0;
-            for (unsigned b = 0; b < RADIX_BINS; ++b)
-            {
-                const unsigned tmp = global_hist[b];
-                global_hist[b] = acc;
-                acc += tmp;
-            }
-            /* Pre-compute per-thread scatter offsets into radix_hist (serial).
-             * Read original per-thread counts from radix_hist before overwriting. */
-            for (unsigned b = 0; b < RADIX_BINS; ++b)
-            {
-                unsigned off = global_hist[b];
-                for (unsigned t = 0; t < n_threads; ++t)
-                {
-                    const unsigned cnt = radix_hist[(size_t)t * RADIX_BINS + b];
-                    radix_hist[(size_t)t * RADIX_BINS + b] = off;
-                    off += cnt;
-                }
-            }
-        }
-
-        /* Scatter: each thread moves its pairs to the temp buffer.
-         * Per-thread offsets pre-computed — no cross-thread reads inside parallel region. */
-        radix_scatter(pairs, pairs_alt, ndepth, pair_size, shift, radix_hist, n_threads);
-
-        /* Swap current and temp buffers. */
-        {
-            uint8_t *tmp = pairs;
-            pairs = pairs_alt;
-            pairs_alt = tmp;
-        }
-    }
-}
 
 bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[restrict], uint64_t codes[restrict n_nodes],
                                 unsigned sorted_indices[restrict n_nodes], unsigned depth_offsets[restrict],
-                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict], unsigned max_depth,
+                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict],
                                 unsigned *out_max_depth_found, unsigned n_threads)
 {
     const size_t pair_size = sizeof(uint64_t) + sizeof(unsigned);
@@ -1070,7 +923,6 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
     assert(n_nodes > 0 && "octree_build_morton_sorted: n_nodes must be > 0");
 
     /* max_depth is a capacity hint; we compute actual depth from nodes. */
-    (void)max_depth;
     const real3_t root_gc = nodes[0].geom_center;
     const real_t root_hs = nodes[0].half_size;
 
@@ -1088,16 +940,16 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
 #pragma omp parallel for default(none) shared(n_threads, radix_hist) schedule(static) num_threads(n_threads)
     for (unsigned t = 0; t < n_threads; ++t)
     {
-        unsigned *h = radix_hist + (size_t)t * RADIX_BINS;
+        unsigned *h = radix_hist + (size_t)t * CVL_RADIX_BINS;
         for (unsigned d = 0; d < OCTREE_MAX_DEPTH; ++d)
             h[d] = 0;
     }
 
-    /* Each thread counts depths in its own histogram slice — no atomics. */
+    /* Each thread counts depths in its own histogram slice - no atomics. */
 #pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, n_threads) num_threads(n_threads)
     {
         const unsigned tid = (unsigned)omp_get_thread_num();
-        unsigned *h = radix_hist + (size_t)tid * RADIX_BINS;
+        unsigned *h = radix_hist + (size_t)tid * CVL_RADIX_BINS;
 #pragma omp for schedule(static)
         for (unsigned i = 0; i < n_nodes; ++i)
         {
@@ -1114,13 +966,12 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
         {
             unsigned sum = 0;
             for (unsigned t = 0; t < n_threads; ++t)
-                sum += radix_hist[(size_t)t * RADIX_BINS + d];
+                sum += radix_hist[(size_t)t * CVL_RADIX_BINS + d];
             depth_buf[d] = sum;
             if (sum > 0)
                 max_depth_found = d;
         }
     }
-    assert(max_depth_found <= max_depth && "octree_build_morton_sorted: max_depth_found exceeds capacity");
 
     /* Prefix-sum for depth offsets. */
     {
@@ -1143,19 +994,19 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
             unsigned acc = depth_offsets[d];
             for (unsigned t = 0; t < n_threads; ++t)
             {
-                const unsigned cnt = radix_hist[(size_t)t * RADIX_BINS + d];
-                radix_hist[(size_t)t * RADIX_BINS + d] = acc;
+                const unsigned cnt = radix_hist[(size_t)t * CVL_RADIX_BINS + d];
+                radix_hist[(size_t)t * CVL_RADIX_BINS + d] = acc;
                 acc += cnt;
             }
         }
     }
 
-    /* Each thread scatters its nodes using its own cursor array — no atomics. */
+    /* Each thread scatters its nodes using its own cursor array - no atomics. */
 #pragma omp parallel default(none) shared(n_nodes, nodes, radix_hist, sorted_indices, depth_offsets, depth_buf,        \
                                               n_threads, max_depth_found) num_threads(n_threads)
     {
         const unsigned tid = (unsigned)omp_get_thread_num();
-        unsigned *my_cursors = radix_hist + (size_t)tid * RADIX_BINS;
+        unsigned *my_cursors = radix_hist + (size_t)tid * CVL_RADIX_BINS;
 #pragma omp for schedule(static)
         for (unsigned i = 0; i < n_nodes; ++i)
         {
@@ -1191,7 +1042,7 @@ bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[rest
         }
 
         /* Parallel LSD radix sort (radix_hist reused as histogram scratch). */
-        radix_sort_pairs(pairs, pairs_alt, ndepth, pair_size, radix_hist, n_threads);
+        cvl_radix_sort_pairs(pairs, pairs_alt, ndepth, pair_size, radix_hist, n_threads);
 
         /* Extract sorted indices (parallel for large depths). */
 #pragma omp parallel for if (ndepth > 1024) default(none) shared(ndepth, pairs, pair_size, sorted_indices, base)       \

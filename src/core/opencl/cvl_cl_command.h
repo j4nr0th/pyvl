@@ -3,11 +3,11 @@
  * Command submission and event management.
  *
  * Provides typed wrappers for the common enqueue operations:
- *   - cvl_cl_ndrange        — kernel launch with typed args
- *   - cvl_cl_write_buffer   — host → device
- *   - cvl_cl_read_buffer    — device → host
- *   - cvl_cl_copy_buffer    — device → device
- *   - cvl_cl_finish / flush — synchronisation
+ *   - cvl_cl_ndrange        - kernel launch with typed args
+ *   - cvl_cl_write_buffer   - host → device
+ *   - cvl_cl_read_buffer    - device → host
+ *   - cvl_cl_copy_buffer    - device → device
+ *   - cvl_cl_finish / flush - synchronisation
  *
  * All operations accept optional event wait lists and produce an
  * optional output event, following OpenCL's async model.

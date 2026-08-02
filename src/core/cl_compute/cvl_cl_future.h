@@ -3,7 +3,7 @@
  * Opaque asynchronous operation handle.
  *
  * Wraps a single cl_event with ownership semantics.  The caller
- * does not touch the raw cl_event — they wait, poll, or release.
+ * does not touch the raw cl_event - they wait, poll, or release.
  *
  * A future that has not been initialised (zero-initialised or after
  * release) is considered "empty" and its operations are no-ops.
@@ -84,7 +84,7 @@ void cvl_cl_future_release(cvl_cl_future_t *f);
  * @brief Return the raw cl_event (may be NULL).
  *
  * Use this when building OpenCL wait-lists for chained operations.
- * The caller must NOT release the event — the future owns it.
+ * The caller must NOT release the event - the future owns it.
  */
 static inline cl_event cvl_cl_future_event(const cvl_cl_future_t *f)
 {

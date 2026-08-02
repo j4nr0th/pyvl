@@ -323,6 +323,8 @@ int main(void)
 
     /* Flat tree data */
     cvl_cl_flat_tree_t tree = {0};
+    /* Work buffer for the flat tree build (allocated before build, freed in cleanup). */
+    void *flat_work = NULL;
 
     /* GPU buffers for tree data (non-real3_t, managed with raw cvl_cl_buffer_t) */
     cvl_cl_buffer_t buf_nodes = {0};
@@ -349,12 +351,12 @@ int main(void)
         unsigned count = 0;
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
         if (status != CVL_CL_SUCCESS || count == 0)
         {
             status = cvl_cl_device_discover(
                 (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
-                &count, &device);
+                &count, &device, NULL);
         }
         if (status != CVL_CL_SUCCESS || count == 0)
         {
@@ -436,16 +438,32 @@ int main(void)
             .critical_particle_count = CRIT,
             .order = 0,
         };
-        status = cvl_cl_flat_tree_build(N_SOURCES, sources, sorted_indices, mcodes, &settings, &tree);
+
+        /* Count nodes first to size the build work buffer. */
+        unsigned depth_counts[CVL_CL_FLAT_TREE_MAX_DEPTH + 2];
+        unsigned n_total_work = 0, max_depth_used = 0;
+        status = cvl_cl_flat_tree_count(N_SOURCES, mcodes, &settings, depth_counts, &n_total_work, &max_depth_used);
+        TEST_ASSERT(status == CVL_CL_SUCCESS, "flat_tree_count failed: %s", cvl_cl_status_str(status));
+
+        const unsigned work_depth = MAX_DEPTH > CVL_CL_FLAT_TREE_MAX_DEPTH ? CVL_CL_FLAT_TREE_MAX_DEPTH : MAX_DEPTH;
+        const size_t flat_work_sz = cvl_cl_flat_tree_work_size(n_total_work, N_SOURCES, work_depth);
+        flat_work = malloc(flat_work_sz);
+        TEST_ASSERT(flat_work != NULL, "malloc(%zu) for flat tree work buffer failed", flat_work_sz);
+
+        status = cvl_cl_flat_tree_build(N_SOURCES, sources, sorted_indices, mcodes, &settings, NULL, &tree, flat_work,
+                                        flat_work_sz);
         TEST_ASSERT(status == CVL_CL_SUCCESS, "flat_tree_build failed: %s", cvl_cl_status_str(status));
 
         printf("BH eval test: %u nodes, %u sources, %u targets\n", tree.n_nodes, N_SOURCES, N_TARGETS);
 
         /* ---- Init staging buffers (with correct unified_memory flag) ---- */
         bool unified = cvl_cl_compute_unified_memory(&comp);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64, unified, N_TARGETS, NULL),
+                     cleanup);
 
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, &ctx, &queue, N_SOURCES), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_val, &ctx, &queue, N_SOURCES), cleanup);
@@ -601,6 +619,7 @@ cleanup:
     cvl_cl_buffer_destroy(&buf_nodes);
     cvl_cl_compute_destroy(&comp);
     cvl_cl_flat_tree_destroy(&tree);
+    free(flat_work);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
     cvl_cl_device_destroy(&device);

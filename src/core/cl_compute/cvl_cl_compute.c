@@ -44,7 +44,7 @@ cvl_cl_status_t cvl_cl_compute_init(cvl_cl_compute_t *comp, const cvl_cl_ctx_t *
         .source_string = kernel_source,
         .precision = precision,
     };
-    cvl_cl_status_t st = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(device), &comp->program);
+    cvl_cl_status_t st = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(device), &comp->program, NULL);
     if (st != CVL_CL_SUCCESS)
         return st;
 

@@ -69,12 +69,12 @@ int main(void)
 
     status = cvl_cl_device_discover(
         (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-        &device);
+        &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {
@@ -95,15 +95,24 @@ int main(void)
 
     /* Staging buffers */
     cvl_cl_staging_buffer_t buf_targets, buf_sources_pos, buf_sources_val, buf_results;
-    cvl_cl_staging_buffer_init(&buf_targets, &ctx, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp));
-    cvl_cl_staging_buffer_init(&buf_sources_pos, &ctx, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp));
-    cvl_cl_staging_buffer_init(&buf_sources_val, &ctx, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp));
-    cvl_cl_staging_buffer_init(&buf_results, &ctx, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp));
 
     /* Generate test data */
     uint64_t rng = 12345;
-#define N_TARGETS 50
-#define N_SOURCES 200
+    enum
+    {
+
+        N_TARGETS = 50,
+        N_SOURCES = 200,
+    };
+
+    cvl_cl_staging_buffer_init(&buf_targets, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp), N_TARGETS,
+                               NULL);
+    cvl_cl_staging_buffer_init(&buf_sources_pos, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp), N_SOURCES,
+                               NULL);
+    cvl_cl_staging_buffer_init(&buf_sources_val, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp), N_SOURCES,
+                               NULL);
+    cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64, cvl_cl_compute_unified_memory(&comp), N_TARGETS,
+                               NULL);
 
     real3_t targets[N_TARGETS];
     real3_t sources_pos[N_SOURCES];

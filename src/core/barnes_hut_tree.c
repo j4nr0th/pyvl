@@ -161,7 +161,7 @@ bool barnes_hut_tree_build(unsigned n_sources, unsigned n_threads, const real3_t
 
     /* Zero scratch to prevent stale data propagating through the upward
      * sweep's multipole_add_poly_to_order (which skips zero coefficients).
-     * Same root cause as the FMM tree build — see fmm_tree_build. */
+     * Same root cause as the FMM tree build - see fmm_tree_build. */
     memset(scratch_buffer, 0, needed_scratch);
 
     /* 3. Prepare scratch (partition + count). */
@@ -240,12 +240,12 @@ size_t barnes_hut_tree_memory_bytes(const barnes_hut_tree_t *tree)
 /**
  * @brief Multipole Acceptance Criterion (MAC).
  *
- * When `theta <= 0` (default): neighbour criterion — accept if the target
+ * When `theta <= 0` (default): neighbour criterion - accept if the target
  * point is outside the cell's @f$ 3 \times 3 \times 3 @f$ neighbourhood
  * (@f$ |\Delta x| > 2 h @f$ or @f$ |\Delta y| > 2 h @f$ or
  * @f$ |\Delta z| > 2 h @f$).
  *
- * When `theta > 0`: opening-angle criterion — accept if
+ * When `theta > 0`: opening-angle criterion - accept if
  * @f$ h / |r| < \theta @f$.
  */
 static inline bool mac_accept(const octree_node_t *node, real3_t point, double theta)
@@ -331,7 +331,7 @@ real3_t barnes_hut_tree_eval(const barnes_hut_tree_t *tree, const real3_t CVL_AR
         }
         else
         {
-            /* OCTREE_NODE_MULTIPOLE or OCTREE_NODE_PARTICLE — if the leaf has a
+            /* OCTREE_NODE_MULTIPOLE or OCTREE_NODE_PARTICLE - if the leaf has a
              * far-field multipole and the MAC accepts it, use the multipole.
              * Otherwise fall back to direct particle sum for accuracy. */
             real_t *slice = tree->mp_slices[idx];

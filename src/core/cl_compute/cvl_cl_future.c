@@ -6,7 +6,7 @@ cvl_cl_status_t cvl_cl_future_wait(cvl_cl_future_t *f)
         return CVL_CL_SUCCESS;
 
     const cl_int err = clWaitForEvents(1, &f->event);
-    /* Release the event after waiting — the future expires. */
+    /* Release the event after waiting - the future expires. */
     clReleaseEvent(f->event);
     f->event = NULL;
 

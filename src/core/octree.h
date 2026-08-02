@@ -180,8 +180,6 @@ static inline size_t octree_pse_stride(unsigned work_order)
 /* Default allocator (shared across tree methods)                    */
 /* ================================================================ */
 
-extern const allocator_t CVL_DEFAULT_ALLOCATOR;
-
 static inline const allocator_t *octree_resolve_allocator(const allocator_t *allocator)
 {
     return allocator ? allocator : &CVL_DEFAULT_ALLOCATOR;
@@ -343,12 +341,12 @@ void octree_run_upward_sweep(unsigned n_nodes, octree_node_t nodes[restrict], un
  * Each stage doubles the spacing between information bits:
  *
  * Mask constants (binary, grouped by stage):
- *   0x1fffff                — keep low 21 bits
- *   0x1f00000000ffff        — spread 7 → 14 bits
- *   0x1f0000ff0000ff        — spread 14 → 28 bits
- *   0x100f00f00f00f00f      — spread 28 → 42 bits
- *   0x10c30c30c30c30c3      — spread 42 → 56 bits
- *   0x1249249249249249      — final: bit at every 3rd position
+ *   0x1fffff                - keep low 21 bits
+ *   0x1f00000000ffff        - spread 7 → 14 bits
+ *   0x1f0000ff0000ff        - spread 14 → 28 bits
+ *   0x100f00f00f00f00f      - spread 28 → 42 bits
+ *   0x10c30c30c30c30c3      - spread 42 → 56 bits
+ *   0x1249249249249249      - final: bit at every 3rd position
  *                            (positions 0,3,6,… = X slot in 3D code)
  */
 static inline uint64_t morton_split_21(uint64_t x)
@@ -454,14 +452,13 @@ static inline void morton_range_bounds(const unsigned *sorted_indices, const uin
  * @param depth_offsets     Output: per-depth start offsets [(max_depth + 2)].
  * @param pairs_temp        Radix sort ping-pong buffer [2 * n_nodes * pair_size].
  * @param radix_hist        Per-thread histogram bins [n_threads * 256] (from scratch).
- * @param max_depth         Hint for depth_offsets capacity; max_depth_found ≤ max_depth.
  * @param out_max_depth_found Output: actual max depth found.
  * @param n_threads         Number of OpenMP threads.
  * @return true on success.
  */
 bool octree_build_morton_sorted(unsigned n_nodes, const octree_node_t nodes[restrict], uint64_t codes[restrict n_nodes],
                                 unsigned sorted_indices[restrict n_nodes], unsigned depth_offsets[restrict],
-                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict], unsigned max_depth,
+                                uint8_t pairs_temp[restrict], unsigned radix_hist[restrict],
                                 unsigned *out_max_depth_found, unsigned n_threads);
 
 /* OCTREE_H */

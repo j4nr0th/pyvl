@@ -19,7 +19,7 @@ int main(void)
             {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
             {},
         },
-        1, &count, &device);
+        1, &count, &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
@@ -27,7 +27,7 @@ int main(void)
                 {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
                 {},
             },
-            1, &count, &device);
+            1, &count, &device, NULL);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {

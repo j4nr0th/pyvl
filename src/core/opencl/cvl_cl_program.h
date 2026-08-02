@@ -8,6 +8,7 @@
  * program is destroyed or rebuilt.
  */
 
+#include "../common.h"
 #include "cvl_cl_common.h"
 #include "cvl_cl_ctx.h"
 
@@ -38,8 +39,9 @@ typedef struct
 struct cvl_cl_program_t
 {
     cl_program program;
-    const cvl_cl_ctx_t *ctx; /**< Borrowed reference. */
-    char *build_log;         /**< Captured build log (NULL if build succeeded or no build attempted). */
+    const cvl_cl_ctx_t *ctx;      /**< Borrowed reference. */
+    const allocator_t *allocator; /**< Allocator for build log (NULL = default). */
+    char *build_log;              /**< Captured build log (NULL if build succeeded or no build attempted). */
 };
 
 /**
@@ -47,15 +49,16 @@ struct cvl_cl_program_t
  *
  * The program is built synchronously during this call.
  *
- * @param ctx    Context (must outlive the program).
- * @param desc   Program descriptor (source + options).
- * @param device Device to build for.
- * @param out    Filled with the new program on success.
+ * @param ctx      Context (must outlive the program).
+ * @param desc     Program descriptor (source + options).
+ * @param device   Device to build for.
+ * @param out      Filled with the new program on success.
+ * @param allocator  Allocator for the build log (NULL = default).
  * @return CVL_CL_SUCCESS or error.  CVL_CL_ERR_PROGRAM_BUILD if compilation
  *         failed (log available via @ref cvl_cl_program_build_log).
  */
 cvl_cl_status_t cvl_cl_program_create(const cvl_cl_ctx_t *ctx, const cvl_cl_program_desc_t *desc, cl_device_id device,
-                                      cvl_cl_program_t *out);
+                                      cvl_cl_program_t *out, const allocator_t *allocator);
 
 /**
  * @brief Return the captured build log, or NULL if no log.

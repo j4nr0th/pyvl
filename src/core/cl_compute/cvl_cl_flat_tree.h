@@ -8,12 +8,12 @@
  *
  * Child access: an internal node stores child_base (index of first
  * child in the depth d+1 layer) and child_mask (8-bit mask of which
- * octants have children).  Children are stored compactly — no gaps.
+ * octants have children).  Children are stored compactly - no gaps.
  * To find child for octant o: if (mask & (1<<o)) then child = nodes[
  * child_base + popcount(mask & ((1<<o)-1)) ].
  *
  * This format is designed for GPU traversal: a single 64-byte struct
- * with no pointer chasing — only index arithmetic.
+ * with no pointer chasing - only index arithmetic.
  */
 
 #include "../common.h"
@@ -68,14 +68,15 @@ typedef struct
 
 typedef struct
 {
-    cvl_cl_flat_node_t *nodes;   /**< Flat node array (level-ordered). */
-    unsigned *particle_order;    /**< Per-leaf particle indices (sorted). */
-    unsigned *depth_offsets;     /**< [max_depth + 2] start of each depth level + sentinel. */
-    unsigned n_nodes;            /**< Total nodes. */
-    unsigned n_internal;         /**< Count of internal nodes. */
-    unsigned n_multipole_leaves; /**< Count of multipole leaf nodes. */
-    unsigned n_particle_leaves;  /**< Count of particle leaf nodes. */
-    unsigned max_depth;          /**< Actual max depth used. */
+    cvl_cl_flat_node_t *nodes;    /**< Flat node array (level-ordered). */
+    unsigned *particle_order;     /**< Per-leaf particle indices (sorted). */
+    unsigned *depth_offsets;      /**< [max_depth + 2] start of each depth level + sentinel. */
+    const allocator_t *allocator; /**< Allocator used for node/order/offset arrays (NULL = default). */
+    unsigned n_nodes;             /**< Total nodes. */
+    unsigned n_internal;          /**< Count of internal nodes. */
+    unsigned n_multipole_leaves;  /**< Count of multipole leaf nodes. */
+    unsigned n_particle_leaves;   /**< Count of particle leaf nodes. */
+    unsigned max_depth;           /**< Actual max depth used. */
 } cvl_cl_flat_tree_t;
 
 /* ------------------------------------------------------------------ */
@@ -125,7 +126,7 @@ enum
  * @param n_sources         Number of particles.
  * @param morton_codes      Particle Morton codes (sorted ascending).
  * @param settings          Tree settings.
- * @param out_depth_counts  Output [max_depth+2] — count of nodes at each depth.
+ * @param out_depth_counts  Output [max_depth+2] - count of nodes at each depth.
  * @param out_n_total       Total node count.
  * @param out_max_depth_used Actual max depth used (may be < settings.max_depth).
  * @return CVL_CL_SUCCESS or CVL_CL_ERR_INVALID_PARAM.
@@ -150,22 +151,37 @@ cvl_cl_status_t cvl_cl_flat_tree_count(unsigned n_sources, const uint64_t morton
  * @param particle_indices  Particle index permutation sorted by Morton code [n_sources].
  * @param morton_codes      Particle Morton codes (sorted ascending) [n_sources].
  * @param settings          Tree settings.
- * @param allocator         Allocator for node array and particle_order buffers.
- * @param out_tree          Filled with result (caller must free out_tree->nodes
- *                          and out_tree->particle_order via allocator->deallocate).
+ * @param allocator         Allocator for node array and particle_order buffers (NULL = default).
+ * @param out_tree          Filled with result (caller must destroy via cvl_cl_flat_tree_destroy).
+ * @param work              Pre-allocated work buffer (size from cvl_cl_flat_tree_work_size).
+ * @param work_size         Size of work buffer in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
 cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources_coords[restrict n_sources],
                                        const unsigned particle_indices[restrict n_sources],
                                        const uint64_t morton_codes[restrict n_sources],
                                        const cvl_cl_flat_tree_settings_t settings[restrict],
-                                       cvl_cl_flat_tree_t *out_tree);
+                                       const allocator_t *allocator, cvl_cl_flat_tree_t *out_tree, void *work,
+                                       size_t work_size);
+
+/**
+ * @brief Compute the work-buffer size needed for cvl_cl_flat_tree_build.
+ *
+ * @param n_total    Total node count (from cvl_cl_flat_tree_count).
+ * @param n_sources  Number of particles.
+ * @param max_depth  Maximum tree depth (from settings).
+ * @return Required work-buffer size in bytes.
+ */
+static inline size_t cvl_cl_flat_tree_work_size(unsigned n_total, unsigned n_sources, unsigned max_depth)
+{
+    return (size_t)n_total * sizeof(cvl_cl_flat_node_t) + (size_t)n_sources * sizeof(unsigned) +
+           (size_t)(max_depth + 2) * sizeof(unsigned);
+}
 
 /**
  * @brief Free tree memory allocated during build.
  *
- * Calls the project's free (stdlib free).  For allocator-aware freeing,
- * the caller should manage out_tree->nodes and out_tree->particle_order.
+ * Uses the allocator stored in the tree handle (set during build).
  *
  * @param tree Tree to free (may be NULL).
  */

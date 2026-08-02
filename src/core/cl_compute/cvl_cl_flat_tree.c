@@ -1,5 +1,5 @@
 /*
- * Uniform octree builder — flat, level-ordered node array.
+ * Uniform octree builder - flat, level-ordered node array.
  *
  * Implements the builder declared in cvl_cl_flat_tree.h.
  *
@@ -11,10 +11,9 @@
  */
 
 #include "cvl_cl_flat_tree.h"
-#include "cvl_cl_common.h"
+#include "../opencl/cvl_cl_helpers.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -81,9 +80,10 @@ cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources
                                        const unsigned particle_indices[restrict n_sources],
                                        const uint64_t morton_codes[restrict n_sources],
                                        const cvl_cl_flat_tree_settings_t settings[restrict],
-                                       cvl_cl_flat_tree_t *out_tree)
+                                       const allocator_t *allocator, cvl_cl_flat_tree_t *out_tree, void *work,
+                                       size_t work_size)
 {
-    if (!sources_coords || !particle_indices || !morton_codes || !settings || !out_tree)
+    if (!sources_coords || !particle_indices || !morton_codes || !settings || !out_tree || !work)
         return CVL_CL_ERR_INVALID_PARAM;
     if (n_sources == 0)
         return CVL_CL_ERR_INVALID_PARAM;
@@ -120,21 +120,22 @@ cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources
     const real_t root_extent_z = bbox_max.z - bbox_min.z;
     const real_t root_half_size = fmax(fmax(root_extent_x, root_extent_y), root_extent_z) * 0.5 + (real_t)1e-12;
 
-    /* ---- 3. Allocate output buffers ---- */
-    out_tree->nodes = (cvl_cl_flat_node_t *)calloc(n_total, sizeof(cvl_cl_flat_node_t));
-    out_tree->particle_order = (unsigned *)malloc(n_sources * sizeof(unsigned));
-    out_tree->depth_offsets = (unsigned *)malloc((max_depth + 2) * sizeof(unsigned));
+    /* ---- 3. Partition work buffer ---- */
+    const size_t needed = cvl_cl_flat_tree_work_size(n_total, n_sources, max_depth);
+    if (work_size < needed)
+        return CVL_CL_ERR_BUFFER_SIZE;
 
-    if (!out_tree->nodes || !out_tree->particle_order || !out_tree->depth_offsets)
-    {
-        free(out_tree->nodes);
-        free(out_tree->particle_order);
-        free(out_tree->depth_offsets);
-        out_tree->nodes = NULL;
-        out_tree->particle_order = NULL;
-        out_tree->depth_offsets = NULL;
-        return CVL_CL_ERR_MEMORY;
-    }
+    uint8_t *bp = (uint8_t *)work;
+    out_tree->nodes = (cvl_cl_flat_node_t *)bp;
+    bp += (size_t)n_total * sizeof(cvl_cl_flat_node_t);
+    out_tree->particle_order = (unsigned *)bp;
+    bp += (size_t)n_sources * sizeof(unsigned);
+    out_tree->depth_offsets = (unsigned *)bp;
+    bp += (size_t)(max_depth + 2) * sizeof(unsigned);
+    out_tree->allocator = cl_resolve_allocator(allocator);
+
+    /* Zero the node array. */
+    memset(out_tree->nodes, 0, (size_t)n_total * sizeof(cvl_cl_flat_node_t));
 
     cvl_cl_flat_node_t *nodes = out_tree->nodes;
     unsigned *particle_order = out_tree->particle_order;
@@ -230,7 +231,7 @@ cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources
                 for (unsigned j = group_start; j < group_end; ++j)
                     particle_order[particle_counter++] = particle_indices[j];
 
-                /* leaf_counter not incremented here — not needed after final group. */
+                /* leaf_counter not incremented here - not needed after final group. */
             }
         }
     }
@@ -350,13 +351,11 @@ void cvl_cl_flat_tree_destroy(cvl_cl_flat_tree_t *tree)
     if (!tree)
         return;
 
-    free(tree->nodes);
-    free(tree->particle_order);
-    free(tree->depth_offsets);
-
+    /* The work buffer is caller-owned - just clear the handle. */
     tree->nodes = NULL;
     tree->particle_order = NULL;
     tree->depth_offsets = NULL;
+    tree->allocator = NULL;
     tree->n_nodes = 0;
     tree->n_internal = 0;
     tree->n_multipole_leaves = 0;

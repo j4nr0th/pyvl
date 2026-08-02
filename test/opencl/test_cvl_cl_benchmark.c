@@ -47,12 +47,15 @@
 /*  Test parameters                                                    */
 /* ------------------------------------------------------------------ */
 
-#define N_SOURCES 2000
-#define N_TARGETS 200
-#define BH_ORDER 4
-#define FMM_ORDER 4
-#define MAX_DEPTH 8
-#define CRIT_COUNT 8
+enum
+{
+    N_SOURCES = 2000,
+    N_TARGETS = 200,
+    BH_ORDER = 4,
+    FMM_ORDER = 4,
+    MAX_DEPTH = 8,
+    CRIT_COUNT = 8,
+};
 #define BH_THETA 0.3
 
 /* ------------------------------------------------------------------ */
@@ -562,6 +565,8 @@ int main(void)
 
     /* Flat BH tree (GPU-friendly layout from cvl_cl_flat_tree_build). */
     cvl_cl_flat_tree_t flat_tree = {0};
+    /* Work buffer for the flat tree build (allocated before build, freed in cleanup). */
+    void *flat_work = NULL;
 
     /* GPU buffers for the BH flat tree (raw cvl_cl_buffer_t). */
     cvl_cl_buffer_t buf_bh_nodes = {0};
@@ -626,7 +631,7 @@ int main(void)
         unsigned count = 0;
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
         if (status != CVL_CL_SUCCESS || count == 0)
         {
             fprintf(stderr, "No GPU OpenCL device found -- skipping benchmark (CPU OpenCL not supported).\n");
@@ -749,7 +754,21 @@ int main(void)
             .critical_particle_count = CRIT_COUNT,
             .order = BH_ORDER,
         };
-        status = cvl_cl_flat_tree_build(N_SOURCES, sources_pos, sorted_indices, mcodes, &flat_settings, &flat_tree);
+
+        /* Count nodes first to size the build work buffer. */
+        unsigned depth_counts[CVL_CL_FLAT_TREE_MAX_DEPTH + 2];
+        unsigned n_total_work = 0, max_depth_used = 0;
+        status =
+            cvl_cl_flat_tree_count(N_SOURCES, mcodes, &flat_settings, depth_counts, &n_total_work, &max_depth_used);
+        TEST_ASSERT(status == CVL_CL_SUCCESS, "flat_tree_count failed: %s", cvl_cl_status_str(status));
+
+        const unsigned work_depth = MAX_DEPTH > CVL_CL_FLAT_TREE_MAX_DEPTH ? CVL_CL_FLAT_TREE_MAX_DEPTH : MAX_DEPTH;
+        const size_t flat_work_sz = cvl_cl_flat_tree_work_size(n_total_work, N_SOURCES, work_depth);
+        flat_work = malloc(flat_work_sz);
+        TEST_ASSERT(flat_work != NULL, "malloc(%zu) for flat tree work buffer failed", flat_work_sz);
+
+        status = cvl_cl_flat_tree_build(N_SOURCES, sources_pos, sorted_indices, mcodes, &flat_settings, NULL,
+                                        &flat_tree, flat_work, flat_work_sz);
         TEST_ASSERT(status == CVL_CL_SUCCESS, "cvl_cl_flat_tree_build failed: %s", cvl_cl_status_str(status));
         printf("Flat BH tree: n_nodes=%u\n", flat_tree.n_nodes);
     }
@@ -971,8 +990,8 @@ int main(void)
                      cleanup_build);
 
         /* Reserve staging buffer for source positions. */
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_build_pos, &ctx, CVL_CL_PRECISION_FP64,
-                                                cvl_cl_compute_unified_memory(&comp_build)),
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_build_pos, CVL_CL_PRECISION_FP64,
+                                                cvl_cl_compute_unified_memory(&comp_build), N_SOURCES, NULL),
                      cleanup_build);
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_build_pos, &ctx, &queue, N_SOURCES), cleanup_build);
 
@@ -986,8 +1005,13 @@ int main(void)
         CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup_build);
 
         /* Time the GPU tree build. */
+        size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES);
+        void *gpu_work = malloc(gpu_work_sz);
+        TEST_ASSERT(gpu_work != NULL, "malloc(%zu) for GPU tree build work buffer failed", gpu_work_sz);
         const double t0 = now_seconds();
-        CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&gpu_builder, &queue, &ctx, &buf_build_pos, N_SOURCES), cleanup_build);
+        CVL_CL_CHECK(
+            cvl_cl_gpu_tree_build_run(&gpu_builder, &queue, &ctx, &buf_build_pos, N_SOURCES, gpu_work, gpu_work_sz),
+            cleanup_build);
         CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup_build);
         t_gpu_tree_build = (now_seconds() - t0) * 1e3;
 
@@ -995,6 +1019,7 @@ int main(void)
                t_gpu_tree_build);
 
     cleanup_build:
+        free(gpu_work);
         cvl_cl_staging_buffer_destroy(&buf_build_pos);
         cvl_cl_gpu_tree_build_destroy(&gpu_builder);
         cvl_cl_compute_destroy(&comp_build);
@@ -1050,10 +1075,10 @@ int main(void)
         cvl_cl_staging_buffer_destroy(&buf_results);
         {
             const bool unified = cvl_cl_compute_unified_memory(&comp_direct);
-            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_targets, &ctx, precision, unified), cleanup);
-            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, &ctx, precision, unified), cleanup);
-            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, &ctx, precision, unified), cleanup);
-            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, &ctx, precision, unified), cleanup);
+            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_targets, precision, unified, N_TARGETS, NULL), cleanup);
+            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, precision, unified, N_SOURCES, NULL), cleanup);
+            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, precision, unified, N_SOURCES, NULL), cleanup);
+            CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, precision, unified, N_TARGETS, NULL), cleanup);
 
             CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_targets, &ctx, &queue, N_TARGETS), cleanup);
             CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, &ctx, &queue, N_SOURCES), cleanup);
@@ -1173,13 +1198,21 @@ int main(void)
 
         /* ---- 9c. GPU FMM L2P eval ---- */
         {
-            CVL_CL_CHECK(cvl_cl_fmm_eval_init(&fmm_eval, &comp_fmm, precision), cleanup);
+            CVL_CL_CHECK(cvl_cl_fmm_eval_init(&fmm_eval, &comp_fmm, precision, NULL), cleanup);
+
+            size_t fmm_work_sz = cvl_cl_fmm_eval_work_size(&fmm_eval, &fmm_tree);
+            void *fmm_work = malloc(fmm_work_sz);
+            TEST_ASSERT(fmm_work != NULL, "malloc failed for FMM work buffer");
 
             const double t0 = now_seconds();
             memset(gpu_results, 0, sizeof(gpu_results));
             CVL_CL_CHECK(cvl_cl_fmm_eval_run(&fmm_eval, &queue, &ctx, &fmm_tree, sources_pos, sources_val, N_TARGETS,
-                                             targets, gpu_results),
-                         cleanup);
+                                             targets, gpu_results, fmm_work, fmm_work_sz),
+                         cleanup_fmm_work);
+        cleanup_fmm_work:
+            free(fmm_work);
+            if (status != CVL_CL_SUCCESS)
+                goto cleanup;
             CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
             t_gpu_fmm[pidx] = (now_seconds() - t0) * 1e3;
 
@@ -1258,6 +1291,7 @@ cleanup:
     cvl_cl_gpu_tree_build_destroy(&gpu_builder);
     cvl_cl_staging_buffer_destroy(&buf_build_pos);
     cvl_cl_flat_tree_destroy(&flat_tree);
+    free(flat_work);
 
     if (fmm_tree.buffer)
     {

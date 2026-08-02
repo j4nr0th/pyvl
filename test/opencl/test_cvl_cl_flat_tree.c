@@ -153,8 +153,20 @@ int main(void)
         .critical_particle_count = CRIT,
         .order = 4,
     };
+
+    /* Count nodes first to size the build work buffer. */
+    unsigned depth_counts[CVL_CL_FLAT_TREE_MAX_DEPTH + 2];
+    unsigned n_total_work = 0, max_depth_used = 0;
+    cvl_cl_status_t st = cvl_cl_flat_tree_count(N, mcodes, &settings, depth_counts, &n_total_work, &max_depth_used);
+    TEST_ASSERT(st == CVL_CL_SUCCESS, "flat_tree_count failed: %s", cvl_cl_status_str(st));
+
+    const unsigned work_depth = MAX_DEPTH > CVL_CL_FLAT_TREE_MAX_DEPTH ? CVL_CL_FLAT_TREE_MAX_DEPTH : MAX_DEPTH;
+    size_t flat_work_sz = cvl_cl_flat_tree_work_size(n_total_work, N, work_depth);
+    void *flat_work = malloc(flat_work_sz);
+    TEST_ASSERT(flat_work != NULL, "malloc(%zu) for flat tree work buffer failed", flat_work_sz);
+
     cvl_cl_flat_tree_t tree;
-    cvl_cl_status_t st = cvl_cl_flat_tree_build(N, coords, sorted_indices, mcodes, &settings, &tree);
+    st = cvl_cl_flat_tree_build(N, coords, sorted_indices, mcodes, &settings, NULL, &tree, flat_work, flat_work_sz);
     TEST_ASSERT(st == CVL_CL_SUCCESS, "flat_tree_build failed: %s", cvl_cl_status_str(st));
 
     /* Validate total nodes */
@@ -240,6 +252,7 @@ int main(void)
     }
 
     cvl_cl_flat_tree_destroy(&tree);
+    free(flat_work);
     printf("All flat tree tests passed.\n");
     return 0;
 }

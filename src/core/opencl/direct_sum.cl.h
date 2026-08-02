@@ -8,7 +8,7 @@
  * real_t is supplied by cvl_cl_types.h.cl (or equivalent) when compiled
  * as OpenCL C.  On the host side this header is empty.
  *
- * Phase 3 — simplest GPU offload: O(N*M) work, no tree, no approximation.
+ * Phase 3 - simplest GPU offload: O(N*M) work, no tree, no approximation.
  */
 
 #include "cvl_cl_types.h.cl"
@@ -67,7 +67,7 @@ __kernel void direct_sum(__global const real_t *targets, __global const real_t *
 
         real_t r2 = dr.x * dr.x + dr.y * dr.y + dr.z * dr.z;
 
-        /* Softening — avoid division by zero for coincident points. */
+        /* Softening - avoid division by zero for coincident points. */
         if (r2 > (real_t)1e-30)
         {
             real_t inv_r2 = (real_t)1.0 / r2;

@@ -1,16 +1,25 @@
 #include "cvl_cl_staging_buffer.h"
+#include "../opencl/cvl_cl_helpers.h"
 
-#include <stdlib.h>
 #include <string.h>
 
-cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, const cvl_cl_ctx_t *ctx,
-                                           cvl_cl_precision_t precision, bool unified_memory)
+cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, cvl_cl_precision_t precision,
+                                           bool unified_memory, size_t max_elements, const allocator_t *allocator)
 {
-    (void)ctx;
     memset(buf, 0, sizeof(*buf));
     buf->precision = precision;
     buf->unified_memory = unified_memory;
+    buf->allocator = cl_resolve_allocator(allocator);
     buf->element_size_bytes = (precision == CVL_CL_PRECISION_FP32) ? (3u * sizeof(float)) : sizeof(real3_t);
+
+    /* Pre-allocate FP32 host staging to avoid realloc during reserve(). */
+    if (precision == CVL_CL_PRECISION_FP32 && max_elements > 0)
+    {
+        buf->host_fp32 = (float *)cl_alloc(buf->allocator, max_elements * 3u * sizeof(float));
+        if (!buf->host_fp32)
+            return CVL_CL_ERR_MEMORY;
+    }
+
     return CVL_CL_SUCCESS;
 }
 
@@ -29,14 +38,7 @@ cvl_cl_status_t cvl_cl_staging_buffer_reserve(cvl_cl_staging_buffer_t *buf, cons
     if (st != CVL_CL_SUCCESS)
         return st;
 
-    /* Grow FP32 host staging (only in FP32 mode). */
-    if (buf->precision == CVL_CL_PRECISION_FP32)
-    {
-        float *tmp = (float *)realloc(buf->host_fp32, n_elements * 3u * sizeof(float));
-        if (!tmp)
-            return CVL_CL_ERR_MEMORY;
-        buf->host_fp32 = tmp;
-    }
+    /* FP32 host staging is pre-allocated at init - no realloc needed. */
 
     buf->capacity_elements = n_elements;
     return CVL_CL_SUCCESS;
@@ -134,7 +136,7 @@ cvl_cl_status_t cvl_cl_staging_buffer_read_finish(cvl_cl_staging_buffer_t *buf, 
     if (!buf || !host_data)
         return CVL_CL_ERR_INVALID_PARAM;
 
-    /* FP64 mode has no conversion — data is already in host_data. */
+    /* FP64 mode has no conversion - data is already in host_data. */
     if (buf->precision != CVL_CL_PRECISION_FP32)
         return CVL_CL_SUCCESS;
 
@@ -173,7 +175,7 @@ void cvl_cl_staging_buffer_destroy(cvl_cl_staging_buffer_t *buf)
 {
     if (!buf)
         return;
-    free(buf->host_fp32);
+    cl_free(buf->allocator, buf->host_fp32);
     buf->host_fp32 = NULL;
     cvl_cl_buffer_destroy(&buf->device);
     memset(buf, 0, sizeof(*buf));

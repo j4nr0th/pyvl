@@ -1,8 +1,8 @@
 #pragma once
 /*
- * GPU-accelerated FMM evaluation (L2P) — host API.
+ * GPU-accelerated FMM evaluation (L2P) - host API.
  *
- * Phase 5 — offload the final FMM evaluation step to the GPU.
+ * Phase 5 - offload the final FMM evaluation step to the GPU.
  *
  * The FMM tree is built on the CPU (fmm_tree_build), which performs the
  * full upward sweep (P2M + M2M) and downward sweep (M2L + L2L) and stores
@@ -19,7 +19,7 @@
  *
  * This is the GPU analogue of fmm_tree_eval(..., FMM_EVAL_FMM) for points
  * inside the source bounding box.  As with the CPU FMM mode, the local
- * expansion diverges for targets outside the source bounding box —
+ * expansion diverges for targets outside the source bounding box -
  * callers must ensure targets lie well inside the domain.
  *
  * Usage:
@@ -34,7 +34,7 @@
  * @endcode
  *
  * The compute backend (comp) must have the "fmm_l2p_eval" kernel
- * registered.  The context, queue, and compute backend are borrowed —
+ * registered.  The context, queue, and compute backend are borrowed -
  * they must outlive the eval handle.
  */
 
@@ -59,7 +59,7 @@
  * results.  Buffers are grown on demand via cvl_cl_buffer_reserve and
  * reused across runs (grow-only, never shrinks).
  *
- * The compute backend, context, and queue are borrowed — the caller
+ * The compute backend, context, and queue are borrowed - the caller
  * must keep them alive for the lifetime of this handle.
  */
 typedef struct
@@ -68,7 +68,7 @@ typedef struct
     cvl_cl_compute_t *compute;
     cvl_cl_precision_t precision;
 
-    /* Device buffers for the flat tree (raw cvl_cl_buffer_t — not real3_t). */
+    /* Device buffers for the flat tree (raw cvl_cl_buffer_t - not real3_t). */
     cvl_cl_buffer_t buf_nodes;          /**< [n_nodes] flat nodes (64 B each). */
     cvl_cl_buffer_t buf_eval_centers;   /**< [3 * n_nodes] Γ-weighted centroids. */
     cvl_cl_buffer_t buf_particle_order; /**< [n_sources] particle indices. */
@@ -78,6 +78,12 @@ typedef struct
     cvl_cl_buffer_t buf_leaf_indices;   /**< [n_leaves] leaf_id → node index map. */
     cvl_cl_buffer_t buf_child_indices;  /**< [8 * n_nodes] explicit child indices (-1 = none). */
     cvl_cl_buffer_t buf_mp_coeffs;      /**< [3 * n_coeffs * n_nodes] multipole coefficients (for fallback). */
+
+    /* Allocator for temporary host staging during run (NULL = default). */
+    const allocator_t *allocator;
+
+    /* Cached work-buffer size for run (computed lazily on first run). */
+    size_t work_size;
 
     /* Staging buffers for source/target/result real3_t arrays. */
     cvl_cl_staging_buffer_t buf_src_pos; /**< [n_sources] source positions. */
@@ -104,15 +110,30 @@ typedef struct
  * @brief Initialise the GPU FMM evaluator.
  *
  * Validates that the compute backend has the "fmm_l2p_eval" kernel
- * registered.  Does not allocate device buffers — that happens on the
+ * registered.  Does not allocate device buffers - that happens on the
  * first run when the tree size is known.
  *
  * @param eval       Uninitialised evaluator.
  * @param compute    Compute backend (borrowed; must have "fmm_l2p_eval").
  * @param precision  FP32 or FP64 (should match the compute backend).
+ * @param allocator  Allocator for temporary host staging (NULL = default).
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision);
+cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision,
+                                     const allocator_t *allocator);
+
+/**
+ * @brief Compute the work-buffer size needed for cvl_cl_fmm_eval_run.
+ *
+ * The required size depends on the tree dimensions and the evaluator's
+ * precision mode.  Call this once, allocate the buffer, and pass it to
+ * cvl_cl_fmm_eval_run.
+ *
+ * @param eval      Initialised evaluator (provides precision mode).
+ * @param tree      CPU-built FMM tree (provides n_nodes, order).
+ * @return Required work-buffer size in bytes.
+ */
+size_t cvl_cl_fmm_eval_work_size(const cvl_cl_fmm_eval_t *eval, const fmm_tree_t *tree);
 
 /**
  * @brief Run the GPU FMM evaluation.
@@ -122,7 +143,7 @@ cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *
  * kernel, and reads back the induced field at every target.
  *
  * The tree's local expansion coefficients (local_coeffs) must already
- * be populated — i.e. the tree must have been built with
+ * be populated - i.e. the tree must have been built with
  * fmm_tree_build (which runs M2L + L2L).  Targets should lie well
  * inside the source bounding box (FMM mode diverges outside).
  *
@@ -135,19 +156,12 @@ cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *
  * @param n_targets Number of target points.
  * @param targets   Target positions [n_targets].
  * @param results   Output field [n_targets] (caller-allocated).
+ * @param work      Pre-allocated work buffer (size from cvl_cl_fmm_eval_work_size).
+ * @param work_size Size of work buffer in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
 cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *queue, const cvl_cl_ctx_t *ctx,
                                     const fmm_tree_t *tree, const real3_t *sources_coords,
                                     const real3_t *sources_values, unsigned n_targets, const real3_t *targets,
-                                    real3_t *results);
-
-/**
- * @brief Release all device buffers owned by the evaluator.
- *
- * Safe to call on a zero-initialised handle.  Does not release the
- * borrowed compute backend, context, or queue.
- *
- * @param eval Evaluator to destroy (may be zero-initialised).
- */
+                                    real3_t *results, void *work, size_t work_size);
 void cvl_cl_fmm_eval_destroy(cvl_cl_fmm_eval_t *eval);

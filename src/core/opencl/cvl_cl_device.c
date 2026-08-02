@@ -1,7 +1,7 @@
 #include "cvl_cl_device.h"
+#include "cvl_cl_helpers.h"
 
 #include <ctype.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -27,14 +27,24 @@ enum
 /* Info query helper                                                   */
 /* ------------------------------------------------------------------ */
 
-static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t *info)
+/**
+ * @brief Query all device info fields and cache them in @p info.
+ *
+ * @param dev        OpenCL device ID.
+ * @param info       Output info struct (cleared first).
+ * @param allocator  Allocator for string properties (NULL = default).
+ * @return CVL_CL_SUCCESS or error.
+ */
+static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t *info, const allocator_t *allocator)
 {
     cl_int err;
 
-    /* Clear the struct first. */
+    /* Clear the struct first (preserving allocator). */
+    const allocator_t *saved = info->allocator;
     memset(info, 0, sizeof(*info));
+    info->allocator = saved;
 
-    /* String properties — query size, allocate, then query. */
+    /* String properties - query size, allocate, then query. */
     struct
     {
         cl_device_info param;
@@ -51,7 +61,7 @@ static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t 
         err = clGetDeviceInfo(dev, strings[i].param, 0, NULL, &sz);
         if (err != CL_SUCCESS)
             return cvl_cl_status_from_cl_int(err);
-        *strings[i].p_str = (char *)malloc(sz);
+        *strings[i].p_str = (char *)cl_alloc(allocator, sz);
         if (!*strings[i].p_str)
             return CVL_CL_ERR_MEMORY;
         err = clGetDeviceInfo(dev, strings[i].param, sz, *strings[i].p_str, NULL);
@@ -71,7 +81,7 @@ static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t 
     QUERY(CL_DEVICE_MAX_WORK_GROUP_SIZE, max_work_group_size);
     QUERY(CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, max_work_item_dims);
 
-    /* CL_DEVICE_MAX_WORK_ITEM_SIZES is an array — special handling. */
+    /* CL_DEVICE_MAX_WORK_ITEM_SIZES is an array - special handling. */
     {
         size_t query_dims = info->max_work_item_dims > 3 ? 3 : info->max_work_item_dims;
         /* We only cache the first 3 dims. */
@@ -100,12 +110,18 @@ static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t 
 /* destroy helper (free strings)                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief Free all string fields in a device info struct.
+ *
+ * @param info  Device info whose strings were allocated via info->allocator.
+ */
 static void destroy_info(cvl_cl_device_info_t *info)
 {
-    free(info->name);
-    free(info->vendor);
-    free(info->version);
-    free(info->driver_version);
+    const allocator_t *a = info->allocator;
+    cl_free(a, info->name);
+    cl_free(a, info->vendor);
+    cl_free(a, info->version);
+    cl_free(a, info->driver_version);
     info->name = NULL;
     info->vendor = NULL;
     info->version = NULL;
@@ -117,11 +133,12 @@ static void destroy_info(cvl_cl_device_info_t *info)
 /* ------------------------------------------------------------------ */
 
 cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], unsigned max_devices, unsigned *out_count,
-                                       cvl_cl_device_t out_devices[])
+                                       cvl_cl_device_t out_devices[], const allocator_t *allocator)
 {
     if (!selectors || !out_count || (!out_devices && max_devices > 0))
         return CVL_CL_ERR_INVALID_PARAM;
 
+    const allocator_t *a = cl_resolve_allocator(allocator);
     *out_count = 0;
 
     /* --- Enumerate platforms --- */
@@ -164,22 +181,22 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], un
                 err = clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, 0, NULL, &sz);
                 if (err != CL_SUCCESS)
                     return cvl_cl_status_from_cl_int(err);
-                char *name = (char *)malloc(sz);
+                char *name = (char *)cl_alloc(a, sz);
                 if (!name)
                     return CVL_CL_ERR_MEMORY;
                 err = clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, sz, name, NULL);
                 if (err != CL_SUCCESS)
                 {
-                    free(name);
+                    cl_free(a, name);
                     return cvl_cl_status_from_cl_int(err);
                 }
                 if (strstr(name, sel->platform_name_substring) != NULL)
                 {
                     target_platform = platforms[p];
-                    free(name);
+                    cl_free(a, name);
                     break;
                 }
-                free(name);
+                cl_free(a, name);
             }
             break;
         }
@@ -203,7 +220,7 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], un
         err = clGetDeviceIDs(plat, target_type, 0, NULL, &n_devs);
         if (err != CL_SUCCESS)
         {
-            /* CL_DEVICE_NOT_FOUND for this type on this platform — skip. */
+            /* CL_DEVICE_NOT_FOUND for this type on this platform - skip. */
             if (err == CL_DEVICE_NOT_FOUND)
                 continue;
             return cvl_cl_status_from_cl_int(err);
@@ -232,8 +249,9 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], un
             dev->id = dev_ids[d];
             dev->platform_id = plat;
             dev->platform_index = pi;
+            dev->info.allocator = a;
 
-            status = query_device_info(dev_ids[d], &dev->info);
+            status = query_device_info(dev_ids[d], &dev->info, a);
             if (status != CVL_CL_SUCCESS)
             {
                 /* On failure, destroy what we have so far and return. */

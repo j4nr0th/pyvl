@@ -4,11 +4,11 @@
  *
  * This is the single foundational header for all cvl_cl_* modules.
  * It provides:
- *   - cvl_cl_status_t  — typed error codes (cpyutl-style, never exit())
- *   - cvl_cl_status_str() — human-readable error description
- *   - CVL_CL_CHECK  — macro for cl_int → cvl_cl_status_t + goto
- *   - cvl_cl_status_from_cl_int() — map OpenCL error codes
- *   - CVL_CL_ASSERT  — guarded assertion (same pattern as cpyutl)
+ *   - cvl_cl_status_t  - typed error codes (cpyutl-style, never exit())
+ *   - cvl_cl_status_str() - human-readable error description
+ *   - CVL_CL_CHECK  - macro for cl_int → cvl_cl_status_t + goto
+ *   - cvl_cl_status_from_cl_int() - map OpenCL error codes
+ *   - CVL_CL_ASSERT  - guarded assertion (same pattern as cpyutl)
  *   - Forward declarations of all opaque types
  *   - Cross-compilation macros (__global / restrict) for shared
  *     C/OpenCL-C headers (used in Phase 2)
@@ -59,7 +59,7 @@ typedef enum
     CVL_CL_ERR_DEVICE,             /**< Generic device error. */
     CVL_CL_ERR_INVALID_SELECTOR,   /**< Device selection descriptor was invalid. */
     CVL_CL_ERR_UNSUPPORTED_DEVICE, /**< Operation refused on the selected device (e.g. original kernels on the
-                                        Intel NEO CPU backend — see intel-neo-cpu-bug.md). */
+                                        Intel NEO CPU backend - see intel-neo-cpu-bug.md). */
 
     /* Context / queue errors. */
     CVL_CL_ERR_CONTEXT, /**< clCreateContext failed. */
@@ -163,7 +163,7 @@ cvl_cl_status_t cvl_cl_status_from_cl_int(int err);
     } while (0)
 
 /* ------------------------------------------------------------------ */
-/* CVL_CL_CHECK_RAW — direct cl_int check without macro capture        */
+/* CVL_CL_CHECK_RAW - direct cl_int check without macro capture        */
 /*                                                                     */
 /* Use this when stmt is a compound expression or when you need        */
 /* the raw cl_int after the check (e.g., clBuildProgram which sets     */

@@ -123,9 +123,9 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
 
     /*
      * Three-pass CSR construction:
-     *   Pass 1 (parallel) — dual-tree walk to count per-leaf entries.
-     *   Pass 2 (serial)   — prefix-sum to build CSR offsets.
-     *   Pass 3 (parallel) — repeat dual-tree walk to fill indices.
+     *   Pass 1 (parallel) - dual-tree walk to count per-leaf entries.
+     *   Pass 2 (serial)   - prefix-sum to build CSR offsets.
+     *   Pass 3 (parallel) - repeat dual-tree walk to fill indices.
      */
 
     /* Pass 1: count (parallel). */
@@ -168,7 +168,7 @@ static bool fmm_build_leaf_vlists(const octree_node_t CVL_ARRAY_ARG(nodes, restr
             }
             else if (cand->kind == OCTREE_NODE_INTERNAL)
             {
-                /* Too close for the coarser cell — descend. */
+                /* Too close for the coarser cell - descend. */
                 for (int oct = 7; oct >= 0; --oct)
                 {
                     const octree_node_t *child = cand->data.internal.children[oct];
@@ -588,7 +588,7 @@ static void fmm_downward_l2l_sweep(unsigned n_nodes, const octree_node_t CVL_ARR
     /*
      * Propagate local expansions root → leaves, one depth level at a time.
      *
-     * WARNING: L2L has a parent→child data dependency — a child's local
+     * WARNING: L2L has a parent→child data dependency - a child's local
      * expansion is READ when that child acts as a parent at the next level.
      * Processing all levels in a single parallel loop would race: thread A
      * could read child C's local expansion (as C is parent of D) while
@@ -738,7 +738,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
                 const real_t dist = sqrt(rl.x * rl.x + rl.y * rl.y + rl.z * rl.z);
                 if (dist < alpha * node->half_size)
                 {
-                    /* Convergence criterion satisfied — evaluate and prune. */
+                    /* Convergence criterion satisfied - evaluate and prune. */
                     const local_expansion_t local = {.order = order,
                                                      .center = node->center,
                                                      .coeffs_x = local_slice,
@@ -764,7 +764,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
             }
         }
 
-        /* Fallback: no node's local expansion converged — use tree-code. */
+        /* Fallback: no node's local expansion converged - use tree-code. */
         if (has_vlist && li >= 0)
         {
             const unsigned v_start = tree->vlist_offsets[(unsigned)li];
@@ -811,7 +811,7 @@ real3_t fmm_tree_eval(const fmm_tree_t *tree, const real3_t CVL_ARRAY_ARG(source
     else
     {
         /* Fallback: target outside source bounding box (li < 0) or other
-         * degenerate case — evaluate root multipole (same as BH tree-code). */
+         * degenerate case - evaluate root multipole (same as BH tree-code). */
         real_t *root_slice = tree->mp_slices[0];
         if (root_slice != NULL)
         {
@@ -1095,7 +1095,7 @@ bool fmm_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sourc
         unsigned max_depth_found = 0;
         if (!octree_build_morton_sorted(n_topo, work.nodes, work.morton_codes, work.morton_sorted_nodes,
                                         work.morton_depth_offsets, work.morton_pairs_temp, scratch->radix_hist,
-                                        count->max_depth, &max_depth_found, n_threads))
+                                        &max_depth_found, n_threads))
             goto cleanup;
 
         size_t vlist_count = 0, nflist_count = 0;
@@ -1161,7 +1161,7 @@ cleanup:
 }
 
 /* ------------------------------------------------------------------ */
-/* fmm_tree_build (convenience — allocates internally)                */
+/* fmm_tree_build (convenience - allocates internally)                */
 /* ------------------------------------------------------------------ */
 
 bool fmm_tree_build(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],

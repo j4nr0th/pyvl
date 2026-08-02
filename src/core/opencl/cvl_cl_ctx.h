@@ -21,7 +21,7 @@
 struct cvl_cl_ctx_t
 {
     cl_context context;
-    const cvl_cl_device_t *device; /**< Borrowed reference — caller keeps device alive. */
+    const cvl_cl_device_t *device; /**< Borrowed reference - caller keeps device alive. */
 };
 
 /**
@@ -65,7 +65,7 @@ typedef struct
 struct cvl_cl_queue_t
 {
     cl_command_queue queue;
-    const cvl_cl_ctx_t *ctx; /**< Borrowed reference — caller keeps ctx alive. */
+    const cvl_cl_ctx_t *ctx; /**< Borrowed reference - caller keeps ctx alive. */
 };
 
 /**

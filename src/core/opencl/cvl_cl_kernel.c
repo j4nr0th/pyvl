@@ -69,7 +69,7 @@ cvl_cl_status_t cvl_cl_kernel_set_args(cvl_cl_kernel_t *kernel, const cvl_cl_kar
             err = clSetKernelArg(kernel->kernel, arg->index, sizeof(double), &arg->scalar_double);
             break;
         case CVL_CL_KARG_LOCAL:
-            /* __local buffer — pass NULL pointer, size = local_size. */
+            /* __local buffer - pass NULL pointer, size = local_size. */
             err = clSetKernelArg(kernel->kernel, arg->index, arg->local_size, NULL);
             break;
         default:

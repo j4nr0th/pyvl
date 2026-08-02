@@ -50,7 +50,7 @@ int main(void)
             {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
             {},
         },
-        1, &count, &device);
+        1, &count, &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
@@ -58,7 +58,7 @@ int main(void)
                 {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
                 {},
             },
-            1, &count, &device);
+            1, &count, &device, NULL);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {
@@ -78,7 +78,7 @@ int main(void)
                                            .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                            .source_string = ADD_KERNEL_SOURCE,
                                        },
-                                       cvl_cl_device_id(&device), &program),
+                                       cvl_cl_device_id(&device), &program, NULL),
                  cleanup);
 
     /* ---- Kernel ---- */

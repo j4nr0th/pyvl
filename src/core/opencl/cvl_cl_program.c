@@ -1,17 +1,18 @@
 #include "cvl_cl_program.h"
+#include "cvl_cl_helpers.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 cvl_cl_status_t cvl_cl_program_create(const cvl_cl_ctx_t *ctx, const cvl_cl_program_desc_t *desc, cl_device_id device,
-                                      cvl_cl_program_t *out)
+                                      cvl_cl_program_t *out, const allocator_t *allocator)
 {
     if (!ctx || !desc || !out || !ctx->context)
         return CVL_CL_ERR_INVALID_PARAM;
 
     out->program = NULL;
     out->ctx = NULL;
+    out->allocator = cl_resolve_allocator(allocator);
     out->build_log = NULL;
 
     /* Create program from source. */
@@ -29,7 +30,7 @@ cvl_cl_status_t cvl_cl_program_create(const cvl_cl_ctx_t *ctx, const cvl_cl_prog
          *
          * FP32 mode defines CVL_CL_REAL_FP32 so the .cl.h headers switch
          * real_t from double → float.  FP64 / DEFAULT use the header's
-         * default (double) and need no extra define — the cl_khr_fp64
+         * default (double) and need no extra define - the cl_khr_fp64
          * pragma is handled inside the .cl.h type header itself.
          */
         char full_opts[1024];
@@ -46,7 +47,7 @@ cvl_cl_status_t cvl_cl_program_create(const cvl_cl_ctx_t *ctx, const cvl_cl_prog
         }
         else
         {
-            /* FP64 / DEFAULT — the .cl.h headers use double by default. */
+            /* FP64 / DEFAULT - the .cl.h headers use double by default. */
             opts = desc->build_options;
         }
 
@@ -65,7 +66,7 @@ cvl_cl_status_t cvl_cl_program_create(const cvl_cl_ctx_t *ctx, const cvl_cl_prog
             clGetProgramBuildInfo(prog, device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
             if (log_size > 0)
             {
-                out->build_log = (char *)malloc(log_size + 1);
+                out->build_log = (char *)cl_alloc(out->allocator, log_size + 1);
                 if (out->build_log)
                 {
                     clGetProgramBuildInfo(prog, device, CL_PROGRAM_BUILD_LOG, log_size, out->build_log, NULL);
@@ -97,7 +98,7 @@ void cvl_cl_program_destroy(cvl_cl_program_t *program)
 {
     if (!program)
         return;
-    free(program->build_log);
+    cl_free(program->allocator, program->build_log);
     program->build_log = NULL;
     if (program->program)
     {

@@ -10,7 +10,7 @@
  *
  * Usage:
  *   cvl_cl_gpu_tree_build_t builder;
- *   cvl_cl_gpu_tree_build_init(&builder, &comp, max_depth, critical_count, order);
+ *   cvl_cl_gpu_tree_build_init(&builder, &comp, max_depth, critical_count, order, NULL);
  *
  *   cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &staging_pos, n_sources);
  *
@@ -22,7 +22,7 @@
  * Radix-sort kernel selection:
  *   The builder has a radix policy (cvl_cl_radix_policy_t, default AUTO).
  *   The Intel NEO CPU OpenCL backend miscompiles the original __local-memory
- *   radix kernels (heap corruption — see intel-neo-cpu-bug.md); AUTO therefore
+ *   radix kernels (heap corruption - see intel-neo-cpu-bug.md); AUTO therefore
  *   switches the radix sort to a host-side stable sort on that backend.
  *   Change the policy with cvl_cl_gpu_tree_build_set_radix_policy() after
  *   init and before run; choosing ORIGINAL on a detected NEO CPU device
@@ -66,7 +66,7 @@ enum
  * The workaround mode avoids device kernels for the radix sort entirely:
  * the Morton codes + index permutation are read back, sorted on the host
  * with a stable qsort, and written back.  This is deterministic and does
- * not exercise the broken JIT — kernel-only workarounds were observed to
+ * not exercise the broken JIT - kernel-only workarounds were observed to
  * still crash on that backend with layout-dependent probability (see
  * intel-neo-cpu-bug.md, section 7).
  */
@@ -89,7 +89,7 @@ typedef struct
     bool intel_neo_cpu;  /**< Device was identified as the Intel NEO CPU backend. */
     bool use_host_radix; /**< Effective radix mode: true → host-side stable sort. */
 
-    /* Compute backend (borrowed — kernels live here). */
+    /* Compute backend (borrowed - kernels live here). */
     cvl_cl_compute_t *compute;
 
     /* Owned device buffers for the pipeline.
@@ -104,7 +104,7 @@ typedef struct
     cvl_cl_buffer_t buf_nodes;          /**< [n_total] flat node array (CVL_CL_GPU_NODE_SIZE each). */
     cvl_cl_buffer_t buf_particle_order; /**< [n] particle order (unsigned). */
     cvl_cl_buffer_t buf_depth_offsets;  /**< [max_depth+2] depth offsets (unsigned). */
-    cvl_cl_buffer_t buf_leaf_starts;    /**< [n] leaf start positions (unsigned) — temp. */
+    cvl_cl_buffer_t buf_leaf_starts;    /**< [n] leaf start positions (unsigned) - temp. */
     cvl_cl_buffer_t buf_leaf_counter;   /**< 2 × unsigned: [n_leaves_out, particle_counter]. */
 
     /* Host-side copies of metadata (read back from GPU after run). */
@@ -120,6 +120,18 @@ typedef struct
     /* Valid flag. */
     bool initialized;
 } cvl_cl_gpu_tree_build_t;
+
+/**
+ * @brief Compute the work-buffer size needed for cvl_cl_gpu_tree_build_run.
+ *
+ * Conservative upper bound covering all temporary host-side buffers
+ * needed during a single run (coords, boundary, leaf starts, radix sort
+ * work, parent marks, and metadata readback).
+ *
+ * @param n_sources  Number of particles.
+ * @return Required work-buffer size in bytes.
+ */
+size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources);
 
 /**
  * @brief Set the radix-sort kernel policy.
@@ -151,7 +163,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_set_radix_policy(cvl_cl_gpu_tree_build_t *
  * (WORKAROUND / AUTO-on-NEO-CPU sorts on the host and needs no radix kernels).
  *
  * The leaf starts and the per-parent child ranges are computed on the host
- * from the boundary depths (deterministic — the device-side atomic
+ * from the boundary depths (deterministic - the device-side atomic
  * compaction does not preserve the Morton order).
  *
  * With @ref CVL_CL_RADIX_POLICY_ORIGINAL on a detected Intel NEO CPU
@@ -191,11 +203,13 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
  * @param ctx        Context.
  * @param staging_pos Source positions in a staging buffer (must be reserved to n_sources).
  * @param n_sources  Number of particles.
+ * @param work       Pre-allocated work buffer (size from cvl_cl_gpu_tree_build_work_size).
+ * @param work_size  Size of work buffer in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
 cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue,
                                           const cvl_cl_ctx_t *ctx, cvl_cl_staging_buffer_t *staging_pos,
-                                          unsigned n_sources);
+                                          unsigned n_sources, void *work, size_t work_size);
 
 /**
  * @brief Destroy the GPU tree builder, releasing all device buffers.

@@ -81,6 +81,7 @@ list(
         src/core/cost_model.h
         src/core/fmm_operators.h
         src/core/fmm_tree.h
+        src/core/cvl_radix_sort.h
 )
 
 # ---- OpenCL (optional) ----

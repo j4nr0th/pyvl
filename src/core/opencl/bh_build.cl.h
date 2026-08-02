@@ -128,7 +128,7 @@ __kernel void kernel_radix_hist(__global const ulong *keys,                     
 {
     __local uint lhist[256];
 
-    /* zero local memory — stride coverage for small WGs */
+    /* zero local memory - stride coverage for small WGs */
     for (uint t = get_local_id(0); t < 256; t += get_local_size(0))
         lhist[t] = 0;
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -217,14 +217,14 @@ __kernel void kernel_radix_scatter(__global const ulong *keys_in,               
 /*  bd(i) = depth at which particle i separates from particle i-1.     */
 /*  Two codes sharing `lz` top bits are in the same cell through depth */
 /*  floor(lz/3), so the separation depth is lz/3 + 1.  (NOT the depth  */
-/*  of the highest differing bit — using (63-lz)/3+1 collapses every   */
+/*  of the highest differing bit - using (63-lz)/3+1 collapses every   */
 /*  random input into a single group, a latent bug that only showed up */
 /*  on a working GPU backend.)                                         */
 /* ================================================================== */
 
-__kernel void kernel_boundary(__global const ulong *morton_codes,                         /* [n] — sorted */
-                              unsigned n, unsigned max_depth, __global int *boundary_out, /* [n] — bd(i) per particle */
-                              __global volatile uint *bd_hist) /* [max_depth+2] — must be zeroed */
+__kernel void kernel_boundary(__global const ulong *morton_codes,                         /* [n] - sorted */
+                              unsigned n, unsigned max_depth, __global int *boundary_out, /* [n] - bd(i) per particle */
+                              __global volatile uint *bd_hist) /* [max_depth+2] - must be zeroed */
 {
     uint gid = get_global_id(0);
     if (gid >= n)
@@ -260,7 +260,7 @@ __kernel void kernel_boundary(__global const ulong *morton_codes,               
 /*  Kernel 5 – Leaf-node construction                                  */
 /* ================================================================== */
 /*  One work-item per leaf.  Reads leaf_starts[lid] (computed by the   */
-/*  HOST from the boundary array — see cvl_cl_gpu_tree_build.c), finds */
+/*  HOST from the boundary array - see cvl_cl_gpu_tree_build.c), finds */
 /*  leaf end by scanning forward for the next start boundary, computes */
 /*  centroid from the original (unsorted) coords via indices_sorted,   */
 /*  and writes the leaf node + particle_order fragment.                */
@@ -274,9 +274,9 @@ __kernel void kernel_fill_leaves(__global const unsigned *leaf_starts,          
                                  unsigned leaf_offset,                     /* depth_offsets[max_depth] */
                                  __global unsigned *particle_order,        /* [n] */
                                  __global volatile unsigned *leaf_counter, /* [2]: [n_leaves_out, particle_counter] */
-                                 __global const real_t *coords,            /* [3*n] — original (unsorted) coords */
-                                 __global const ulong *morton_sorted,      /* [n] — sorted Morton codes */
-                                 __global const unsigned *indices_sorted,  /* [n] — sorted→original permutation */
+                                 __global const real_t *coords,            /* [3*n] - original (unsorted) coords */
+                                 __global const ulong *morton_sorted,      /* [n] - sorted Morton codes */
+                                 __global const unsigned *indices_sorted,  /* [n] - sorted→original permutation */
                                  real_t root_half_size, unsigned critical_count)
 {
     uint lid = get_global_id(0);
@@ -340,10 +340,10 @@ __kernel void kernel_fill_leaves(__global const unsigned *leaf_starts,          
 /*  Kernel 6 – Build one internal level of the tree                    */
 /* ================================================================== */
 /*  Launch with n_parents work-items.  Parent p reads its contiguous   */
-/*  child range [parent_starts[p], parent_starts[p+1]) — precomputed   */
+/*  child range [parent_starts[p], parent_starts[p+1]) - precomputed   */
 /*  by the HOST from the boundary array (see cvl_cl_gpu_tree_build.c   */
 /*  stage 11; the host, not an atomic compaction, is used so the node  */
-/*  array stays in Morton order) — then computes its centroid, octant  */
+/*  array stays in Morton order) - then computes its centroid, octant  */
 /*  mask, and child base.                                              */
 /*  Call once per depth level, from max_depth-1 down to 0.            */
 /* ================================================================== */
@@ -367,7 +367,7 @@ __kernel void kernel_build_internal(__global bh_build_node_t *nodes, unsigned de
 
     if (child_start >= child_end)
     {
-        /* Degenerate parent — no children (should not happen). */
+        /* Degenerate parent - no children (should not happen). */
         parent->child_base = -1;
         parent->child_mask = 0;
         parent->kind = BH_KIND_INTERNAL;

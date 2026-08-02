@@ -35,10 +35,11 @@
 
 typedef struct
 {
-    cvl_cl_buffer_t device;    /**< Device-side buffer. */
-    float *host_fp32;          /**< Host staging for FP32 (NULL in FP64 mode). */
-    size_t capacity_elements;  /**< Current capacity in real3_t elements. */
-    size_t element_size_bytes; /**< 24 for FP64, 12 for FP32. */
+    cvl_cl_buffer_t device;       /**< Device-side buffer. */
+    float *host_fp32;             /**< Host staging for FP32 (NULL in FP64 mode). */
+    const allocator_t *allocator; /**< Allocator for host staging (NULL = default). */
+    size_t capacity_elements;     /**< Current capacity in real3_t elements. */
+    size_t element_size_bytes;    /**< 24 for FP64, 12 for FP32. */
     cvl_cl_precision_t precision;
     bool unified_memory;
 } cvl_cl_staging_buffer_t;
@@ -49,13 +50,15 @@ typedef struct
  * Does not allocate anything.  First allocation happens on reserve().
  *
  * @param buf             Uninitialised buffer struct.
- * @param ctx             Context (borrowed).
  * @param precision       FP32 or FP64.
  * @param unified_memory  Hint from CL_DEVICE_HOST_UNIFIED_MEMORY.
+ * @param max_elements    Maximum number of real3_t elements the buffer will hold.
+ *                        Used to pre-allocate FP32 host staging (FP64 mode ignores this).
+ * @param allocator       Allocator for host staging (NULL = default).
  * @return CVL_CL_SUCCESS.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, const cvl_cl_ctx_t *ctx,
-                                           cvl_cl_precision_t precision, bool unified_memory);
+cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, cvl_cl_precision_t precision,
+                                           bool unified_memory, size_t max_elements, const allocator_t *allocator);
 
 /**
  * @brief Grow the buffer to at least @p n_elements capacity.

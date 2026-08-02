@@ -155,12 +155,12 @@ int main(void)
         unsigned count = 0;
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
         if (status != CVL_CL_SUCCESS || count == 0)
         {
             status = cvl_cl_device_discover(
                 (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
-                &count, &device);
+                &count, &device, NULL);
         }
         if (status != CVL_CL_SUCCESS || count == 0)
         {
@@ -323,16 +323,25 @@ int main(void)
     /* ----------------------------------------------------------------- */
     /* 8. Init GPU FMM evaluator                                         */
     /* ----------------------------------------------------------------- */
-    CVL_CL_CHECK(cvl_cl_fmm_eval_init(&eval, &comp, CVL_CL_PRECISION_FP64), cleanup);
+    CVL_CL_CHECK(cvl_cl_fmm_eval_init(&eval, &comp, CVL_CL_PRECISION_FP64, NULL), cleanup);
 
     /* ----------------------------------------------------------------- */
     /* 9. Run GPU FMM evaluation                                         */
     /* ----------------------------------------------------------------- */
     real3_t gpu_results[N_TARGETS];
     memset(gpu_results, 0, sizeof(gpu_results));
-    CVL_CL_CHECK(cvl_cl_fmm_eval_run(&eval, &queue, &ctx, &tree, sources_coords, sources_values, N_TARGETS, targets,
-                                     gpu_results),
-                 cleanup);
+    {
+        size_t fmm_work_sz = cvl_cl_fmm_eval_work_size(&eval, &tree);
+        void *fmm_work = malloc(fmm_work_sz);
+        TEST_ASSERT(fmm_work != NULL, "malloc failed for FMM work buffer");
+        CVL_CL_CHECK(cvl_cl_fmm_eval_run(&eval, &queue, &ctx, &tree, sources_coords, sources_values, N_TARGETS, targets,
+                                         gpu_results, fmm_work, fmm_work_sz),
+                     cleanup_fmm_work);
+    cleanup_fmm_work:
+        free(fmm_work);
+        if (status != CVL_CL_SUCCESS)
+            goto cleanup;
+    }
     CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
 
     /* ----------------------------------------------------------------- */

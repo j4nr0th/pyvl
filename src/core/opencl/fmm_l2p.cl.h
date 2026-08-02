@@ -2,7 +2,7 @@
 /*
  * FMM local-expansion evaluation kernel (L2P) for OpenCL C.
  *
- * Phase 5 — GPU offload of the FMM evaluation step.
+ * Phase 5 - GPU offload of the FMM evaluation step.
  *
  * The FMM tree is built on the CPU (fmm_tree_build), which performs the
  * full upward sweep (P2M + M2M) and downward sweep (M2L + L2L) and stores
@@ -16,12 +16,12 @@
  *      point (Horner-style monomial evaluation, identical to
  *      local_expansion_eval in cvl_cl_fmm_ops.h.cl).  The expansion is
  *      centred at the leaf's Γ-weighted centroid (eval_centers), NOT the
- *      geometric centre stored in the flat node — the coefficients are
+ *      geometric centre stored in the flat node - the coefficients are
  *      relative to the centroid.
  *  3. Add the near-field contribution: a direct 1/|r|^2 sum over the
  *      particles stored in the leaf (the leaf's own sources).
  *
- * The kernel is self-contained — it does not call the device-side
+ * The kernel is self-contained - it does not call the device-side
  * functions from cvl_cl_fmm_ops.h.cl.  This avoids the private-memory
  * pressure of the shared shift_exp / pse scratch and the struct-setup
  * overhead, and gives full control over the descent + evaluation.
@@ -41,7 +41,7 @@
 #ifdef __OPENCL_C_VERSION__
 
 /* ------------------------------------------------------------------ */
-/*  Types — flat node (64 bytes, matches cvl_cl_flat_node_t)           */
+/*  Types - flat node (64 bytes, matches cvl_cl_flat_node_t)           */
 /* ------------------------------------------------------------------ */
 
 typedef enum
@@ -82,7 +82,7 @@ static inline int fmm_l2p_child_index(uchar child_mask, unsigned int octant)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Local-expansion evaluation (L2P) — inlined monomial Horner        */
+/*  Local-expansion evaluation (L2P) - inlined monomial Horner        */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -140,7 +140,7 @@ static inline real3_t fmm_l2p_local_eval(unsigned order, real3_t center, __globa
 }
 
 /* ------------------------------------------------------------------ */
-/*  Kernel: fmm_l2p_eval — one work-item per target                   */
+/*  Kernel: fmm_l2p_eval - one work-item per target                   */
 /* ------------------------------------------------------------------ */
 
 /**

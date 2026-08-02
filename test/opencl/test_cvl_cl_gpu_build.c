@@ -202,11 +202,14 @@ int main(void)
 
     /* Test parameters */
     uint64_t rng = 12345;
-#define N_SOURCES 500
-#define N_TARGETS 50
-#define MAX_DEPTH 6
-#define CRIT 8
-#define ORDER 0 /* order=0 → pure direct-sum evaluation */
+    enum
+    {
+        N_SOURCES = 500,
+        N_TARGETS = 50,
+        MAX_DEPTH = 6,
+        CRIT = 8,
+        ORDER = 0, /* order=0 → pure direct-sum evaluation */
+    };
 
     /* ----------------------------------------------------------------- */
     /* 1. Device discovery                                               */
@@ -216,7 +219,7 @@ int main(void)
         unsigned count = 0;
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
         if (status != CVL_CL_SUCCESS || count == 0)
         {
             /* CPU fallback.  The Intel NEO CPU backend ("OpenCL 3.0 (Build 0)")
@@ -228,7 +231,7 @@ int main(void)
              * pipeline cannot run reliably there.  We keep the NEO skip. */
             status = cvl_cl_device_discover(
                 (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1,
-                &count, &device);
+                &count, &device, NULL);
             if (status != CVL_CL_SUCCESS || count == 0)
             {
                 fprintf(stderr, "No OpenCL device found -- skipping GPU build test.\n");
@@ -358,9 +361,12 @@ int main(void)
     {
         bool unified = cvl_cl_compute_unified_memory(&comp);
 
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, &ctx, CVL_CL_PRECISION_FP64, unified), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64, unified, N_TARGETS, NULL),
+                     cleanup);
 
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, &ctx, &queue, N_SOURCES), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_val, &ctx, &queue, N_SOURCES), cleanup);
@@ -384,7 +390,11 @@ int main(void)
     if (use_cpu_fallback)
         CVL_CL_CHECK(cvl_cl_gpu_tree_build_set_radix_policy(&builder, CVL_CL_RADIX_POLICY_WORKAROUND), cleanup);
     CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
-    CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &buf_src_pos, N_SOURCES), cleanup);
+    size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES);
+    void *gpu_work = malloc(gpu_work_sz);
+    TEST_ASSERT(gpu_work != NULL, "malloc(%zu) for GPU tree build work buffer failed", gpu_work_sz);
+    CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &buf_src_pos, N_SOURCES, gpu_work, gpu_work_sz),
+                 cleanup);
 
     printf("GPU build: n_total=%u n_internal=%u n_multipole=%u n_particle=%u\n", builder.n_total, builder.n_internal,
            builder.n_multipole_leaves, builder.n_particle_leaves);
@@ -577,6 +587,7 @@ cleanup:
     free(host_nodes);
     free(host_order);
     free(host_depth_offsets);
+    free(gpu_work);
 
     cvl_cl_gpu_tree_build_destroy(&builder);
     cvl_cl_staging_buffer_destroy(&buf_results);

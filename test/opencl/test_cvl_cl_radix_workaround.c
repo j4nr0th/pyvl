@@ -107,7 +107,7 @@ int main(void)
                                                                 .device_type = CL_DEVICE_TYPE_ALL,
                                                             },
                                                             {}},
-                                    1, &count, &device);
+                                    1, &count, &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         fprintf(stderr, "No OpenCL device found -- skipping radix workaround test.\n");

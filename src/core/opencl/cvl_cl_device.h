@@ -21,6 +21,7 @@
  * @endcode
  */
 
+#include "../common.h"
 #include "cvl_cl_common.h"
 
 #include <CL/cl.h>
@@ -31,7 +32,7 @@
 
 typedef enum
 {
-    CVL_CL_DEVICE_SEL_NONE,           /**< Terminator — marks end of the selection array. */
+    CVL_CL_DEVICE_SEL_NONE,           /**< Terminator - marks end of the selection array. */
     CVL_CL_DEVICE_SEL_TYPE,           /**< Select by CL_DEVICE_TYPE (GPU, CPU, etc.). */
     CVL_CL_DEVICE_SEL_PLATFORM_INDEX, /**< Select a specific platform by index. */
     CVL_CL_DEVICE_SEL_PLATFORM_NAME,  /**< Select platform whose name contains @ref platform_name_substring. */
@@ -54,6 +55,7 @@ typedef struct
 
 typedef struct
 {
+    const allocator_t *allocator;  /**< Allocator used for info strings (NULL = default). */
     char *name;                    /**< CL_DEVICE_NAME. */
     char *vendor;                  /**< CL_DEVICE_VENDOR. */
     char *version;                 /**< CL_DEVICE_VERSION string (e.g. "OpenCL 3.0"). */
@@ -113,11 +115,12 @@ struct cvl_cl_device_t
  * @param out_count   Filled with the number of matching devices found (may exceed max_devices).
  * @param out_devices Array of @p max_devices device handles.  Each handle
  *                    must be destroyed via @ref cvl_cl_device_destroy.
+ * @param allocator   Allocator for info strings (NULL = default).
  * @return CVL_CL_SUCCESS on success, or an error code on failure.
  *         CVL_CL_ERR_DEVICE_NOT_FOUND if selectors matched nothing.
  */
 cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_device_sel_t selectors[], unsigned max_devices, unsigned *out_count,
-                                       cvl_cl_device_t out_devices[]);
+                                       cvl_cl_device_t out_devices[], const allocator_t *allocator);
 
 /**
  * @brief Destroy a device handle, freeing cached info strings.
@@ -160,7 +163,7 @@ static inline const cvl_cl_device_info_t *cvl_cl_device_info(const cvl_cl_device
  *
  * The NEO CPU backend (the experimental `libcpu_device.so` / `libOclCpuBackEnd.so`
  * path bundled with the Intel Graphics Compute Runtime) miscompiles kernels that
- * index `__local` memory with data-dependent indices loaded from global memory —
+ * index `__local` memory with data-dependent indices loaded from global memory -
  * see `intel-neo-cpu-bug.md` at the repository root for the full report and the
  * minimal repro.
  *

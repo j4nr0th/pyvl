@@ -4,7 +4,7 @@
  *
  * The highlight of this module is @ref cvl_cl_kernel_set_args, which
  * accepts a NULL-terminated array of @ref cvl_cl_karg_t descriptors
- * built with designated initializers — the same pattern used by
+ * built with designated initializers - the same pattern used by
  * cpyutl's parse_arguments and cpyutl_output_create.
  *
  * Example:
@@ -47,7 +47,7 @@ typedef struct cvl_cl_karg_t
     cvl_cl_karg_type_t type;
     unsigned index; /**< Kernel argument index (0-based). */
     union {
-        cl_mem mem; /**< For CVL_CL_KARG_BUFFER — a cl_mem handle. */
+        cl_mem mem; /**< For CVL_CL_KARG_BUFFER - a cl_mem handle. */
         int scalar_int;
         unsigned scalar_uint;
         long long scalar_long;

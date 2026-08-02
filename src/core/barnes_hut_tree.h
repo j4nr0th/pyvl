@@ -117,7 +117,7 @@ bool barnes_hut_prepare_scratch(void *scratch_buffer, size_t scratch_size, unsig
 /** @brief Total work buffer bytes needed given a finished count pass. */
 size_t barnes_hut_work_size(unsigned n_sources, const barnes_hut_settings_t *settings, const octree_count_t *count);
 
-/** @brief Insert pass — takes pre-counted, pre-partitioned scratch + pre-sized work buffer. */
+/** @brief Insert pass - takes pre-counted, pre-partitioned scratch + pre-sized work buffer. */
 bool barnes_hut_tree_insert(unsigned n_sources, unsigned n_threads, const real3_t sources_coords[restrict n_sources],
                             const real3_t sources_values[restrict n_sources],
                             const barnes_hut_settings_t settings[restrict], const octree_count_t *count,

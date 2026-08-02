@@ -6,7 +6,7 @@
  * registry of named kernel handles, and cached device capabilities
  * (precision mode, unified memory flag, work-group limits).
  *
- * The context, queue, and device are borrowed — they must outlive
+ * The context, queue, and device are borrowed - they must outlive
  * the compute backend.
  *
  * Typical usage:
@@ -52,7 +52,7 @@ typedef struct
     /* Owned resources. */
     cvl_cl_program_t program;
     cvl_cl_kernel_t kernels[CVL_CL_COMPUTE_MAX_KERNELS];
-    const char *kernel_names[CVL_CL_COMPUTE_MAX_KERNELS]; /**< Names (borrowed — caller keeps strings alive). */
+    const char *kernel_names[CVL_CL_COMPUTE_MAX_KERNELS]; /**< Names (borrowed - caller keeps strings alive). */
     unsigned n_kernels;
 
     /* Cached device capabilities. */
@@ -73,9 +73,9 @@ typedef struct
  * Device capabilities are queried once and cached.
  *
  * @param comp           Uninitialised compute handle.
- * @param ctx            Context (borrowed — must outlive comp).
- * @param queue          Queue (borrowed — must outlive comp).
- * @param device         Device handle (borrowed — must outlive comp).
+ * @param ctx            Context (borrowed - must outlive comp).
+ * @param queue          Queue (borrowed - must outlive comp).
+ * @param device         Device handle (borrowed - must outlive comp).
  * @param precision      FP32 or FP64.
  * @param kernel_source  Multi-kernel OpenCL C source string.
  * @param kernel_names   Array of kernel function names to extract.

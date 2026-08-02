@@ -380,4 +380,7 @@ typedef struct
 /** @brief Callback-based memory allocation interface. */
 allocator_t;
 
+/** @brief Default allocator using malloc/free/realloc (defined in common.c). */
+extern const allocator_t CVL_DEFAULT_ALLOCATOR;
+
 #endif // COMMON_H

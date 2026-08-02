@@ -65,7 +65,7 @@ void multipole_to_local(const multipole_t *in, local_expansion_t *out, unsigned 
     const real_t Rp2 = real3_dot(R_prime, R_prime);
 
     if (Rp2 < 1e-30)
-        return; /* Source and local centres coincide — nothing to do. */
+        return; /* Source and local centres coincide - nothing to do. */
 
     /*
      * The local expansion polynomial for order m is:
@@ -83,7 +83,7 @@ void multipole_to_local(const multipole_t *in, local_expansion_t *out, unsigned 
      *   s = r - R'   (since r = R + r', s = S + s_rel, R' = R - S,
      *                 so s_rel = r - R = r')
      *
-     * Wait — the multipole is expanded about S (source centre), so its
+     * Wait - the multipole is expanded about S (source centre), so its
      * variable is r - S.  The local is expanded about R, variable r' = r - R.
      * Thus r - S = r' + (R - S) = r' + R'.
      *
@@ -220,7 +220,7 @@ void local_expansion_shift(const local_expansion_t *in, local_expansion_t *out, 
     const real_t d2 = real3_dot(d, d);
 
     if (d2 < 1e-30)
-        return; /* Centres coincide — copy coefficients directly. */
+        return; /* Centres coincide - copy coefficients directly. */
 
     /*
      * Shifting a local expansion from centre C_in to C_out:
@@ -248,14 +248,14 @@ void local_expansion_shift(const local_expansion_t *in, local_expansion_t *out, 
      * However, there's a simpler approach: the local expansion is just a
      * polynomial in r'.  Shifting the centre means substituting
      * r'_in = r'_out + d into the polynomial.  This is a pure polynomial
-     * substitution — no series expansion needed!
+     * substitution - no series expansion needed!
      *
      * For each stored coefficient c_{pqr} at order m, the monomial
      * x^p y^q z^r (in old coords) becomes (x+d_x)^p (y+d_y)^q (z+d_z)^r
      * (in new coords).  We expand via binomial and accumulate.
      *
      * The scale factor 1/|R-S|^{2(m+1)} is absorbed into the coefficients
-     * during M2L, so it's already part of c_{pqr} — no extra scaling here.
+     * during M2L, so it's already part of c_{pqr} - no extra scaling here.
      */
 
     /* Build binomial expansions of (x + d_x)^e etc up to work_order. */

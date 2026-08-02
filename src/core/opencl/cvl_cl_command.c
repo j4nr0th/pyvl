@@ -1,4 +1,5 @@
 #include "cvl_cl_command.h"
+#include "cvl_cl_helpers.h"
 
 #include <string.h>
 
@@ -45,22 +46,6 @@ void cvl_cl_event_release(cvl_cl_event_t *event)
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal: build a raw cl_event* list from wait_events              */
-/* ------------------------------------------------------------------ */
-
-static cl_event *build_event_list(unsigned n_wait, const cvl_cl_event_t *wait_events, cl_event *scratch)
-{
-    if (n_wait == 0 || !wait_events)
-    {
-        scratch[0] = NULL;
-        return NULL;
-    }
-    for (unsigned i = 0; i < n_wait; ++i)
-        scratch[i] = wait_events[i].event;
-    return scratch;
-}
-
-/* ------------------------------------------------------------------ */
 /* NDRange kernel launch                                              */
 /* ------------------------------------------------------------------ */
 
@@ -83,23 +68,17 @@ cvl_cl_status_t cvl_cl_ndrange(cvl_cl_queue_t *queue, cvl_cl_kernel_t *kernel, u
             return status;
     }
 
-    /* Build event wait list. */
-    cl_event wait_list_raw[16];
+    /* Build event wait list and output event. */
+    cl_event wait_list_raw[CL_MAX_WAIT_EVENTS];
     cl_event *wait_ptr = NULL;
-    if (n_wait > 0)
-    {
-        if (n_wait > 16)
-        {
-            /* For large wait lists, caller should manage events externally.
-             * This is a soft limit — in practice wait lists are small. */
-            return CVL_CL_ERR_INVALID_PARAM;
-        }
-        wait_ptr = build_event_list(n_wait, wait_events, wait_list_raw);
-    }
-
-    /* Output event. */
     cl_event raw_out = NULL;
-    cl_event *p_out = out_event ? &raw_out : NULL;
+    cl_event *p_out = NULL;
+    {
+        cvl_cl_status_t s =
+            cl_prepare_wait_list(n_wait, wait_events, wait_list_raw, &wait_ptr, &raw_out, out_event, &p_out);
+        if (s != CVL_CL_SUCCESS)
+            return s;
+    }
 
     cl_int err = clEnqueueNDRangeKernel(queue->queue, kernel->kernel, dims, NULL, global_work, local_work, n_wait,
                                         wait_ptr, p_out);
@@ -127,17 +106,16 @@ cvl_cl_status_t cvl_cl_write_buffer(cvl_cl_queue_t *queue, cvl_cl_buffer_t *buff
     if (offset + size > buffer->capacity)
         return CVL_CL_ERR_BUFFER_SIZE;
 
-    cl_event wait_list_raw[16];
+    cl_event wait_list_raw[CL_MAX_WAIT_EVENTS];
     cl_event *wait_ptr = NULL;
-    if (n_wait > 0)
-    {
-        if (n_wait > 16)
-            return CVL_CL_ERR_INVALID_PARAM;
-        wait_ptr = build_event_list(n_wait, wait_events, wait_list_raw);
-    }
-
     cl_event raw_out = NULL;
-    cl_event *p_out = out_event ? &raw_out : NULL;
+    cl_event *p_out = NULL;
+    {
+        cvl_cl_status_t s =
+            cl_prepare_wait_list(n_wait, wait_events, wait_list_raw, &wait_ptr, &raw_out, out_event, &p_out);
+        if (s != CVL_CL_SUCCESS)
+            return s;
+    }
 
     cl_int err =
         clEnqueueWriteBuffer(queue->queue, buffer->mem, CL_FALSE, offset, size, host_ptr, n_wait, wait_ptr, p_out);
@@ -161,17 +139,16 @@ cvl_cl_status_t cvl_cl_read_buffer(cvl_cl_queue_t *queue, const cvl_cl_buffer_t 
     if (offset + size > buffer->capacity)
         return CVL_CL_ERR_BUFFER_SIZE;
 
-    cl_event wait_list_raw[16];
+    cl_event wait_list_raw[CL_MAX_WAIT_EVENTS];
     cl_event *wait_ptr = NULL;
-    if (n_wait > 0)
-    {
-        if (n_wait > 16)
-            return CVL_CL_ERR_INVALID_PARAM;
-        wait_ptr = build_event_list(n_wait, wait_events, wait_list_raw);
-    }
-
     cl_event raw_out = NULL;
-    cl_event *p_out = out_event ? &raw_out : NULL;
+    cl_event *p_out = NULL;
+    {
+        cvl_cl_status_t s =
+            cl_prepare_wait_list(n_wait, wait_events, wait_list_raw, &wait_ptr, &raw_out, out_event, &p_out);
+        if (s != CVL_CL_SUCCESS)
+            return s;
+    }
 
     cl_int err =
         clEnqueueReadBuffer(queue->queue, buffer->mem, CL_FALSE, offset, size, host_ptr, n_wait, wait_ptr, p_out);
@@ -195,17 +172,16 @@ cvl_cl_status_t cvl_cl_copy_buffer(cvl_cl_queue_t *queue, const cvl_cl_buffer_t 
     if (src_offset + size > src->capacity || dst_offset + size > dst->capacity)
         return CVL_CL_ERR_BUFFER_SIZE;
 
-    cl_event wait_list_raw[16];
+    cl_event wait_list_raw[CL_MAX_WAIT_EVENTS];
     cl_event *wait_ptr = NULL;
-    if (n_wait > 0)
-    {
-        if (n_wait > 16)
-            return CVL_CL_ERR_INVALID_PARAM;
-        wait_ptr = build_event_list(n_wait, wait_events, wait_list_raw);
-    }
-
     cl_event raw_out = NULL;
-    cl_event *p_out = out_event ? &raw_out : NULL;
+    cl_event *p_out = NULL;
+    {
+        cvl_cl_status_t s =
+            cl_prepare_wait_list(n_wait, wait_events, wait_list_raw, &wait_ptr, &raw_out, out_event, &p_out);
+        if (s != CVL_CL_SUCCESS)
+            return s;
+    }
 
     cl_int err =
         clEnqueueCopyBuffer(queue->queue, src->mem, dst->mem, src_offset, dst_offset, size, n_wait, wait_ptr, p_out);

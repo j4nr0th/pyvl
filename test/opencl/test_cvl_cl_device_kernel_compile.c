@@ -263,7 +263,7 @@ static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const ch
         .source_string = full_source,
         .precision = precision,
     };
-    status = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(dev), &program);
+    status = cvl_cl_program_create(ctx, &desc, cvl_cl_device_id(dev), &program, NULL);
     if (status != CVL_CL_SUCCESS)
     {
         const char *log = cvl_cl_program_build_log(&program);
@@ -344,12 +344,12 @@ int main(void)
 
     status = cvl_cl_device_discover(
         (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU}, {}}, 1, &count,
-        &device);
+        &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
             (cvl_cl_device_sel_t[]){{.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU}, {}}, 1, &count,
-            &device);
+            &device, NULL);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {

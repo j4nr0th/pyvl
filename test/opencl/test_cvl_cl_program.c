@@ -37,7 +37,7 @@ int main(void)
             {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
             {},
         },
-        1, &count, &device);
+        1, &count, &device, NULL);
     if (status != CVL_CL_SUCCESS || count == 0)
     {
         status = cvl_cl_device_discover(
@@ -45,7 +45,7 @@ int main(void)
                 {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
                 {},
             },
-            1, &count, &device);
+            1, &count, &device, NULL);
     }
     if (status != CVL_CL_SUCCESS || count == 0)
     {
@@ -67,7 +67,7 @@ int main(void)
                                            .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                            .source_string = VALID_KERNEL_SOURCE,
                                        },
-                                       cvl_cl_device_id(&device), &valid_prog),
+                                       cvl_cl_device_id(&device), &valid_prog, NULL),
                  cleanup);
     TEST_ASSERT(cvl_cl_program_program(&valid_prog) != NULL, "Valid program handle is NULL after successful creation");
     TEST_ASSERT(cvl_cl_program_build_log(&valid_prog) == NULL, "Build log should be NULL when compilation succeeded");
@@ -81,7 +81,7 @@ int main(void)
                                        .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                        .source_string = INVALID_KERNEL_SOURCE,
                                    },
-                                   cvl_cl_device_id(&device), &invalid_prog);
+                                   cvl_cl_device_id(&device), &invalid_prog, NULL);
     TEST_ASSERT(status == CVL_CL_ERR_PROGRAM_BUILD, "Invalid kernel should yield PROGRAM_BUILD error, got %s",
                 cvl_cl_status_str(status));
 

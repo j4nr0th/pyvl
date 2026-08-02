@@ -16,7 +16,7 @@ int main(void)
             {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
             {},
         },
-        1, &count, &gpu_dev);
+        1, &count, &gpu_dev, NULL);
 
     if (status == CVL_CL_SUCCESS && count > 0)
     {
@@ -35,7 +35,7 @@ int main(void)
             {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_CPU},
             {},
         },
-        1, &count, &cpu_dev);
+        1, &count, &cpu_dev, NULL);
 
     if (status == CVL_CL_SUCCESS && count > 0)
     {
