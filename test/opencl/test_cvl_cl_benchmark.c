@@ -256,12 +256,6 @@ int main(void)
     real3_t cpu_direct[N_TARGETS];
     real3_t cpu_bh[N_TARGETS];
     real3_t cpu_fmm[N_TARGETS];
-    /* CPU references evaluated at the first N_TARGETS SOURCE positions.
-     * The bh_flat_eval kernel reads its target point from sources_pos
-     * (arg 3), so GPU BH evaluates at source positions — the CPU refs
-     * for the BH comparison must use the same points. */
-    real3_t cpu_direct_src[N_TARGETS];
-    real3_t cpu_bh_src[N_TARGETS];
 
     /* GPU result scratch. */
     real3_t gpu_results[N_TARGETS];
@@ -444,29 +438,10 @@ int main(void)
         }
         t_cpu_direct = (now_seconds() - t0) * 1e3;
     }
-    /* Direct sum evaluated at the first N_TARGETS source positions — the
-     * reference for the GPU BH kernel (which evaluates at sources). */
-    {
-        const double t0 = now_seconds();
-        for (unsigned t = 0; t < N_TARGETS; ++t)
-        {
-            real3_t acc = {0, 0, 0};
-            for (unsigned s = 0; s < N_SOURCES; ++s)
-            {
-                real3_t dr = real3_sub(sources_pos[t], sources_pos[s]);
-                acc = real3_add(acc, particle_kernel(sources_val[s], dr));
-            }
-            cpu_direct_src[t] = acc;
-        }
-        t_cpu_direct = (now_seconds() - t0) * 1e3;
-    }
     {
         const barnes_hut_eval_settings_t eval_settings = {.theta = BH_THETA};
         const double t0 = now_seconds();
         barnes_hut_tree_eval_all(&bh_tree, sources_pos, sources_val, N_TARGETS, targets, cpu_bh, eval_settings, 1);
-        /* BH eval at the source positions (matches the GPU kernel). */
-        barnes_hut_tree_eval_all(&bh_tree, sources_pos, sources_val, N_TARGETS, sources_pos, cpu_bh_src, eval_settings,
-                                 1);
         t_cpu_bh = (now_seconds() - t0) * 1e3;
     }
     {
@@ -745,7 +720,8 @@ int main(void)
                                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = BH_ORDER},
                                            theta_arg,
                                            {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = buf_bh_coeffs.mem},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_results.device.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_targets.device.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 10, .mem = buf_results.device.mem},
                                            {},
                                        }),
                 cleanup);
@@ -759,9 +735,9 @@ int main(void)
             t_gpu_bh[pidx] = (now_seconds() - t0) * 1e3;
 
             double abs_err;
-            /* GPU BH evaluates at the first N_TARGETS source positions —
-             * compare against the at-source references. */
-            err_bh[pidx] = max_rel_error(gpu_results, cpu_direct_src, &abs_err);
+            /* GPU BH evaluates at the arbitrary targets — compare against
+             * the target references (cpu_bh / cpu_direct). */
+            err_bh[pidx] = max_rel_error(gpu_results, cpu_bh, &abs_err);
             printf("[%s] GPU BH (theta=%.2f): %.3f ms  max_abs=%.2e max_rel=%.2e\n", prec_name, BH_THETA,
                    t_gpu_bh[pidx], abs_err, err_bh[pidx]);
         }
@@ -823,11 +799,10 @@ int main(void)
     /*       cancellation points (relative error there is meaningless).  */
     /*       So instead of an absolute bound, assert the GPU kernels are */
     /*       no worse than the CPU implementations on the same points.   */
-    /*       The BH comparison uses the at-source references (the GPU    */
-    /*       kernel evaluates at source positions).                      */
+    /*       Both GPU and CPU BH evaluate at the arbitrary targets.      */
     /* ----------------------------------------------------------------- */
     double cpu_bh_abs = 0.0, cpu_fmm_abs = 0.0;
-    const double cpu_bh_err = max_rel_error(cpu_bh_src, cpu_direct_src, &cpu_bh_abs);
+    const double cpu_bh_err = max_rel_error(cpu_bh, cpu_direct, &cpu_bh_abs);
     const double cpu_fmm_err = max_rel_error(cpu_fmm, cpu_direct, &cpu_fmm_abs);
 
     TEST_ASSERT(err_direct[0] < 1e-12, "FP64 direct sum mismatch: max_rel=%.2e", err_direct[0]);

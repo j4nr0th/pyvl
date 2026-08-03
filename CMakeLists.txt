@@ -101,6 +101,7 @@ if (OpenCL_FOUND)
             DEPENDS
             src/core/opencl/bh_build.cl.h
             src/core/opencl/bh_flat_eval.cl.h
+            src/core/opencl/bh_p2m_m2m.cl.h
             src/core/opencl/fmm_l2p.cl.h
             src/core/opencl/direct_sum.cl.h
             src/core/opencl/cvl_cl_types.h.cl
@@ -132,6 +133,7 @@ if (OpenCL_FOUND)
             src/core/cl_compute/cvl_cl_flat_tree.c
             src/core/cl_compute/cvl_cl_gpu_tree_build.c
             src/core/cl_compute/cvl_cl_fmm_eval.c
+            src/core/cl_compute/cvl_cl_tree.c
     )
 
     list(
@@ -155,6 +157,7 @@ if (OpenCL_FOUND)
             src/core/cl_compute/cvl_cl_flat_tree.h
             src/core/cl_compute/cvl_cl_gpu_tree_build.h
             src/core/cl_compute/cvl_cl_fmm_eval.h
+            src/core/cl_compute/cvl_cl_tree.h
             "${CVL_CL_GEN_HEADER}"
     )
 endif ()

@@ -118,13 +118,16 @@ static inline int bh_child_index(bh_flat_node_t node, unsigned int octant)
  * @param[in]  coeffs          Multipole coefficients
  *                             [3 * n_coeffs_per_node * num_nodes].
  *                             May be NULL if order == 0.
+ * @param[in]  targets         Target positions [3 * n_targets].
+ *                             May alias sources_pos to evaluate at the
+ *                             source positions themselves.
  * @param[out] results         Output accumulator
  *                             [3 * n_targets].
  */
 __kernel void bh_flat_eval(__global const bh_flat_node_t *nodes, __global const unsigned int *particle_order,
                            __global const unsigned int *depth_offsets, __global const real_t *sources_pos,
                            __global const real_t *sources_val, unsigned int n_targets, unsigned int order, real_t theta,
-                           __global const real_t *coeffs, __global real_t *results)
+                           __global const real_t *coeffs, __global const real_t *targets, __global real_t *results)
 {
     unsigned int tid = get_global_id(0);
     if (tid >= n_targets)
@@ -132,9 +135,9 @@ __kernel void bh_flat_eval(__global const bh_flat_node_t *nodes, __global const 
 
     /* Load target position. */
     real3_t point;
-    point.x = sources_pos[3u * tid];
-    point.y = sources_pos[3u * tid + 1u];
-    point.z = sources_pos[3u * tid + 2u];
+    point.x = targets[3u * tid];
+    point.y = targets[3u * tid + 1u];
+    point.z = targets[3u * tid + 2u];
 
     real3_t acc = {0, 0, 0};
 

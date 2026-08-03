@@ -111,6 +111,7 @@ int main(void)
     /* Staging buffers */
     cvl_cl_staging_buffer_t buf_src_pos = {0};
     cvl_cl_staging_buffer_t buf_src_val = {0};
+    cvl_cl_staging_buffer_t buf_targets = {0};
     cvl_cl_staging_buffer_t buf_results = {0};
 
     /* GPU tree data for eval kernel (raw buffers) */
@@ -237,10 +238,12 @@ int main(void)
     {
         CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, CVL_CL_PRECISION_FP64), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, CVL_CL_PRECISION_FP64), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_targets, CVL_CL_PRECISION_FP64), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64), cleanup);
 
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, ctx, queue, N_SOURCES), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_val, ctx, queue, N_SOURCES), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_targets, ctx, queue, N_TARGETS), cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_results, ctx, queue, N_TARGETS), cleanup);
 
         /* Upload sources (positions + values) through a chain (FP64: no scratch). */
@@ -248,6 +251,11 @@ int main(void)
         CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_pos, &chain, sources, NULL, N_SOURCES, 0, NULL),
                      cleanup);
         CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_val, &chain, values, NULL, N_SOURCES, 0, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_chain_finish(&chain), cleanup);
+
+        /* Targets = first N_TARGETS source positions (evaluating at sources). */
+        CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_targets, &chain, sources, NULL, N_TARGETS, 0, NULL),
                      cleanup);
         CVL_CL_CHECK(cvl_cl_chain_finish(&chain), cleanup);
     }
@@ -369,7 +377,8 @@ int main(void)
                                         .index = 7,
                                         .scalar_double = 1e-15}, /* tiny theta → full descent */
                                        {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = buf_coeffs.mem},
-                                       {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_results.device.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_targets.device.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 10, .mem = buf_results.device.mem},
                                        {},
                                    }),
             cleanup);
@@ -454,6 +463,7 @@ cleanup:
 
     cvl_cl_gpu_tree_build_destroy(&builder);
     cvl_cl_staging_buffer_destroy(&buf_results);
+    cvl_cl_staging_buffer_destroy(&buf_targets);
     cvl_cl_staging_buffer_destroy(&buf_src_val);
     cvl_cl_staging_buffer_destroy(&buf_src_pos);
     cvl_cl_buffer_destroy(&buf_coeffs);

@@ -53,6 +53,17 @@ PACKS = [
     ("CVL_CL_SRC_BH_BUILD", PREAMBLE_BH, ["bh_build.cl.h"]),
     ("CVL_CL_SRC_BH_EVAL", PREAMBLE_BH, ["bh_flat_eval.cl.h"]),
     (
+        "CVL_CL_SRC_BH_COEFFS",
+        PREAMBLE_FMM,
+        [
+            "cvl_cl_types.h.cl",
+            "cvl_cl_math.h.cl",
+            "cvl_cl_multipole.h.cl",
+            "cvl_cl_multipole_ops.h.cl",
+            "bh_p2m_m2m.cl.h",
+        ],
+    ),
+    (
         "CVL_CL_SRC_FMM_EVAL",
         PREAMBLE_FMM,
         [

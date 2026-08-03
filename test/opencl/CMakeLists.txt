@@ -64,6 +64,16 @@ add_cvl_cl_test(test_cvl_cl_flat_tree test_cvl_cl_flat_tree.c)
 # Test 11: BH flat-tree GPU evaluation (order=0, compare with CPU direct sum)
 add_cvl_cl_test(test_cvl_cl_bh_eval test_cvl_cl_bh_eval.c)
 
+# Test 11b: GPU multipole coefficient kernels (P2M/M2M) + tree-code eval
+add_cvl_cl_test(test_cvl_cl_bh_coeffs test_cvl_cl_bh_coeffs.c)
+target_include_directories(test_cvl_cl_bh_coeffs PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_bh_coeffs PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 11c: Persistent tree handle (build/eval jobs, rebuild reuse)
+add_cvl_cl_test(test_cvl_cl_tree test_cvl_cl_tree.c)
+target_include_directories(test_cvl_cl_tree PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
+target_include_directories(test_cvl_cl_tree PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
+
 # Test 12: GPU tree build pipeline + BH evaluation end-to-end
 add_cvl_cl_test(test_cvl_cl_gpu_build test_cvl_cl_gpu_build.c)
 target_include_directories(test_cvl_cl_gpu_build PRIVATE "${CMAKE_SOURCE_DIR}/src/core")

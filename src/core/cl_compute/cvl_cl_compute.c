@@ -20,6 +20,11 @@ static const char *const BH_EVAL_KERNELS[] = {
     "bh_flat_eval",
 };
 
+static const char *const BH_COEFFS_KERNELS[] = {
+    "kernel_p2m_leaves",
+    "kernel_build_internal_m2m",
+};
+
 static const char *const FMM_EVAL_KERNELS[] = {
     "fmm_l2p_eval",
 };
@@ -38,6 +43,7 @@ typedef struct
 static const pack_kernels_t PACK_KERNELS[CVL_CL_PACK_COUNT] = {
     {CVL_CL_PACK_BH_BUILD, BH_BUILD_KERNELS, (unsigned)(sizeof(BH_BUILD_KERNELS) / sizeof(BH_BUILD_KERNELS[0]))},
     {CVL_CL_PACK_BH_EVAL, BH_EVAL_KERNELS, (unsigned)(sizeof(BH_EVAL_KERNELS) / sizeof(BH_EVAL_KERNELS[0]))},
+    {CVL_CL_PACK_BH_COEFFS, BH_COEFFS_KERNELS, (unsigned)(sizeof(BH_COEFFS_KERNELS) / sizeof(BH_COEFFS_KERNELS[0]))},
     {CVL_CL_PACK_FMM_EVAL, FMM_EVAL_KERNELS, (unsigned)(sizeof(FMM_EVAL_KERNELS) / sizeof(FMM_EVAL_KERNELS[0]))},
     {CVL_CL_PACK_DIRECT_SUM, DIRECT_SUM_KERNELS,
      (unsigned)(sizeof(DIRECT_SUM_KERNELS) / sizeof(DIRECT_SUM_KERNELS[0]))},
@@ -52,6 +58,8 @@ static const char *pack_name(cvl_cl_pack_t pack)
         return "BH_BUILD";
     case CVL_CL_PACK_BH_EVAL:
         return "BH_EVAL";
+    case CVL_CL_PACK_BH_COEFFS:
+        return "BH_COEFFS";
     case CVL_CL_PACK_FMM_EVAL:
         return "FMM_EVAL";
     case CVL_CL_PACK_DIRECT_SUM:

@@ -49,6 +49,7 @@ typedef enum
 {
     CVL_CL_PACK_BH_BUILD = 0, /**< bh_build.cl.h - tree build kernels. */
     CVL_CL_PACK_BH_EVAL,      /**< bh_flat_eval.cl.h - BH evaluation. */
+    CVL_CL_PACK_BH_COEFFS,    /**< bh_p2m_m2m.cl.h - multipole coefficients (P2M/M2M). */
     CVL_CL_PACK_FMM_EVAL,     /**< fmm_l2p.cl.h + shared headers - FMM L2P evaluation. */
     CVL_CL_PACK_DIRECT_SUM,   /**< direct_sum.cl.h - direct N-body sum. */
     CVL_CL_PACK_COUNT,        /**< Number of packs (also bounds programs[]). */
@@ -78,6 +79,13 @@ typedef enum
     CVL_CL_BH_EVAL_FLAT_EVAL = 0, /**< bh_flat_eval. */
     CVL_CL_BH_EVAL_KERNEL_COUNT,
 } cvl_cl_bh_eval_kernel_t;
+
+typedef enum
+{
+    CVL_CL_BH_COEFFS_P2M = 0,  /**< kernel_p2m_leaves. */
+    CVL_CL_BH_COEFFS_INTERNAL, /**< kernel_build_internal_m2m. */
+    CVL_CL_BH_COEFFS_KERNEL_COUNT,
+} cvl_cl_bh_coeffs_kernel_t;
 
 typedef enum
 {
