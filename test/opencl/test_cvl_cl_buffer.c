@@ -2,16 +2,16 @@
 
 #include "../test_common.h"
 #include "cvl_cl.h"
+#include "cvl_cl_test_common.h"
 
 int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
     cvl_cl_buffer_t buf = {0};
     cvl_cl_buffer_t zero_buf = {0};
-    unsigned count = 0;
 
     /* ---- Discover device ---- */
     status = cvl_cl_device_first_gpu(&device);
@@ -29,12 +29,12 @@ int main(void)
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
 
     /* ---- Queue (needed for buffer_reserve copy) ---- */
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     /* ================================================================ */
     /*  Test 1: Create a 1024-byte READ_WRITE buffer                   */
     /* ================================================================ */
-    CVL_CL_CHECK(cvl_cl_buffer_create(&ctx,
+    CVL_CL_CHECK(cvl_cl_buffer_create(ctx,
                                       &(cvl_cl_buffer_desc_t){
                                           .access = CVL_CL_BUF_READ_WRITE,
                                           .size_bytes = 1024,
@@ -50,7 +50,7 @@ int main(void)
     /* ================================================================ */
     /*  Test 2: Reserve - grow to 4096 bytes                           */
     /* ================================================================ */
-    CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, &ctx, &queue, 4096), cleanup);
+    CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, ctx, queue, 4096), cleanup);
 
     TEST_ASSERT(buf.capacity >= 4096, "After reserve(4096), capacity (%zu) should be >= 4096", buf.capacity);
     /*
@@ -62,7 +62,7 @@ int main(void)
     /* ================================================================ */
     /*  Test 3: Zero-size buffer creation                               */
     /* ================================================================ */
-    CVL_CL_CHECK(cvl_cl_buffer_create(&ctx,
+    CVL_CL_CHECK(cvl_cl_buffer_create(ctx,
                                       &(cvl_cl_buffer_desc_t){
                                           .access = CVL_CL_BUF_READ_ONLY,
                                           .size_bytes = 0,

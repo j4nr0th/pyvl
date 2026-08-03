@@ -5,9 +5,9 @@
  * Pipeline tested:
  *   1. Generate N=500 random source coordinates
  *   2. Compute bounding box, root_center, root_half_size on host
- *   3. Read and concatenate bh_build.cl.h + bh_flat_eval.cl.h kernel sources
- *      (reuses the skip_include_concat pattern from test_cvl_cl_device_kernel_compile.c)
- *   4. Compile combined program — register all 8 kernels
+ *   3. Initialise the compute backend by kernel NAME (embedded pack sources:
+ *      BH_BUILD + BH_EVAL) — no runtime .cl.h file reading
+ *   4. Register the 7 kernels used by the pipeline
  *   5. Run the full GPU tree build (cvl_cl_gpu_tree_build_run)
  *   6. Validate tree structure against metadata (n_total, n_internal, depth_offsets, ...)
  *   7. Read back the flat tree, upload to new device buffers
@@ -21,86 +21,14 @@
 #ifdef CVL_OPENCL
 
 #include "../test_common.h"
-#include "cvl_cl.h"
 #include "cvl_cl_compute.h"
 #include "cvl_cl_gpu_tree_build.h"
 #include "cvl_cl_staging_buffer.h"
+#include "cvl_cl_test_common.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* ------------------------------------------------------------------ */
-/*  Helpers for building the concatenated kernel source                */
-/* ------------------------------------------------------------------ */
-
-/**
- * @brief Concatenate @p src into @p dst, skipping lines that start
- *        with `#include` or `#pragma once` (directives that OpenCL C
- *        cannot resolve at runtime or that cause warnings).
- *
- * @param dst     Output buffer (NUL-terminated on return).
- * @param dst_cap Capacity of @p dst (including trailing NUL).
- * @param src     NUL-terminated input string.
- * @return Number of characters written (excluding trailing NUL).
- */
-static size_t skip_include_concat(char *dst, size_t dst_cap, const char *src)
-{
-    size_t pos = 0;
-    while (*src && pos < dst_cap - 1)
-    {
-        const char *nl = strchr(src, '\n');
-        size_t line_len = nl ? (size_t)(nl - src + 1) : strlen(src);
-
-        /* Trim leading whitespace to detect directives. */
-        const char *trimmed = src;
-        while (*trimmed == ' ' || *trimmed == '\t')
-            ++trimmed;
-
-        int is_include = (trimmed[0] == '#' && strncmp(trimmed + 1, "include", 7) == 0);
-        int is_pragma_once = (trimmed[0] == '#' && strncmp(trimmed + 1, "pragma once", 11) == 0);
-
-        if (!is_include && !is_pragma_once)
-        {
-            size_t copy = line_len < dst_cap - 1 - pos ? line_len : dst_cap - 1 - pos;
-            memcpy(dst + pos, src, copy);
-            pos += copy;
-        }
-
-        if (!nl)
-            break;
-        src = nl + 1;
-    }
-    dst[pos] = '\0';
-    return pos;
-}
-
-/**
- * @brief Read a .cl.h file into a malloc'd string.
- *
- * The caller must free the returned pointer.
- */
-static char *read_cl_source(const char *filename)
-{
-    char path[1024];
-    int n = snprintf(path, sizeof path, "%s/%s", CVL_CL_SOURCE_DIR, filename);
-    TEST_ASSERT(n > 0 && (size_t)n < sizeof path, "Path too long for %s", filename);
-    return read_file_to_string(path, 65536);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Preamble — real_t / real3_t (same as test_cvl_cl_bh_eval.c)       */
-/* ------------------------------------------------------------------ */
-
-static const char *PREAMBLE = "#ifdef CVL_CL_REAL_FP32\n"
-                              "typedef float real_t;\n"
-                              "typedef struct { real_t x, y, z; } real3_t;\n"
-                              "#else\n"
-                              "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"
-                              "typedef double real_t;\n"
-                              "typedef struct { real_t x, y, z; } real3_t;\n"
-                              "#endif\n"
-                              "\n";
 
 /* ------------------------------------------------------------------ */
 /*  Host-side Morton 3D (same algorithm as bh_build.cl.h)             */
@@ -171,9 +99,10 @@ int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
     cvl_cl_compute_t comp = {0};
+    cvl_cl_chain_t chain = {0};
     int ret = 1;
 
     /* GPU tree builder */
@@ -195,11 +124,6 @@ int main(void)
     void *host_order = NULL;
     unsigned *host_depth_offsets = NULL;
 
-    /* Kernel source strings */
-    char *build_src = NULL;
-    char *eval_src = NULL;
-    char *combined = NULL;
-
     /* Test parameters */
     uint64_t rng = 12345;
     enum
@@ -216,7 +140,6 @@ int main(void)
     /* ----------------------------------------------------------------- */
     bool use_cpu_fallback = false;
     {
-        unsigned count = 0;
         status = cvl_cl_device_first_gpu(&device);
         if (status != CVL_CL_SUCCESS)
         {
@@ -246,42 +169,10 @@ int main(void)
     }
 
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     /* ----------------------------------------------------------------- */
-    /* 2. Read and concatenate kernel sources                            */
-    /* ----------------------------------------------------------------- */
-    build_src = read_cl_source("bh_build.cl.h");
-    eval_src = read_cl_source("bh_flat_eval.cl.h");
-    TEST_ASSERT(build_src != NULL, "Failed to read bh_build.cl.h");
-    TEST_ASSERT(eval_src != NULL, "Failed to read bh_flat_eval.cl.h");
-
-    /* Allocate combined buffer: preamble + build + eval + NUL.
-     * The total size is at most the sum of the individual sizes. */
-    {
-        size_t preamble_len = strlen(PREAMBLE);
-        size_t build_len = strlen(build_src);
-        size_t eval_len = strlen(eval_src);
-        size_t total = preamble_len + build_len + eval_len + 1;
-
-        combined = (char *)malloc(total);
-        TEST_ASSERT(combined != NULL, "malloc failed for combined kernel source");
-
-        size_t pos = 0;
-        memcpy(combined + pos, PREAMBLE, preamble_len);
-        pos += preamble_len;
-        pos += skip_include_concat(combined + pos, total - pos, build_src);
-        pos += skip_include_concat(combined + pos, total - pos, eval_src);
-        combined[pos] = '\0';
-    }
-
-    free(build_src);
-    build_src = NULL;
-    free(eval_src);
-    eval_src = NULL;
-
-    /* ----------------------------------------------------------------- */
-    /* 3. Compute backend: compile combined program                      */
+    /* 2. Compute backend: compile packs by kernel NAME                  */
     /* ----------------------------------------------------------------- */
     {
         const char *kernels[] = {
@@ -290,24 +181,13 @@ int main(void)
         };
         const unsigned n_kernels = sizeof(kernels) / sizeof(kernels[0]);
 
-        fprintf(stderr, "Compiling combined program (%zu bytes) with %u kernels...\n", strlen(combined), n_kernels);
-        cvl_cl_status_t st =
-            cvl_cl_compute_init(&comp, &ctx, &queue, &device, CVL_CL_PRECISION_FP64, combined, kernels, n_kernels);
-        if (st != CVL_CL_SUCCESS)
-        {
-            const char *log = cvl_cl_program_build_log(&comp.program);
-            if (log)
-                fprintf(stderr, "Build log:\n%s\n", log);
-            status = st;
-            goto cleanup;
-        }
+        fprintf(stderr, "Compiling BH_BUILD + BH_EVAL packs (%u kernels)...\n", n_kernels);
+        CVL_CL_CHECK(cvl_cl_compute_init(&comp, ctx, queue, &device, CVL_CL_PRECISION_FP64, kernels, n_kernels),
+                     cleanup);
     }
 
-    free(combined);
-    combined = NULL;
-
     /* ----------------------------------------------------------------- */
-    /* 4. Generate test data                                             */
+    /* 3. Generate test data                                             */
     /* ----------------------------------------------------------------- */
     real3_t sources[N_SOURCES];
     real3_t values[N_SOURCES];
@@ -352,45 +232,36 @@ int main(void)
     printf("GPU build test: %u sources, %u targets, root_hs=%.3e\n", N_SOURCES, N_TARGETS, root_hs);
 
     /* ----------------------------------------------------------------- */
-    /* 6. Init staging buffers and upload source positions               */
+    /* 4. Init staging buffers and upload source positions               */
     /* ----------------------------------------------------------------- */
     {
-        bool unified = cvl_cl_compute_unified_memory(&comp);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, CVL_CL_PRECISION_FP64), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, CVL_CL_PRECISION_FP64), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64), cleanup);
 
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_pos, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
-                     cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_src_val, CVL_CL_PRECISION_FP64, unified, N_SOURCES, NULL),
-                     cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_init(&buf_results, CVL_CL_PRECISION_FP64, unified, N_TARGETS, NULL),
-                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, ctx, queue, N_SOURCES), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_val, ctx, queue, N_SOURCES), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_results, ctx, queue, N_TARGETS), cleanup);
 
-        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_pos, &ctx, &queue, N_SOURCES), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_src_val, &ctx, &queue, N_SOURCES), cleanup);
-        CVL_CL_CHECK(cvl_cl_staging_buffer_reserve(&buf_results, &ctx, &queue, N_TARGETS), cleanup);
-
-        /* Upload sources (positions + values) via staging buffers. */
-        {
-            cvl_cl_future_t f[2];
-            CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_pos, &queue, sources, N_SOURCES, 0, &f[0]),
-                         cleanup);
-            CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_val, &queue, values, N_SOURCES, 0, &f[1]), cleanup);
-            for (int i = 0; i < 2; ++i)
-                CVL_CL_CHECK(cvl_cl_future_wait(&f[i]), cleanup);
-        }
+        /* Upload sources (positions + values) through a chain (FP64: no scratch). */
+        cvl_cl_chain_init(&chain, queue);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_pos, &chain, sources, NULL, N_SOURCES, 0, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_write_async(&buf_src_val, &chain, values, NULL, N_SOURCES, 0, NULL),
+                     cleanup);
+        CVL_CL_CHECK(cvl_cl_chain_finish(&chain), cleanup);
     }
 
     /* ----------------------------------------------------------------- */
-    /* 7. Initialize and run GPU tree build                              */
+    /* 5. Initialize and run GPU tree build                              */
     /* ----------------------------------------------------------------- */
     CVL_CL_CHECK(cvl_cl_gpu_tree_build_init(&builder, &comp, MAX_DEPTH, CRIT, ORDER), cleanup);
     if (use_cpu_fallback)
         CVL_CL_CHECK(cvl_cl_gpu_tree_build_set_radix_policy(&builder, CVL_CL_RADIX_POLICY_WORKAROUND), cleanup);
-    CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
     size_t gpu_work_sz = cvl_cl_gpu_tree_build_work_size(N_SOURCES, MAX_DEPTH);
     void *gpu_work = malloc(gpu_work_sz);
     TEST_ASSERT(gpu_work != NULL, "malloc(%zu) for GPU tree build work buffer failed", gpu_work_sz);
-    CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &buf_src_pos, N_SOURCES, gpu_work, gpu_work_sz),
-                 cleanup);
+    CVL_CL_CHECK(cvl_cl_gpu_tree_build_run(&builder, &buf_src_pos, N_SOURCES, gpu_work, gpu_work_sz), cleanup);
 
     printf("GPU build: n_total=%u n_internal=%u n_multipole=%u n_particle=%u\n", builder.n_total, builder.n_internal,
            builder.n_multipole_leaves, builder.n_particle_leaves);
@@ -418,7 +289,7 @@ int main(void)
                 builder.depth_offsets[MAX_DEPTH + 1], builder.n_total);
 
     /* ----------------------------------------------------------------- */
-    /* 9. Read back the flat tree nodes from device                      */
+    /* 6. Read back the flat tree nodes from device                      */
     /* ----------------------------------------------------------------- */
     const size_t node_bytes = (size_t)builder.n_total * 64; /* CVL_CL_GPU_NODE_SIZE */
     const size_t order_bytes = (size_t)N_SOURCES * sizeof(unsigned);
@@ -434,10 +305,10 @@ int main(void)
 
     memcpy(host_depth_offsets, builder.depth_offsets, depth_bytes);
 
-    CVL_CL_CHECK(cvl_cl_read_buffer(&queue, &builder.buf_nodes, 0, node_bytes, host_nodes, 0, NULL, NULL), cleanup);
-    CVL_CL_CHECK(cvl_cl_read_buffer(&queue, &builder.buf_particle_order, 0, order_bytes, host_order, 0, NULL, NULL),
+    CVL_CL_CHECK(cvl_cl_read_buffer(queue, &builder.buf_nodes, 0, node_bytes, host_nodes, 0, NULL, NULL), cleanup);
+    CVL_CL_CHECK(cvl_cl_read_buffer(queue, &builder.buf_particle_order, 0, order_bytes, host_order, 0, NULL, NULL),
                  cleanup);
-    CVL_CL_CHECK(cvl_cl_finish(&queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_finish(queue), cleanup);
 
     /* Quick structural sanity: verify depth_offsets for root node. */
     {
@@ -449,37 +320,39 @@ int main(void)
     }
 
     /* ----------------------------------------------------------------- */
-    /* 10. Upload tree data for eval kernel (via raw buffers)            */
+    /* 7. Upload tree data for eval kernel (via raw buffers)            */
     /* ----------------------------------------------------------------- */
     {
         CVL_CL_CHECK(
-            cvl_cl_buffer_create(
-                &ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = node_bytes}, &buf_nodes),
+            cvl_cl_buffer_create(ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = node_bytes},
+                                 &buf_nodes),
             cleanup);
         CVL_CL_CHECK(
             cvl_cl_buffer_create(
-                &ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = order_bytes}, &buf_order),
+                ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = order_bytes}, &buf_order),
             cleanup);
         CVL_CL_CHECK(
             cvl_cl_buffer_create(
-                &ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = depth_bytes}, &buf_depth),
+                ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = depth_bytes}, &buf_depth),
             cleanup);
         /* Dummy coeffs buffer (order=0 so never accessed). */
-        CVL_CL_CHECK(cvl_cl_buffer_create(
-                         &ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = 1}, &buf_coeffs),
+        CVL_CL_CHECK(cvl_cl_buffer_create(ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_READ_ONLY, .size_bytes = 1},
+                                          &buf_coeffs),
                      cleanup);
 
-        CVL_CL_CHECK(cvl_cl_write_buffer(&queue, &buf_nodes, 0, node_bytes, host_nodes, 0, NULL, NULL), cleanup);
-        CVL_CL_CHECK(cvl_cl_write_buffer(&queue, &buf_order, 0, order_bytes, host_order, 0, NULL, NULL), cleanup);
-        CVL_CL_CHECK(cvl_cl_write_buffer(&queue, &buf_depth, 0, depth_bytes, host_depth_offsets, 0, NULL, NULL),
+        CVL_CL_CHECK(cvl_cl_write_buffer(queue, &buf_nodes, 0, node_bytes, host_nodes, 0, NULL, NULL), cleanup);
+        CVL_CL_CHECK(cvl_cl_write_buffer(queue, &buf_order, 0, order_bytes, host_order, 0, NULL, NULL), cleanup);
+        CVL_CL_CHECK(cvl_cl_write_buffer(queue, &buf_depth, 0, depth_bytes, host_depth_offsets, 0, NULL, NULL),
                      cleanup);
     }
 
     /* ----------------------------------------------------------------- */
-    /* 11. Launch bh_flat_eval kernel (order=0, tiny theta)              */
+    /* 8. Launch bh_flat_eval kernel + read results through a chain      */
     /* ----------------------------------------------------------------- */
+    real3_t gpu_results[N_TARGETS];
+    memset(gpu_results, 0, sizeof(gpu_results));
     {
-        cvl_cl_kernel_t *k = cvl_cl_compute_kernel(&comp, "bh_flat_eval");
+        cl_kernel k = cvl_cl_compute_kernel(&comp, CVL_CL_PACK_BH_EVAL, CVL_CL_BH_EVAL_FLAT_EVAL);
         TEST_ASSERT(k != NULL, "kernel 'bh_flat_eval' not found in compute backend");
 
         CVL_CL_CHECK(
@@ -502,18 +375,14 @@ int main(void)
             cleanup);
 
         const size_t global = N_TARGETS;
-        CVL_CL_CHECK(cvl_cl_ndrange(&queue, k, 1, &global, NULL, NULL, 0, NULL, NULL), cleanup);
+        cvl_cl_chain_init(&chain, queue);
+        CVL_CL_CHECK(cvl_cl_chain_ndrange(&chain, k, 1, &global, NULL, NULL, 0, NULL, NULL), cleanup);
+        CVL_CL_CHECK(cvl_cl_staging_buffer_read_and_wait(&buf_results, &chain, gpu_results, NULL, N_TARGETS, 0),
+                     cleanup);
     }
 
     /* ----------------------------------------------------------------- */
-    /* 12. Read results back                                             */
-    /* ----------------------------------------------------------------- */
-    real3_t gpu_results[N_TARGETS];
-    memset(gpu_results, 0, sizeof(gpu_results));
-    CVL_CL_CHECK(cvl_cl_staging_buffer_read_and_wait(&buf_results, &queue, gpu_results, N_TARGETS, 0), cleanup);
-
-    /* ----------------------------------------------------------------- */
-    /* 13. CPU reference direct sum + comparison                         */
+    /* 9. CPU reference direct sum + comparison                         */
     /* ----------------------------------------------------------------- */
     {
         /* Regenerate same data from the same RNG seed. */
@@ -577,9 +446,7 @@ int main(void)
     ret = 0;
 
 cleanup:
-    free(combined);
-    free(build_src);
-    free(eval_src);
+    cvl_cl_chain_destroy(&chain);
     free(host_nodes);
     free(host_order);
     free(host_depth_offsets);

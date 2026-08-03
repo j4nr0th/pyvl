@@ -7,12 +7,12 @@
  * leaves first (grouped by Morton key at max_depth), then internal nodes
  * grouped by parent key at each shallower depth.
  *
- * All allocations use malloc/calloc/free via <stdlib.h>.
+ * All output buffers alias the caller's work buffer - no allocation happens.
  */
 
 #include "cvl_cl_flat_tree.h"
-#include "../opencl/cvl_cl_helpers.h"
 
+#include <assert.h>
 #include <math.h>
 #include <string.h>
 
@@ -35,8 +35,7 @@ cvl_cl_status_t cvl_cl_flat_tree_count(unsigned n_sources, const uint64_t morton
                                        unsigned out_depth_counts[restrict], unsigned *out_n_total,
                                        unsigned *out_max_depth_used)
 {
-    if (!morton_codes || !settings || !out_depth_counts || !out_n_total || !out_max_depth_used)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(morton_codes && settings && out_depth_counts && out_n_total && out_max_depth_used);
 
     const unsigned max_depth = clamp_depth(settings->max_depth);
 
@@ -80,13 +79,10 @@ cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources
                                        const unsigned particle_indices[restrict n_sources],
                                        const uint64_t morton_codes[restrict n_sources],
                                        const cvl_cl_flat_tree_settings_t settings[restrict],
-                                       const allocator_t *allocator, cvl_cl_flat_tree_t *out_tree, void *work,
-                                       size_t work_size)
+                                       cvl_cl_flat_tree_t *out_tree, void *work, size_t work_size)
 {
-    if (!sources_coords || !particle_indices || !morton_codes || !settings || !out_tree || !work)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (n_sources == 0)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(sources_coords && particle_indices && morton_codes && settings && out_tree && work);
+    assert(n_sources > 0);
 
     const unsigned max_depth = clamp_depth(settings->max_depth);
 
@@ -132,7 +128,6 @@ cvl_cl_status_t cvl_cl_flat_tree_build(unsigned n_sources, const real3_t sources
     bp += (size_t)n_sources * sizeof(unsigned);
     out_tree->depth_offsets = (unsigned *)bp;
     bp += (size_t)(max_depth + 2) * sizeof(unsigned);
-    out_tree->allocator = cl_resolve_allocator(allocator);
 
     /* Zero the node array. */
     memset(out_tree->nodes, 0, (size_t)n_total * sizeof(cvl_cl_flat_node_t));
@@ -355,7 +350,6 @@ void cvl_cl_flat_tree_destroy(cvl_cl_flat_tree_t *tree)
     tree->nodes = NULL;
     tree->particle_order = NULL;
     tree->depth_offsets = NULL;
-    tree->allocator = NULL;
     tree->n_nodes = 0;
     tree->n_internal = 0;
     tree->n_multipole_leaves = 0;

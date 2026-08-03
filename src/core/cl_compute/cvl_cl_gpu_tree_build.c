@@ -10,14 +10,19 @@
  *   4. Host-side histogram → tree sizing
  *   5. Leaf compaction + construction (two kernels replace prefix-scan approach)
  *   6. Bottom-up internal node construction
+ *
+ * All device work is enqueued through a cvl_cl_chain_t dependency
+ * stream on the compute backend's queue; cvl_cl_chain_finish() is
+ * called at every point where the host must read results back.
  */
 
 #include "cvl_cl_gpu_tree_build.h"
 #include "../cvl_radix_sort.h"
+#include "../opencl/cvl_cl_chain.h"
 #include "../opencl/cvl_cl_helpers.h"
 
+#include <assert.h>
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -37,21 +42,25 @@
  *
  * The radix histogram buffer is grown as needed.
  *
+ * All kernel launches, the histogram read-back, and the prefix upload
+ * go through @p chain; cvl_cl_chain_finish() is called once per pass
+ * where the host must compute the next prefix.
+ *
  * @param builder  Builder (provides buffers and kernel handles).
- * @param queue    Command queue.
- * @param ctx      Context.
+ * @param chain    Dependency chain on the compute backend's queue.
+ * @param work     Host scratch (histogram + prefix, [n_wgs * 256] unsigned).
  * @param n        Number of elements to sort.
  * @return CVL_CL_SUCCESS or error.
  */
-static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue,
-                                           const cvl_cl_ctx_t *ctx, void *work, unsigned n)
+static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl_cl_chain_t *chain, void *work,
+                                           unsigned n)
 {
     cvl_cl_status_t st;
     const unsigned n_wgs = (n + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG;
     const size_t hist_bytes = (size_t)n_wgs * 256u * sizeof(unsigned);
 
     /* ---- Ensure radix histogram buffer is large enough ---- */
-    st = cl_ensure_buffer(&builder->buf_radix_hist, ctx, queue, hist_bytes);
+    st = cl_ensure_buffer(&builder->buf_radix_hist, builder->compute->ctx, builder->compute->queue, hist_bytes);
     if (st != CVL_CL_SUCCESS)
         return st;
 
@@ -70,36 +79,33 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
         cl_mem keys_dst = pass_odd ? builder->buf_morton.mem : builder->buf_morton_tmp.mem;
         cl_mem idx_dst = pass_odd ? builder->buf_indices.mem : builder->buf_indices_tmp.mem;
 
-        /* ----- histogram pass ----- */
-        cvl_cl_kernel_t *kh = cvl_cl_compute_kernel(builder->compute, "kernel_radix_hist");
+        /* ----- histogram pass (waits on the previous pass's scatter) ----- */
+        cl_kernel kh = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_HIST);
         if (!kh)
             return CVL_CL_ERR_INTERNAL;
-
-        st =
-            cvl_cl_kernel_set_args(kh, (cvl_cl_karg_t[]){
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = keys_src},
-                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n},
-                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = shift},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = builder->buf_radix_hist.mem},
-                                           {},
-                                       });
-        if (st != CVL_CL_SUCCESS)
-            return st;
 
         {
             const size_t global = ((n + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
             const size_t local = CVL_CL_GPU_BUILD_WG;
-            st = cvl_cl_ndrange(queue, kh, 1, &global, &local, NULL, 0, NULL, NULL);
+            st = cvl_cl_chain_ndrange(chain, kh, 1, &global, &local,
+                                      (cvl_cl_karg_t[]){
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = keys_src},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = shift},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = builder->buf_radix_hist.mem},
+                                          {},
+                                      },
+                                      0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
                 return st;
         }
 
-        /* Read histogram to host. */
-        st = cvl_cl_read_buffer(queue, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL);
+        /* Read histogram to host, then wait - the host computes the
+         * per-WG prefix next. */
+        st = cvl_cl_chain_read_buffer(chain, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL);
         if (st != CVL_CL_SUCCESS)
             return st;
-
-        st = cvl_cl_finish(queue);
+        st = cvl_cl_chain_finish(chain);
         if (st != CVL_CL_SUCCESS)
             return st;
 
@@ -117,34 +123,32 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
             base = acc;
         }
 
-        /* Upload prefix back to the same device buffer. */
-        st = cvl_cl_write_buffer(queue, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL);
+        /* Upload prefix back to the same device buffer (chained - the
+         * scatter below waits on this write). */
+        st = cvl_cl_chain_write_buffer(chain, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL);
         if (st != CVL_CL_SUCCESS)
             return st;
 
         /* ----- scatter pass ----- */
-        cvl_cl_kernel_t *ks = cvl_cl_compute_kernel(builder->compute, "kernel_radix_scatter");
+        cl_kernel ks = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_SCATTER);
         if (!ks)
             return CVL_CL_ERR_INTERNAL;
-
-        st =
-            cvl_cl_kernel_set_args(ks, (cvl_cl_karg_t[]){
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = keys_src},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = idx_src},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = keys_dst},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = idx_dst},
-                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = n},
-                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = shift},
-                                           {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = builder->buf_radix_hist.mem},
-                                           {},
-                                       });
-        if (st != CVL_CL_SUCCESS)
-            return st;
 
         {
             const size_t global = ((n + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
             const size_t local = CVL_CL_GPU_BUILD_WG;
-            st = cvl_cl_ndrange(queue, ks, 1, &global, &local, NULL, 0, NULL, NULL);
+            st = cvl_cl_chain_ndrange(chain, ks, 1, &global, &local,
+                                      (cvl_cl_karg_t[]){
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = keys_src},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = idx_src},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = keys_dst},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = idx_dst},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = n},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = shift},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = builder->buf_radix_hist.mem},
+                                          {},
+                                      },
+                                      0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
                 return st;
         }
@@ -154,7 +158,7 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
 
     /* After 8 passes pass_odd == 0, final result is in the even buffers. */
 
-    st = cvl_cl_finish(queue);
+    st = cvl_cl_chain_finish(chain);
 
     return st;
 }
@@ -184,12 +188,12 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
  * the broken JIT at all.
  *
  * @param builder  Builder (provides buffers).
- * @param queue    Command queue.
- * @param ctx      Context (unused - kept for signature symmetry).
+ * @param chain    Dependency chain on the compute backend's queue.
+ * @param work     Host scratch (pairs / pairs_alt / hist / staging).
  * @param n        Number of elements to sort.
  * @return CVL_CL_SUCCESS or error.
  */
-static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue, void *work,
+static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl_cl_chain_t *chain, void *work,
                                            unsigned n)
 {
     cvl_cl_status_t st;
@@ -208,14 +212,15 @@ static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl
     uint64_t *keys_staging = (uint64_t *)staging;
     unsigned *idx_staging = (unsigned *)(staging + key_bytes);
 
-    /* Read the unsorted Morton codes + index permutation. */
-    st = cvl_cl_read_buffer(queue, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
+    /* Read the unsorted Morton codes + index permutation (chained - the
+     * host sort below needs both, hence the finish). */
+    st = cvl_cl_chain_read_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
     if (st != CVL_CL_SUCCESS)
         return st;
-    st = cvl_cl_read_buffer(queue, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
+    st = cvl_cl_chain_read_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
     if (st != CVL_CL_SUCCESS)
         return st;
-    st = cvl_cl_finish(queue);
+    st = cvl_cl_chain_finish(chain);
     if (st != CVL_CL_SUCCESS)
         return st;
 
@@ -237,11 +242,13 @@ static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl
     }
 
     /* Write the sorted result back (even buffers, as the kernel path does). */
-    st = cvl_cl_write_buffer(queue, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
-    if (st == CVL_CL_SUCCESS)
-        st = cvl_cl_write_buffer(queue, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
-    if (st == CVL_CL_SUCCESS)
-        st = cvl_cl_finish(queue);
+    st = cvl_cl_chain_write_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
+    if (st != CVL_CL_SUCCESS)
+        return st;
+    st = cvl_cl_chain_write_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
+    if (st != CVL_CL_SUCCESS)
+        return st;
+    st = cvl_cl_chain_finish(chain);
 
     return st;
 }
@@ -252,12 +259,11 @@ static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl
  * The effective mode is resolved at init / policy-set time and cached in
  * @p builder->use_host_radix.
  */
-static cvl_cl_status_t gpu_radix_sort(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue, const cvl_cl_ctx_t *ctx,
-                                      void *work, unsigned n)
+static cvl_cl_status_t gpu_radix_sort(cvl_cl_gpu_tree_build_t *builder, cvl_cl_chain_t *chain, void *work, unsigned n)
 {
     if (builder->use_host_radix)
-        return gpu_radix_sort_host(builder, queue, work, n);
-    return gpu_radix_sort_orig(builder, queue, ctx, work, n);
+        return gpu_radix_sort_host(builder, chain, work, n);
+    return gpu_radix_sort_orig(builder, chain, work, n);
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,8 +296,8 @@ static cvl_cl_status_t resolve_radix_mode(cvl_cl_gpu_tree_build_t *builder)
         if (builder->intel_neo_cpu)
             return CVL_CL_ERR_UNSUPPORTED_DEVICE;
 
-        if (!cvl_cl_compute_kernel(builder->compute, "kernel_radix_hist") ||
-            !cvl_cl_compute_kernel(builder->compute, "kernel_radix_scatter"))
+        if (!cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_HIST) ||
+            !cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_SCATTER))
             return CVL_CL_ERR_NOT_FOUND;
 
         builder->use_host_radix = false;
@@ -309,8 +315,8 @@ static cvl_cl_status_t resolve_radix_mode(cvl_cl_gpu_tree_build_t *builder)
     builder->use_host_radix = builder->intel_neo_cpu;
     if (!builder->use_host_radix)
     {
-        if (!cvl_cl_compute_kernel(builder->compute, "kernel_radix_hist") ||
-            !cvl_cl_compute_kernel(builder->compute, "kernel_radix_scatter"))
+        if (!cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_HIST) ||
+            !cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_RADIX_SCATTER))
             return CVL_CL_ERR_NOT_FOUND;
     }
     return CVL_CL_SUCCESS;
@@ -351,10 +357,9 @@ size_t cvl_cl_gpu_tree_build_work_size(unsigned n_sources, unsigned max_depth)
 cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl_cl_compute_t *compute,
                                            unsigned max_depth, unsigned critical_count, unsigned order)
 {
-    if (!builder || !compute)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (max_depth > CVL_CL_GPU_BUILD_MAX_DEPTH)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(builder);
+    assert(compute);
+    assert(max_depth <= CVL_CL_GPU_BUILD_MAX_DEPTH);
 
     *builder = (cvl_cl_gpu_tree_build_t){0};
     builder->radix_policy = CVL_CL_RADIX_POLICY_AUTO;
@@ -363,19 +368,11 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
     builder->intel_neo_cpu = cvl_cl_device_is_intel_neo_cpu(compute->device);
 
     /* Verify the always-required kernels exist in the compute backend. */
-    static const char *required_kernels[] = {
-        "kernel_morton",
-        "kernel_boundary",
-        "kernel_fill_leaves",
-        "kernel_build_internal",
-    };
-    const unsigned n_req = sizeof(required_kernels) / sizeof(required_kernels[0]);
-
-    for (unsigned i = 0; i < n_req; ++i)
-    {
-        if (!cvl_cl_compute_kernel(compute, required_kernels[i]))
-            return CVL_CL_ERR_NOT_FOUND; /* kernel name missing */
-    }
+    if (!cvl_cl_compute_kernel(compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_MORTON) ||
+        !cvl_cl_compute_kernel(compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_BOUNDARY) ||
+        !cvl_cl_compute_kernel(compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_FILL_LEAVES) ||
+        !cvl_cl_compute_kernel(compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_INTERNAL))
+        return CVL_CL_ERR_NOT_FOUND; /* a required kernel was not registered */
 
     builder->compute = compute;
     builder->max_depth = max_depth;
@@ -389,8 +386,6 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
             return st;
     }
 
-    builder->initialized = true;
-
     return CVL_CL_SUCCESS;
 }
 
@@ -400,7 +395,8 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
 
 cvl_cl_status_t cvl_cl_gpu_tree_build_set_radix_policy(cvl_cl_gpu_tree_build_t *builder, cvl_cl_radix_policy_t policy)
 {
-    if (!builder || !builder->initialized || !builder->compute)
+    assert(builder);
+    if (!builder->compute) /* Not initialised (init sets the compute backend). */
         return CVL_CL_ERR_INVALID_PARAM;
     if (policy != CVL_CL_RADIX_POLICY_AUTO && policy != CVL_CL_RADIX_POLICY_ORIGINAL &&
         policy != CVL_CL_RADIX_POLICY_WORKAROUND)
@@ -414,22 +410,23 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_set_radix_policy(cvl_cl_gpu_tree_build_t *
 /*  cvl_cl_gpu_tree_build_run                                          */
 /* ------------------------------------------------------------------ */
 
-cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue,
-                                          const cvl_cl_ctx_t *ctx, cvl_cl_staging_buffer_t *staging_pos,
+cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_cl_staging_buffer_t *staging_pos,
                                           unsigned n_sources, void *work, size_t work_size)
 {
     cvl_cl_status_t st;
     cvl_cl_status_t status = CVL_CL_SUCCESS;
+
+    /* ---- Validate (asserts = contract; error returns = runtime checks) ---- */
+    assert(builder);
+    assert(builder->compute);
+    assert(staging_pos);
+    assert(work);
+
     const unsigned max_depth = builder->max_depth;
 
-    /* ---- Validate ---- */
-    if (!builder || !builder->initialized)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (!queue || !ctx || !staging_pos)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (n_sources == 0 || n_sources > (unsigned)-1)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (!work || work_size < cvl_cl_gpu_tree_build_work_size(n_sources, max_depth))
+    if (n_sources == 0)
+        return CVL_CL_SUCCESS;
+    if (work_size < cvl_cl_gpu_tree_build_work_size(n_sources, max_depth))
         return CVL_CL_ERR_BUFFER_SIZE;
 
     /* Safety net: ORIGINAL radix kernels on the Intel NEO CPU backend
@@ -439,6 +436,16 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         return CVL_CL_ERR_UNSUPPORTED_DEVICE;
 
     builder->n_sources = n_sources;
+
+    /* Queue + context come from the borrowed compute backend. */
+    const cl_command_queue queue = builder->compute->queue;
+    const cl_context ctx = builder->compute->ctx;
+
+    /* Dependency stream for all device work.  cvl_cl_chain_finish() is
+     * called at every point where the host must read results back; the
+     * chain is destroyed on every exit path. */
+    cvl_cl_chain_t chain;
+    cvl_cl_chain_init(&chain, queue);
 
     /* ---- Partition work buffer ---- */
     uint8_t *bp = (uint8_t *)work;
@@ -460,27 +467,25 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
     bp += (size_t)n_sources * sizeof(unsigned);
     unsigned char *nodes_raw = (unsigned char *)bp; /* last - size varies */
 
+    /* Zero-fill scratch: caller-provided zeros are carved from the START of
+     * the nodes_raw region, which is dead until the stage-12 metadata
+     * readback overwrites it.  nodes_raw is always >= (max_depth + 2) * 4
+     * bytes (the largest zero fill), and the async zero writes complete
+     * long before the readback reuses the region. */
+
     /* ================================================================ */
     /*  Stage 0 - Compute bounding box from staging buffer               */
     /* ================================================================ */
 
-    /* Ensure all prior writes to the staging buffer have completed. */
-    st = cvl_cl_finish(queue);
+    /* Read back coords from the staging buffer through the chain
+     * (blocking - the host needs them for the bounding box).  The
+     * staging buffer must be FP64 (24 bytes/element = sizeof(real3_t));
+     * the builder's work layout does not reserve FP32 scratch. */
+    st = cvl_cl_staging_buffer_read_and_wait(staging_pos, &chain, coords_host, NULL, n_sources, 0);
     if (st != CVL_CL_SUCCESS)
     {
         status = st;
         goto cleanup;
-    }
-
-    /* Read back coords directly from the staging buffer's device memory. */
-    {
-        cl_int err = clEnqueueReadBuffer(cvl_cl_queue_queue(queue), staging_pos->device.mem, CL_TRUE, 0,
-                                         n_sources * sizeof(real3_t), coords_host, 0, NULL, NULL);
-        if (err != CL_SUCCESS)
-        {
-            status = cvl_cl_status_from_cl_int(err);
-            goto cleanup;
-        }
     }
 
     {
@@ -577,11 +582,11 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
             for (unsigned i = 0; i < n_sources; ++i)
                 idx_host[i] = i;
 
-            st = cvl_cl_write_buffer(queue, &builder->buf_indices, 0, idx_bytes, idx_host, 0, NULL, NULL);
-            /* Non-blocking write - finish before reusing idx_host (use-after-free
-             * safety). */
+            st = cvl_cl_chain_write_buffer(&chain, &builder->buf_indices, 0, idx_bytes, idx_host, 0, NULL, NULL);
+            /* Non-blocking write - finish before the identity permutation
+             * could be reused (use-after-free safety). */
             if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_finish(queue);
+                st = cvl_cl_chain_finish(&chain);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -594,32 +599,26 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         /* ================================================================ */
 
         {
-            cvl_cl_kernel_t *km = cvl_cl_compute_kernel(builder->compute, "kernel_morton");
+            cl_kernel km = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_MORTON);
             if (!km)
             {
                 status = CVL_CL_ERR_INTERNAL;
                 goto cleanup;
             }
 
-            st = cvl_cl_kernel_set_args(km,
-                                        (cvl_cl_karg_t[]){
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = staging_pos->device.mem},
-                                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_sources},
-                                            {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 2, .scalar_double = root_cx},
-                                            {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 3, .scalar_double = root_cy},
-                                            {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 4, .scalar_double = root_cz},
-                                            {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 5, .scalar_double = root_hs},
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = builder->buf_morton.mem},
-                                            {},
-                                        });
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
             const size_t global = ((n_sources + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
-            st = cvl_cl_ndrange(queue, km, 1, &global, NULL, NULL, 0, NULL, NULL);
+            st = cvl_cl_chain_ndrange(&chain, km, 1, &global, NULL,
+                                      (cvl_cl_karg_t[]){
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = staging_pos->device.mem},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_sources},
+                                          {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 2, .scalar_double = root_cx},
+                                          {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 3, .scalar_double = root_cy},
+                                          {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 4, .scalar_double = root_cz},
+                                          {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 5, .scalar_double = root_hs},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = builder->buf_morton.mem},
+                                          {},
+                                      },
+                                      0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -631,7 +630,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         /*  Stage 4 - Radix sort Morton codes + companion indices             */
         /* ================================================================ */
 
-        st = gpu_radix_sort(builder, queue, ctx, radix_work, n_sources);
+        st = gpu_radix_sort(builder, &chain, radix_work, n_sources);
         if (st != CVL_CL_SUCCESS)
         {
             status = st;
@@ -642,13 +641,13 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         /*  Stage 5 - Boundary detection                                     */
         /* ================================================================ */
 
-        /* Zero bd_hist via host-side write (small buffer - inline the zero fill). */
+        /* Zero bd_hist via caller-provided zeros carved from the work
+         * buffer (nodes_raw start - dead until the stage-12 readback).
+         * The async zero write completes before the boundary kernel
+         * (in-order queue). */
         {
-            unsigned zeros[CVL_CL_GPU_BUILD_MAX_DEPTH + 2];
-            memset(zeros, 0, bd_hist_bytes);
-            st = cvl_cl_write_buffer(queue, &builder->buf_bd_hist, 0, bd_hist_bytes, zeros, 0, NULL, NULL);
-            if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_finish(queue);
+            memset(nodes_raw, 0, bd_hist_bytes);
+            st = zero_device_buffer(queue, &builder->buf_bd_hist, nodes_raw, bd_hist_bytes);
         }
         if (st != CVL_CL_SUCCESS)
         {
@@ -657,30 +656,24 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         }
 
         {
-            cvl_cl_kernel_t *kb = cvl_cl_compute_kernel(builder->compute, "kernel_boundary");
+            cl_kernel kb = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_BOUNDARY);
             if (!kb)
             {
                 status = CVL_CL_ERR_INTERNAL;
                 goto cleanup;
             }
 
-            st = cvl_cl_kernel_set_args(kb,
-                                        (cvl_cl_karg_t[]){
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_morton.mem},
-                                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_sources},
-                                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = max_depth},
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = builder->buf_boundary.mem},
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = builder->buf_bd_hist.mem},
-                                            {},
-                                        });
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
             const size_t global = ((n_sources + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
-            st = cvl_cl_ndrange(queue, kb, 1, &global, NULL, NULL, 0, NULL, NULL);
+            st = cvl_cl_chain_ndrange(&chain, kb, 1, &global, NULL,
+                                      (cvl_cl_karg_t[]){
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_morton.mem},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_sources},
+                                          {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = max_depth},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = builder->buf_boundary.mem},
+                                          {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = builder->buf_bd_hist.mem},
+                                          {},
+                                      },
+                                      0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -696,6 +689,16 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
 
         {
             unsigned *hist_raw = builder->bd_hist;
+
+            /* Wait for the boundary kernel + zero write, then read back
+             * (the host needs both arrays). */
+            st = cvl_cl_chain_finish(&chain);
+            if (st != CVL_CL_SUCCESS)
+            {
+                status = st;
+                goto cleanup;
+            }
+
             st = cvl_cl_read_buffer(queue, &builder->buf_bd_hist, 0, bd_hist_bytes, hist_raw, 0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
@@ -782,9 +785,9 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
                 goto cleanup;
             }
 
-            /* Upload depth_offsets to device. */
-            st = cvl_cl_write_buffer(queue, &builder->buf_depth_offsets, 0, doff_bytes, builder->depth_offsets, 0, NULL,
-                                     NULL);
+            /* Upload depth_offsets to device (chained). */
+            st = cvl_cl_chain_write_buffer(&chain, &builder->buf_depth_offsets, 0, doff_bytes, builder->depth_offsets,
+                                           0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -818,10 +821,8 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
                 goto cleanup;
             }
 
-            st = cvl_cl_write_buffer(queue, &builder->buf_leaf_starts, 0, (size_t)n_lf * sizeof(unsigned),
-                                     leaf_starts_host, 0, NULL, NULL);
-            if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_finish(queue);
+            st = cvl_cl_chain_write_buffer(&chain, &builder->buf_leaf_starts, 0, (size_t)n_lf * sizeof(unsigned),
+                                           leaf_starts_host, 0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -834,11 +835,12 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         /* ================================================================ */
 
         {
-            const unsigned zero_pc = 0;
-            st = cvl_cl_write_buffer(queue, &builder->buf_leaf_counter, sizeof(unsigned), sizeof(unsigned), &zero_pc, 0,
-                                     NULL, NULL);
-            if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_finish(queue);
+            /* Zero the leaf_counter (both words) via caller-provided zeros
+             * carved from the work buffer.  The kernel only accumulates
+             * into word 1 (particle_counter) with atomic_add; word 0
+             * (n_leaves_out) starts at zero. */
+            memset(nodes_raw, 0, counter_bytes);
+            st = zero_device_buffer(queue, &builder->buf_leaf_counter, nodes_raw, counter_bytes);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -847,7 +849,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         }
 
         {
-            cvl_cl_kernel_t *kf = cvl_cl_compute_kernel(builder->compute, "kernel_fill_leaves");
+            cl_kernel kf = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_FILL_LEAVES);
             if (!kf)
             {
                 status = CVL_CL_ERR_INTERNAL;
@@ -856,32 +858,27 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
 
             const unsigned leaf_offset = builder->depth_offsets[max_depth];
 
-            st = cvl_cl_kernel_set_args(
-                kf, (cvl_cl_karg_t[]){
-                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_leaf_starts.mem},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_leaves},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = builder->buf_boundary.mem},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = n_sources},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = max_depth},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = builder->buf_nodes.mem},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = leaf_offset},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 7, .mem = builder->buf_particle_order.mem},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = builder->buf_leaf_counter.mem},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = staging_pos->device.mem},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 10, .mem = builder->buf_morton.mem},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 11, .mem = builder->buf_indices.mem},
-                        {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 12, .scalar_double = root_hs},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 13, .scalar_uint = builder->critical_count},
-                        {},
-                    });
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
             const size_t global = ((n_leaves + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
-            st = cvl_cl_ndrange(queue, kf, 1, &global, NULL, NULL, 0, NULL, NULL);
+            st = cvl_cl_chain_ndrange(
+                &chain, kf, 1, &global, NULL,
+                (cvl_cl_karg_t[]){
+                    {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_leaf_starts.mem},
+                    {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = n_leaves},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = builder->buf_boundary.mem},
+                    {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = n_sources},
+                    {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = max_depth},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = builder->buf_nodes.mem},
+                    {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = leaf_offset},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 7, .mem = builder->buf_particle_order.mem},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = builder->buf_leaf_counter.mem},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = staging_pos->device.mem},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 10, .mem = builder->buf_morton.mem},
+                    {.type = CVL_CL_KARG_BUFFER, .index = 11, .mem = builder->buf_indices.mem},
+                    {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 12, .scalar_double = root_hs},
+                    {.type = CVL_CL_KARG_SCALAR_UINT, .index = 13, .scalar_uint = builder->critical_count},
+                    {},
+                },
+                0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -934,10 +931,8 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
                     ++g;
                 parent_starts_host[p] = child_off + g_lo;
             }
-            st = cvl_cl_write_buffer(queue, &builder->buf_leaf_starts, 0, (size_t)n_parents * sizeof(unsigned),
-                                     parent_starts_host, 0, NULL, NULL);
-            if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_finish(queue);
+            st = cvl_cl_chain_write_buffer(&chain, &builder->buf_leaf_starts, 0, (size_t)n_parents * sizeof(unsigned),
+                                           parent_starts_host, 0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -946,34 +941,29 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
 
             /* (b) Build the parents. */
             {
-                cvl_cl_kernel_t *ki = cvl_cl_compute_kernel(builder->compute, "kernel_build_internal");
+                cl_kernel ki = cvl_cl_compute_kernel(builder->compute, CVL_CL_PACK_BH_BUILD, CVL_CL_BH_BUILD_INTERNAL);
                 if (!ki)
                 {
                     status = CVL_CL_ERR_INTERNAL;
                     goto cleanup;
                 }
 
-                st = cvl_cl_kernel_set_args(
-                    ki, (cvl_cl_karg_t[]){
-                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_nodes.mem},
-                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = depth},
-                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = n_parents},
-                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = parent_off},
-                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = child_off},
-                            {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = n_children},
-                            {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 6, .scalar_double = root_hs},
-                            {.type = CVL_CL_KARG_BUFFER, .index = 7, .mem = builder->buf_leaf_starts.mem},
-                            {},
-                        });
-                if (st != CVL_CL_SUCCESS)
-                {
-                    status = st;
-                    goto cleanup;
-                }
-
                 const size_t global =
                     ((n_parents + CVL_CL_GPU_BUILD_WG - 1) / CVL_CL_GPU_BUILD_WG) * CVL_CL_GPU_BUILD_WG;
-                st = cvl_cl_ndrange(queue, ki, 1, &global, NULL, NULL, 0, NULL, NULL);
+                st = cvl_cl_chain_ndrange(
+                    &chain, ki, 1, &global, NULL,
+                    (cvl_cl_karg_t[]){
+                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = builder->buf_nodes.mem},
+                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 1, .scalar_uint = depth},
+                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = n_parents},
+                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = parent_off},
+                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = child_off},
+                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = n_children},
+                        {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 6, .scalar_double = root_hs},
+                        {.type = CVL_CL_KARG_BUFFER, .index = 7, .mem = builder->buf_leaf_starts.mem},
+                        {},
+                    },
+                    0, NULL, NULL);
                 if (st != CVL_CL_SUCCESS)
                 {
                     status = st;
@@ -989,7 +979,17 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         {
             const unsigned leaf_offset = builder->depth_offsets[max_depth];
 
-            /* nodes_raw was partitioned at function start (sized for max_n_total). */
+            /* Wait for the full build pipeline, then read the nodes back.
+             * nodes_raw was partitioned at function start (sized for
+             * max_n_total) - its first bytes were reused as the zero-fill
+             * scratch, which is safe: those writes completed long ago. */
+            st = cvl_cl_chain_finish(&chain);
+            if (st != CVL_CL_SUCCESS)
+            {
+                status = st;
+                goto cleanup;
+            }
+
             const size_t raw_bytes = (size_t)n_total * CVL_CL_GPU_NODE_SIZE;
             st = cvl_cl_read_buffer(queue, &builder->buf_nodes, 0, raw_bytes, nodes_raw, 0, NULL, NULL);
             if (st != CVL_CL_SUCCESS)
@@ -1022,6 +1022,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
     }
 
 cleanup:
+    cvl_cl_chain_destroy(&chain);
     return status;
 }
 

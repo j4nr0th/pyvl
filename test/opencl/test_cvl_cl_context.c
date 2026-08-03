@@ -2,14 +2,15 @@
 
 #include "../test_common.h"
 #include "cvl_cl.h"
+#include "cvl_cl_test_common.h"
 
 int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
-    unsigned count = 0;
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
+    cl_command_queue prof_queue = NULL;
 
     /* ---- Discover a device (GPU preferred, CPU fallback) ---- */
     status = cvl_cl_device_first_gpu(&device);
@@ -25,18 +26,21 @@ int main(void)
 
     /* ---- Create context ---- */
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
-    TEST_ASSERT(cvl_cl_ctx_context(&ctx) != NULL, "cl_context handle is NULL after creation");
-    TEST_ASSERT(cvl_cl_ctx_device(&ctx) == &device, "cvl_cl_ctx_device does not match the device used at creation");
+    TEST_ASSERT(ctx != NULL, "cl_context handle is NULL after creation");
 
     /* ---- Create command queue (default properties) ---- */
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
-    TEST_ASSERT(cvl_cl_queue_queue(&queue) != NULL, "cl_command_queue handle is NULL after creation");
-    TEST_ASSERT(cvl_cl_queue_ctx(&queue) == &ctx, "cvl_cl_queue_ctx does not match the context used at creation");
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
+    TEST_ASSERT(queue != NULL, "cl_command_queue handle is NULL after creation");
+
+    /* ---- Create a second queue with explicit properties ---- */
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, &(cvl_cl_queue_props_t){.profiling = true}, &prof_queue), cleanup);
+    TEST_ASSERT(prof_queue != NULL, "profiling cl_command_queue handle is NULL after creation");
 
     /* ---- All good ---- */
     status = CVL_CL_SUCCESS;
 
 cleanup:
+    cvl_cl_queue_destroy(&prof_queue);
     cvl_cl_queue_destroy(&queue);
     cvl_cl_ctx_destroy(&ctx);
     return status == CVL_CL_SUCCESS ? 0 : 1;

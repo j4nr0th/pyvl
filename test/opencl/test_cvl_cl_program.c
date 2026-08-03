@@ -2,6 +2,7 @@
 
 #include "../test_common.h"
 #include "cvl_cl.h"
+#include "cvl_cl_test_common.h"
 
 #include <string.h>
 
@@ -25,11 +26,11 @@ int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
-    cvl_cl_program_t valid_prog = {0};
-    cvl_cl_program_t invalid_prog = {0};
-    unsigned count = 0;
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
+    cl_program valid_prog = NULL;
+    cl_program invalid_prog = NULL;
+    char build_log[4096];
 
     /* ---- Discover device (GPU preferred, CPU fallback) ---- */
     status = cvl_cl_device_first_gpu(&device);
@@ -47,41 +48,39 @@ int main(void)
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
 
     /* ---- Queue ---- */
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     /* ================================================================ */
     /*  Test 1: Compile a valid program                                 */
     /* ================================================================ */
-    CVL_CL_CHECK(cvl_cl_program_create(&ctx,
+    CVL_CL_CHECK(cvl_cl_program_create(ctx, device.id,
                                        &(cvl_cl_program_desc_t){
-                                           .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                            .source_string = VALID_KERNEL_SOURCE,
                                        },
-                                       device.id, &valid_prog, NULL),
+                                       NULL, 0, &valid_prog),
                  cleanup);
-    TEST_ASSERT(cvl_cl_program_program(&valid_prog) != NULL, "Valid program handle is NULL after successful creation");
-    TEST_ASSERT(cvl_cl_program_build_log(&valid_prog) == NULL, "Build log should be NULL when compilation succeeded");
-    TEST_ASSERT(cvl_cl_program_ctx(&valid_prog) == &ctx, "Program context does not match");
+    TEST_ASSERT(valid_prog != NULL, "Valid program handle is NULL after successful creation");
 
     /* ================================================================ */
     /*  Test 2: Compile an invalid program - expect build failure + log */
     /* ================================================================ */
-    status = cvl_cl_program_create(&ctx,
+    memset(build_log, 0, sizeof build_log);
+    status = cvl_cl_program_create(ctx, device.id,
                                    &(cvl_cl_program_desc_t){
-                                       .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                        .source_string = INVALID_KERNEL_SOURCE,
                                    },
-                                   device.id, &invalid_prog, NULL);
+                                   build_log, sizeof build_log, &invalid_prog);
     TEST_ASSERT(status == CVL_CL_ERR_PROGRAM_BUILD, "Invalid kernel should yield PROGRAM_BUILD error, got %s",
                 cvl_cl_status_str(status));
 
-    const char *log = cvl_cl_program_build_log(&invalid_prog);
-    TEST_ASSERT(log != NULL, "Build log is NULL after a failed compilation");
-    TEST_ASSERT(strlen(log) > 0, "Build log is empty after a failed compilation");
+    /* The build log must be captured in the caller-provided buffer:
+     * non-empty and NUL-terminated within capacity. */
+    TEST_ASSERT(strlen(build_log) > 0, "Build log is empty after a failed compilation");
+    TEST_ASSERT(strlen(build_log) < sizeof build_log, "Build log is not NUL-terminated within capacity");
     /* The log should contain some indication of the error. */
-    TEST_ASSERT(strstr(log, "error") != NULL || strstr(log, "Error") != NULL || strstr(log, "syntax") != NULL ||
-                    strstr(log, "Syntax") != NULL,
-                "Build log should contain an error or syntax message, got: %s", log);
+    TEST_ASSERT(strstr(build_log, "error") != NULL || strstr(build_log, "Error") != NULL ||
+                    strstr(build_log, "syntax") != NULL || strstr(build_log, "Syntax") != NULL,
+                "Build log should contain an error or syntax message, got: %s", build_log);
 
     /* ---- All tests passed ---- */
     status = CVL_CL_SUCCESS;

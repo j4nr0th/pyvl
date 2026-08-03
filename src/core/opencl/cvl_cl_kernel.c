@@ -1,42 +1,26 @@
 #include "cvl_cl_kernel.h"
 
-#include <string.h>
+#include <assert.h>
 
-cvl_cl_status_t cvl_cl_kernel_create(const cvl_cl_program_t *program, const char *name, cvl_cl_kernel_t *out)
+cvl_cl_status_t cvl_cl_kernel_create(cl_program program, const char *name, cl_kernel *out)
 {
-    if (!program || !name || !out || !program->program)
-        return CVL_CL_ERR_INVALID_PARAM;
-
-    out->kernel = NULL;
-    out->program = NULL;
-    out->preferred_wg_multiple = 0;
+    assert(program && name && out);
 
     cl_int err;
-    cl_kernel k = clCreateKernel(program->program, name, &err);
-    if (err != CL_SUCCESS)
-        return cvl_cl_status_from_cl_int(err);
-
-    /* Cache preferred work-group size multiple. */
-    size_t wg_multiple = 0;
-    err = clGetKernelWorkGroupInfo(k, cvl_cl_ctx_device(program->ctx)->id, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
-                                   sizeof(wg_multiple), &wg_multiple, NULL);
+    cl_kernel k = clCreateKernel(program, name, &err);
     if (err != CL_SUCCESS)
     {
-        /* Non-fatal: just leave it as 0.  The runtime will pick a valid
-         * size when local_work_size is NULL in clEnqueueNDRangeKernel. */
-        wg_multiple = 0;
+        *out = NULL;
+        return cvl_cl_status_from_cl_int(err);
     }
 
-    out->kernel = k;
-    out->program = program;
-    out->preferred_wg_multiple = wg_multiple;
+    *out = k;
     return CVL_CL_SUCCESS;
 }
 
-cvl_cl_status_t cvl_cl_kernel_set_args(cvl_cl_kernel_t *kernel, const cvl_cl_karg_t kargs[])
+cvl_cl_status_t cvl_cl_kernel_set_args(cl_kernel kernel, const cvl_cl_karg_t kargs[])
 {
-    if (!kernel || !kargs || !kernel->kernel)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(kernel && kargs);
 
     for (const cvl_cl_karg_t *arg = kargs; arg->type != CVL_CL_KARG_NONE; ++arg)
     {
@@ -44,53 +28,46 @@ cvl_cl_status_t cvl_cl_kernel_set_args(cvl_cl_kernel_t *kernel, const cvl_cl_kar
 
         switch (arg->type)
         {
-        case CVL_CL_KARG_BUFFER: {
-            const cl_mem mem = arg->mem;
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(cl_mem), &mem);
+        case CVL_CL_KARG_BUFFER:
+            /* cl_mem value (the union makes &arg->mem a cl_mem *). */
+            err = clSetKernelArg(kernel, arg->index, sizeof(cl_mem), &arg->mem);
             break;
-        }
         case CVL_CL_KARG_SCALAR_INT:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(int), &arg->scalar_int);
+            err = clSetKernelArg(kernel, arg->index, sizeof(int), &arg->scalar_int);
             break;
         case CVL_CL_KARG_SCALAR_UINT:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(unsigned), &arg->scalar_uint);
+            err = clSetKernelArg(kernel, arg->index, sizeof(unsigned), &arg->scalar_uint);
             break;
         case CVL_CL_KARG_SCALAR_LONG:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(long long), &arg->scalar_long);
+            err = clSetKernelArg(kernel, arg->index, sizeof(long long), &arg->scalar_long);
             break;
         case CVL_CL_KARG_SCALAR_ULONG:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(unsigned long long), &arg->scalar_ulong);
+            err = clSetKernelArg(kernel, arg->index, sizeof(unsigned long long), &arg->scalar_ulong);
             break;
         case CVL_CL_KARG_SCALAR_FLOAT:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(float), &arg->scalar_float);
+            err = clSetKernelArg(kernel, arg->index, sizeof(float), &arg->scalar_float);
             break;
         case CVL_CL_KARG_SCALAR_DOUBLE:
-            err = clSetKernelArg(kernel->kernel, arg->index, sizeof(double), &arg->scalar_double);
+            err = clSetKernelArg(kernel, arg->index, sizeof(double), &arg->scalar_double);
             break;
         case CVL_CL_KARG_LOCAL:
             /* __local buffer - pass NULL pointer, size = local_size. */
-            err = clSetKernelArg(kernel->kernel, arg->index, arg->local_size, NULL);
+            err = clSetKernelArg(kernel, arg->index, arg->local_size, NULL);
             break;
         default:
             return CVL_CL_ERR_KERNEL_ARG;
         }
 
         if (err != CL_SUCCESS)
-            return cvl_cl_status_from_cl_int(err);
+            return CVL_CL_ERR_KERNEL_ARG;
     }
 
     return CVL_CL_SUCCESS;
 }
 
-void cvl_cl_kernel_destroy(cvl_cl_kernel_t *kernel)
+void cvl_cl_kernel_destroy(cl_kernel *kernel)
 {
-    if (!kernel)
-        return;
-    if (kernel->kernel)
-    {
-        clReleaseKernel(kernel->kernel);
-        kernel->kernel = NULL;
-    }
-    kernel->program = NULL;
-    kernel->preferred_wg_multiple = 0;
+    assert(kernel);
+    clReleaseKernel(*kernel);
+    *kernel = NULL;
 }

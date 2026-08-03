@@ -1,6 +1,6 @@
 #include "cvl_cl_buffer.h"
 
-#include <stdlib.h>
+#include <assert.h>
 #include <string.h>
 
 /* Map buffer access to cl_mem_flags. */
@@ -18,8 +18,10 @@ static cl_mem_flags access_to_flags(cvl_cl_buffer_access_t access)
     }
 }
 
-cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out)
+cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out)
 {
+    assert(desc && out);
+
     out->mem = NULL;
     out->capacity = 0;
     out->size = 0;
@@ -27,7 +29,7 @@ cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffe
 
     if (desc->size_bytes == 0)
     {
-        /* Zero-size buffer: still valid (size=0, capacity=0, mem=NULL). */
+        /* Zero-size buffer: valid (size=0, capacity=0, mem=NULL). */
         return CVL_CL_SUCCESS;
     }
 
@@ -41,9 +43,12 @@ cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffe
     }
 
     cl_int err;
-    cl_mem mem = clCreateBuffer(ctx->context, flags, desc->size_bytes, (void *)desc->host_ptr, &err);
+    cl_mem mem = clCreateBuffer(ctx, flags, desc->size_bytes, (void *)desc->host_ptr, &err);
     if (err != CL_SUCCESS)
+    {
+        memset(out, 0, sizeof(*out));
         return cvl_cl_status_from_cl_int(err);
+    }
 
     out->mem = mem;
     out->capacity = desc->size_bytes;
@@ -51,25 +56,26 @@ cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffe
     return CVL_CL_SUCCESS;
 }
 
-cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, const cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue,
-                                      size_t new_capacity)
+cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue, size_t new_capacity)
 {
-    if (!buf || !ctx)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(buf);
 
     if (new_capacity <= buf->capacity)
         return CVL_CL_SUCCESS;
 
     cl_mem_flags flags = access_to_flags(buf->access);
     cl_int err;
-    cl_mem new_mem = clCreateBuffer(ctx->context, flags, new_capacity, NULL, &err);
+    cl_mem new_mem = clCreateBuffer(ctx, flags, new_capacity, NULL, &err);
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
 
-    /* Copy old contents if present. */
-    if (buf->mem != NULL && buf->size > 0 && queue != NULL)
+    /* Copy old contents if present.  The old cl_mem is retained by the
+     * enqueued copy command, so releasing our reference right after the
+     * enqueue is safe. */
+    if (buf->mem != NULL && buf->size > 0)
     {
-        err = clEnqueueCopyBuffer(queue->queue, buf->mem, new_mem, 0, 0, buf->size, 0, NULL, NULL);
+        assert(queue != NULL);
+        err = clEnqueueCopyBuffer(queue, buf->mem, new_mem, 0, 0, buf->size, 0, NULL, NULL);
         if (err != CL_SUCCESS)
         {
             clReleaseMemObject(new_mem);
@@ -89,13 +95,8 @@ cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, const cvl_cl_ctx_t *
 
 void cvl_cl_buffer_destroy(cvl_cl_buffer_t *buf)
 {
-    if (!buf)
-        return;
-    if (buf->mem)
-    {
+    assert(buf);
+    if (buf->mem != NULL)
         clReleaseMemObject(buf->mem);
-        buf->mem = NULL;
-    }
-    buf->capacity = 0;
-    buf->size = 0;
+    memset(buf, 0, sizeof(*buf));
 }

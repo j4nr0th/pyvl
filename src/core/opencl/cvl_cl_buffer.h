@@ -4,15 +4,13 @@
  *
  * The buffer grows on demand (never shrinks).  When reserve is called
  * with a larger capacity, a new cl_mem is created, old content is
- * copied via clEnqueueCopyBuffer (if the queue is provided), and the
- * old buffer is released.
+ * copied via clEnqueueCopyBuffer, and the old buffer is released.
  *
  * This avoids repeated re-allocation when buffer sizes fluctuate
  * between kernel invocations.
  */
 
 #include "cvl_cl_common.h"
-#include "cvl_cl_ctx.h"
 
 #include <CL/cl.h>
 
@@ -55,6 +53,8 @@ struct cvl_cl_buffer_t
     cvl_cl_buffer_access_t access;
 };
 
+typedef struct cvl_cl_buffer_t cvl_cl_buffer_t;
+
 /**
  * @brief Create a device buffer.
  *
@@ -63,22 +63,23 @@ struct cvl_cl_buffer_t
  * @param out   Filled with the new buffer on success.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out);
+cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out);
 
 /**
  * @brief Grow (or keep) the buffer to at least @p new_capacity bytes.
  *
  * If @p new_capacity > current capacity, allocates a new cl_mem,
- * copies old contents via clEnqueueCopyBuffer, releases the old
- * buffer.
+ * copies old contents via clEnqueueCopyBuffer on @p queue, releases
+ * the old buffer.  If the buffer is empty (no old contents) the copy
+ * is skipped and @p queue may be NULL.
  *
  * @param buf          Buffer to resize.
  * @param ctx          Context (for creating the new buffer).
- * @param queue        Queue for the copy operation (may be NULL if capacity <= current capacity).
+ * @param queue        Queue for the copy operation (may be NULL only when growing an empty buffer).
  * @param new_capacity Minimum capacity in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, const cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue,
+cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue,
                                       size_t new_capacity);
 
 /**

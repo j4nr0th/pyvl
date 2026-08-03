@@ -34,8 +34,6 @@ const char *cvl_cl_status_str(const cvl_cl_status_t status)
         return "Buffer allocation failed";
     case CVL_CL_ERR_BUFFER_SIZE:
         return "Buffer size exceeds device limit";
-    case CVL_CL_ERR_BUFFER_MAP:
-        return "Buffer map/unmap failed";
     case CVL_CL_ERR_NDRANGE:
         return "Kernel execution (NDRange) failed";
     case CVL_CL_ERR_READ_WRITE:

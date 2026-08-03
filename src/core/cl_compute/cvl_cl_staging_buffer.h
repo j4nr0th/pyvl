@@ -3,8 +3,9 @@
  * Typed device buffer with optional FP32 host-side conversion.
  *
  * Manages a device-side cl_mem buffer sized in "elements" (one real3_t
- * per element) and a persistent host staging area for FP32 ↔ FP64
- * conversion.
+ * per element).  All enqueues go through a cvl_cl_chain_t so the
+ * caller controls dependency ordering; the buffer itself performs no
+ * host allocation.
  *
  * FP64 mode (default / CVL_CL_PRECISION_FP64):
  *   Device stores sizeof(real3_t) = 24 bytes per element.
@@ -13,19 +14,22 @@
  *
  * FP32 mode (CVL_CL_PRECISION_FP32):
  *   Device stores 3 × sizeof(float) = 12 bytes per element.
- *   write_async converts host doubles → staging floats, then enqueues write.
- *   read_async enqueues read into staging floats; conversion back to
- *   doubles happens in cvl_cl_staging_buffer_read_finish() after the
- *   future completes.
+ *   write_async converts host doubles → caller's float scratch, then
+ *   enqueues the write.  read_async enqueues the read into the float
+ *   scratch; conversion back to doubles happens in
+ *   cvl_cl_staging_buffer_read_finish() AFTER the chain is finished.
  *
- * Buffer grows on demand via reserve(); never shrinks.
+ * The float scratch is caller-provided (typically carved from a work
+ * buffer) and must hold at least 3 * n_elements floats for the
+ * operation in flight.
+ *
+ * The device buffer grows on demand via reserve(); never shrinks.
  */
 
 #include "../common.h"
-#include "cvl_cl_buffer.h"
-#include "cvl_cl_common.h"
-#include "cvl_cl_ctx.h"
-#include "cvl_cl_future.h"
+#include "../opencl/cvl_cl_buffer.h"
+#include "../opencl/cvl_cl_chain.h"
+#include "../opencl/cvl_cl_common.h"
 
 #include <CL/cl.h>
 
@@ -35,116 +39,110 @@
 
 typedef struct
 {
-    cvl_cl_buffer_t device;       /**< Device-side buffer. */
-    float *host_fp32;             /**< Host staging for FP32 (NULL in FP64 mode). */
-    const allocator_t *allocator; /**< Allocator for host staging (NULL = default). */
-    size_t capacity_elements;     /**< Current capacity in real3_t elements. */
-    size_t element_size_bytes;    /**< 24 for FP64, 12 for FP32. */
+    cvl_cl_buffer_t device;    /**< Device-side buffer. */
+    size_t capacity_elements;  /**< Current capacity in real3_t elements. */
+    size_t element_size_bytes; /**< 24 for FP64, 12 for FP32. */
     cvl_cl_precision_t precision;
-    bool unified_memory;
 } cvl_cl_staging_buffer_t;
 
 /**
- * @brief Initialise a staging buffer.
+ * @brief Initialise a staging buffer (zero state, no allocation).
  *
- * Does not allocate anything.  First allocation happens on reserve().
- *
- * @param buf             Uninitialised buffer struct.
- * @param precision       FP32 or FP64.
- * @param unified_memory  Hint from CL_DEVICE_HOST_UNIFIED_MEMORY.
- * @param max_elements    Maximum number of real3_t elements the buffer will hold.
- *                        Used to pre-allocate FP32 host staging (FP64 mode ignores this).
- * @param allocator       Allocator for host staging (NULL = default).
+ * @param buf       Uninitialised buffer struct.
+ * @param precision FP32 or FP64.
  * @return CVL_CL_SUCCESS.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, cvl_cl_precision_t precision,
-                                           bool unified_memory, size_t max_elements, const allocator_t *allocator);
+cvl_cl_status_t cvl_cl_staging_buffer_init(cvl_cl_staging_buffer_t *buf, cvl_cl_precision_t precision);
 
 /**
  * @brief Grow the buffer to at least @p n_elements capacity.
  *
- * Grows the device buffer (and host staging, if FP32) on demand.
- * Existing content is preserved via clEnqueueCopyBuffer.
+ * Grows the device buffer on demand; existing content is preserved
+ * via clEnqueueCopyBuffer.
  *
  * @param buf         Staging buffer.
  * @param ctx         Context.
- * @param queue       Queue for copy (may be NULL if not growing).
+ * @param queue       Queue for the grow-copy (may be NULL when growing an empty buffer).
  * @param n_elements  Minimum number of real3_t elements.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_reserve(cvl_cl_staging_buffer_t *buf, const cvl_cl_ctx_t *ctx,
-                                              cvl_cl_queue_t *queue, size_t n_elements);
+cvl_cl_status_t cvl_cl_staging_buffer_reserve(cvl_cl_staging_buffer_t *buf, cl_context ctx, cl_command_queue queue,
+                                              size_t n_elements);
 
 /**
- * @brief Enqueue an asynchronous host → device write.
+ * @brief Enqueue an asynchronous host → device write through a chain.
  *
- * For FP64: writes directly from @p host_data.
- * For FP32: converts to float staging then enqueues write.
+ * FP64: writes directly from @p host_data.  FP32: converts to
+ * @p scratch_f32 (≥ 3·n_elements floats, NULL in FP64 mode) then
+ * enqueues the write.
  *
- * @param buf              Staging buffer.
- * @param queue            Queue.
- * @param host_data        Host real3_t array (n_elements).
- * @param n_elements       Number of elements to write.
- * @param dst_offset_el    Offset into device buffer (in elements).
- * @param out_future       Filled with future for the write event (caller may wait/release).
+ * @param buf            Staging buffer.
+ * @param chain          Chain to enqueue the write on (records the op's event).
+ * @param host_data      Host real3_t array (n_elements).
+ * @param scratch_f32    Caller-provided float scratch (FP32 only).
+ * @param n_elements     Number of elements to write.
+ * @param dst_offset_el  Offset into device buffer (in elements).
+ * @param out_event      Optional owned event for this op (caller must release), may be NULL.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_write_async(cvl_cl_staging_buffer_t *buf, cvl_cl_queue_t *queue,
-                                                  const real3_t *host_data, size_t n_elements, size_t dst_offset_el,
-                                                  cvl_cl_future_t *out_future);
+cvl_cl_status_t cvl_cl_staging_buffer_write_async(cvl_cl_staging_buffer_t *buf, cvl_cl_chain_t *chain,
+                                                  const real3_t *host_data, float *scratch_f32, size_t n_elements,
+                                                  size_t dst_offset_el, cvl_cl_event_t *out_event);
 
 /**
- * @brief Enqueue an asynchronous device → host read.
+ * @brief Enqueue an asynchronous device → host read through a chain.
  *
- * For FP64: reads directly into @p host_data.
- * For FP32: reads into internal float staging; call
- *           cvl_cl_staging_buffer_read_finish() AFTER waiting
- *           on @p out_future to convert to double.
+ * FP64: reads directly into @p host_data.  FP32: reads into
+ * @p scratch_f32; call cvl_cl_staging_buffer_read_finish() AFTER the
+ * chain completes to convert back to doubles.
  *
- * @param buf              Staging buffer.
- * @param queue            Queue.
- * @param host_data        Host output array (n_elements).
- * @param n_elements       Number of elements to read.
- * @param src_offset_el    Offset into device buffer (in elements).
- * @param out_future       Filled with future for the read event.
+ * @param buf            Staging buffer.
+ * @param chain          Chain to enqueue the read on.
+ * @param host_data      Host output array (n_elements).
+ * @param scratch_f32    Caller-provided float scratch (FP32 only).
+ * @param n_elements     Number of elements to read.
+ * @param src_offset_el  Offset into device buffer (in elements).
+ * @param out_event      Optional owned event for this op (caller must release), may be NULL.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_read_async(cvl_cl_staging_buffer_t *buf, cvl_cl_queue_t *queue,
-                                                 real3_t *host_data, size_t n_elements, size_t src_offset_el,
-                                                 cvl_cl_future_t *out_future);
+cvl_cl_status_t cvl_cl_staging_buffer_read_async(cvl_cl_staging_buffer_t *buf, cvl_cl_chain_t *chain,
+                                                 real3_t *host_data, float *scratch_f32, size_t n_elements,
+                                                 size_t src_offset_el, cvl_cl_event_t *out_event);
 
 /**
- * @brief Complete a pending FP32 read: convert internal float staging
- *        back to the user's real3_t array.
+ * @brief Complete a pending FP32 read: convert the float scratch back
+ *        to the user's real3_t array.
  *
- * Must be called AFTER the future returned by read_async() has
- * completed (cvl_cl_future_wait).  Safe no-op in FP64 mode.
+ * Must be called AFTER the chain used for read_async() has finished.
+ * Safe no-op in FP64 mode.
  *
  * @param buf            Staging buffer.
  * @param host_data      Host output array (same pointer passed to read_async).
+ * @param scratch_f32    Float scratch used by read_async.
  * @param n_elements     Number of elements.
- * @param src_offset_el  Same offset used in read_async.
  * @return CVL_CL_SUCCESS.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_read_finish(cvl_cl_staging_buffer_t *buf, real3_t *host_data, size_t n_elements,
-                                                  size_t src_offset_el);
+cvl_cl_status_t cvl_cl_staging_buffer_read_finish(cvl_cl_staging_buffer_t *buf, real3_t *host_data,
+                                                  const float *scratch_f32, size_t n_elements);
 
 /**
- * @brief Convenience: asynchronous read, then wait + finish.
+ * @brief Convenience: read through a chain, finish the chain, convert.
  *
- * Combines read_async(), cvl_cl_future_wait(), and read_finish().
+ * Combines read_async(), cvl_cl_chain_finish(), and read_finish().
  *
- * @param buf             Staging buffer.
- * @param queue           Queue.
- * @param host_data       Host output array.
- * @param n_elements      Number of elements.
- * @param src_offset_el   Offset into device buffer.
+ * @param buf            Staging buffer.
+ * @param chain          Chain to enqueue the read on (finished afterwards).
+ * @param host_data      Host output array.
+ * @param scratch_f32    Float scratch (FP32 only).
+ * @param n_elements     Number of elements.
+ * @param src_offset_el  Offset into device buffer.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_staging_buffer_read_and_wait(cvl_cl_staging_buffer_t *buf, cvl_cl_queue_t *queue,
-                                                    real3_t *host_data, size_t n_elements, size_t src_offset_el);
+cvl_cl_status_t cvl_cl_staging_buffer_read_and_wait(cvl_cl_staging_buffer_t *buf, cvl_cl_chain_t *chain,
+                                                    real3_t *host_data, float *scratch_f32, size_t n_elements,
+                                                    size_t src_offset_el);
 
 /**
- * @brief Destroy the staging buffer, releasing device memory and host staging.
+ * @brief Destroy the staging buffer, releasing the device buffer.
  */
 void cvl_cl_staging_buffer_destroy(cvl_cl_staging_buffer_t *buf);

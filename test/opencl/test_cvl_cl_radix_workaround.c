@@ -31,62 +31,7 @@
 #include "cvl_cl.h"
 #include "cvl_cl_compute.h"
 #include "cvl_cl_gpu_tree_build.h"
-
-#include <stdlib.h>
-#include <string.h>
-
-/* ------------------------------------------------------------------ */
-/*  Helpers for building concatenated kernel source                    */
-/* ------------------------------------------------------------------ */
-
-static size_t skip_include_concat(char *dst, size_t dst_cap, const char *src)
-{
-    size_t pos = 0;
-    while (*src && pos < dst_cap - 1)
-    {
-        const char *nl = strchr(src, '\n');
-        size_t line_len = nl ? (size_t)(nl - src + 1) : strlen(src);
-
-        const char *trimmed = src;
-        while (*trimmed == ' ' || *trimmed == '\t')
-            ++trimmed;
-
-        int is_include = (trimmed[0] == '#' && strncmp(trimmed + 1, "include", 7) == 0);
-        int is_pragma_once = (trimmed[0] == '#' && strncmp(trimmed + 1, "pragma once", 11) == 0);
-
-        if (!is_include && !is_pragma_once)
-        {
-            size_t copy = line_len < dst_cap - 1 - pos ? line_len : dst_cap - 1 - pos;
-            memcpy(dst + pos, src, copy);
-            pos += copy;
-        }
-
-        if (!nl)
-            break;
-        src = nl + 1;
-    }
-    dst[pos] = '\0';
-    return pos;
-}
-
-static char *read_cl_source(const char *filename)
-{
-    char path[1024];
-    int n = snprintf(path, sizeof path, "%s/%s", CVL_CL_SOURCE_DIR, filename);
-    TEST_ASSERT(n > 0 && (size_t)n < sizeof path, "Path too long for %s", filename);
-    return read_file_to_string(path, 65536);
-}
-
-/* Preamble identical to the other build tests (FP64). */
-static const char *PREAMBLE = "#ifdef CVL_CL_REAL_FP32\n"
-                              "typedef float real_t;\n"
-                              "typedef struct { real_t x, y, z; } real3_t;\n"
-                              "#else\n"
-                              "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"
-                              "typedef double real_t;\n"
-                              "typedef struct { real_t x, y, z; } real3_t;\n"
-                              "#endif\n"
-                              "\n";
+#include "cvl_cl_test_common.h"
 
 /* ------------------------------------------------------------------ */
 /*  Main                                                               */
@@ -96,8 +41,8 @@ int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
     cvl_cl_compute_t comp = {0};
     int ret = 1;
 
@@ -113,34 +58,20 @@ int main(void)
     fprintf(stderr, "Device: %s (Intel NEO CPU backend: %s)\n", device.info.name, neo_cpu ? "yes" : "no");
 
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     /* ----------------------------------------------------------------- */
-    /* Compile the full bh_build program (base + original radix kernels) */
+    /* Init the compute backend from the embedded kernel packs:          */
+    /* all 6 BH_BUILD kernels + bh_flat_eval.                            */
     /* ----------------------------------------------------------------- */
     {
-        char *build_src = read_cl_source("bh_build.cl.h");
-        TEST_ASSERT(build_src != NULL, "Failed to read bh_build.cl.h");
-
-        size_t preamble_len = strlen(PREAMBLE);
-        size_t build_len = strlen(build_src);
-        char *combined = (char *)malloc(preamble_len + build_len + 1);
-        TEST_ASSERT(combined != NULL, "malloc failed for combined source");
-
-        size_t pos = 0;
-        memcpy(combined + pos, PREAMBLE, preamble_len);
-        pos += preamble_len;
-        pos += skip_include_concat(combined + pos, preamble_len + build_len + 1 - pos, build_src);
-        combined[pos] = '\0';
-        free(build_src);
-
         const char *kernels[] = {"kernel_morton",   "kernel_radix_hist",  "kernel_radix_scatter",
-                                 "kernel_boundary", "kernel_fill_leaves", "kernel_build_internal"};
+                                 "kernel_boundary", "kernel_fill_leaves", "kernel_build_internal",
+                                 "bh_flat_eval"};
         const unsigned n_kernels = sizeof(kernels) / sizeof(kernels[0]);
 
-        status = cvl_cl_compute_init(&comp, &ctx, &queue, &device, CVL_CL_PRECISION_FP64, combined, kernels, n_kernels);
-        free(combined);
-        CVL_CL_CHECK(status, cleanup);
+        CVL_CL_CHECK(cvl_cl_compute_init(&comp, ctx, queue, &device, CVL_CL_PRECISION_FP64, kernels, n_kernels),
+                     cleanup);
     }
 
     /* ----------------------------------------------------------------- */

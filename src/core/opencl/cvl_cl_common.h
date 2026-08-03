@@ -6,12 +6,13 @@
  * It provides:
  *   - cvl_cl_status_t  - typed error codes (cpyutl-style, never exit())
  *   - cvl_cl_status_str() - human-readable error description
- *   - CVL_CL_CHECK  - macro for cl_int → cvl_cl_status_t + goto
  *   - cvl_cl_status_from_cl_int() - map OpenCL error codes
- *   - CVL_CL_ASSERT  - guarded assertion (same pattern as cpyutl)
- *   - Forward declarations of all opaque types
  *   - Cross-compilation macros (__global / restrict) for shared
- *     C/OpenCL-C headers (used in Phase 2)
+ *     C/OpenCL-C headers
+ *
+ * This is an internal module: callers are expected to pass valid
+ * pointers.  Contract violations are enforced with assert() rather
+ * than NULL checks that cost a branch on every call.
  */
 
 #include <stdbool.h>
@@ -46,6 +47,16 @@
 #endif
 
 /* ------------------------------------------------------------------ */
+/* Constants                                                          */
+/* ------------------------------------------------------------------ */
+
+/** @brief Maximum number of events in an OpenCL wait list. */
+enum
+{
+    CL_MAX_WAIT_EVENTS = 16
+};
+
+/* ------------------------------------------------------------------ */
 /* Status codes                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -74,7 +85,6 @@ typedef enum
     /* Buffer errors. */
     CVL_CL_ERR_BUFFER,      /**< clCreateBuffer failed. */
     CVL_CL_ERR_BUFFER_SIZE, /**< Requested buffer size exceeds limits. */
-    CVL_CL_ERR_BUFFER_MAP,  /**< clEnqueueMapBuffer / Unmap failed. */
 
     /* Command / event errors. */
     CVL_CL_ERR_NDRANGE,    /**< clEnqueueNDRangeKernel failed. */
@@ -138,79 +148,5 @@ const char *cvl_cl_status_str(cvl_cl_status_t status);
 cvl_cl_status_t cvl_cl_status_from_cl_int(int err);
 
 /* ------------------------------------------------------------------ */
-/* CVL_CL_CHECK macro                                                  */
-/*                                                                     */
-/* Wraps a cl_int-returning OpenCL call.  On failure converts the      */
-/* error to cvl_cl_status_t and jumps to a label (typically cleanup).  */
-/*                                                                     */
-/* Usage:                                                              */
-/*   cvl_cl_status_t status = CVL_CL_SUCCESS;                          */
-/*   CVL_CL_CHECK(clSetKernelArg(...), cleanup);                       */
-/*   ...                                                               */
-/*   cleanup:                                                          */
-/*     return status;                                                  */
+/* Status → string                                                    */
 /* ------------------------------------------------------------------ */
-
-#define CVL_CL_CHECK(stmt, label)                                                                                      \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        const int _cvl_cl_err_ = (stmt);                                                                               \
-        if (_cvl_cl_err_ != 0)                                                                                         \
-        {                                                                                                              \
-            status = cvl_cl_status_from_cl_int(_cvl_cl_err_);                                                          \
-            goto label;                                                                                                \
-        }                                                                                                              \
-    } while (0)
-
-/* ------------------------------------------------------------------ */
-/* CVL_CL_CHECK_RAW - direct cl_int check without macro capture        */
-/*                                                                     */
-/* Use this when stmt is a compound expression or when you need        */
-/* the raw cl_int after the check (e.g., clBuildProgram which sets     */
-/* CL_BUILD_PROGRAM_FAILURE but returns CL_SUCCESS).                   */
-/* ------------------------------------------------------------------ */
-
-#define CVL_CL_CHECK_RAW(cl_err, label)                                                                                \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        if ((cl_err) != 0)                                                                                             \
-        {                                                                                                              \
-            status = cvl_cl_status_from_cl_int(cl_err);                                                                \
-            goto label;                                                                                                \
-        }                                                                                                              \
-    } while (0)
-
-/* ------------------------------------------------------------------ */
-/* Guarded assertions (cpyutl-style)                                   */
-/* ------------------------------------------------------------------ */
-
-#ifdef CVL_CL_ENABLE_ASSERTS
-#include <stdio.h>
-#include <stdlib.h>
-
-#define CVL_CL_ASSERT(cond, fmt, ...)                                                                                  \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        if (!(cond))                                                                                                   \
-        {                                                                                                              \
-            fprintf(stderr, "%s:%d (%s): Assertion \"" #cond "\" failed: " fmt "\n", __FILE__, __LINE__, __func__,     \
-                    ##__VA_ARGS__);                                                                                    \
-            abort();                                                                                                   \
-        }                                                                                                              \
-    } while (0)
-
-#else
-#define CVL_CL_ASSERT(cond, fmt, ...) ((void)0)
-#endif
-
-/* ------------------------------------------------------------------ */
-/* Opaque type forward declarations                                    */
-/* ------------------------------------------------------------------ */
-
-typedef struct cvl_cl_device_t cvl_cl_device_t;
-typedef struct cvl_cl_ctx_t cvl_cl_ctx_t;
-typedef struct cvl_cl_queue_t cvl_cl_queue_t;
-typedef struct cvl_cl_program_t cvl_cl_program_t;
-typedef struct cvl_cl_kernel_t cvl_cl_kernel_t;
-typedef struct cvl_cl_buffer_t cvl_cl_buffer_t;
-typedef struct cvl_cl_event_t cvl_cl_event_t;

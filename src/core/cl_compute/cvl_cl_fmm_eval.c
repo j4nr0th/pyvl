@@ -18,21 +18,20 @@
  * near-field direct sum over the leaf's own particles.  This is the GPU
  * analogue of fmm_tree_eval(..., FMM_EVAL_FMM) for interior points.
  *
- * All device buffers are grown on demand via cvl_cl_buffer_reserve and
- * reused across runs (grow-only, never shrinks).  Cleanup frees buffers
- * in reverse allocation order.
+ * All device work is enqueued through a cvl_cl_chain_t dependency
+ * stream on the compute backend's queue; the results read-back finishes
+ * the chain.  Device buffers are grown on demand via
+ * cvl_cl_buffer_reserve and reused across runs (grow-only, never
+ * shrinks).  Cleanup frees buffers in reverse allocation order.
  */
 
 #include "cvl_cl_fmm_eval.h"
 #include "../multipole.h"
 #include "../octree.h"
-#include "../opencl/cvl_cl_buffer.h"
-#include "../opencl/cvl_cl_command.h"
-#include "../opencl/cvl_cl_common.h"
-#include "../opencl/cvl_cl_ctx.h"
+#include "../opencl/cvl_cl_chain.h"
 #include "../opencl/cvl_cl_helpers.h"
-#include "../opencl/cvl_cl_kernel.h"
 
+#include <assert.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -204,28 +203,26 @@ static void flatten_fmm_tree(const fmm_tree_t *tree, fmm_eval_flat_node_t *flat_
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
-cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision,
-                                     const allocator_t *allocator)
+cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision)
 {
-    if (!eval || !compute)
-        return CVL_CL_ERR_INVALID_PARAM;
+    assert(eval);
+    assert(compute);
 
     memset(eval, 0, sizeof(*eval));
     eval->compute = compute;
     eval->precision = precision;
-    eval->allocator = cl_resolve_allocator(allocator);
 
     /* Verify the required kernel is registered. */
-    if (cvl_cl_compute_kernel(compute, "fmm_l2p_eval") == NULL)
+    if (cvl_cl_compute_kernel(compute, CVL_CL_PACK_FMM_EVAL, CVL_CL_FMM_EVAL_L2P) == NULL)
         return CVL_CL_ERR_NOT_FOUND;
 
-    eval->initialized = true;
     return CVL_CL_SUCCESS;
 }
 
 size_t cvl_cl_fmm_eval_work_size(const cvl_cl_fmm_eval_t *eval, const fmm_tree_t *tree)
 {
     const unsigned n_nodes = tree->n_nodes;
+    const unsigned n_sources = tree->n_sources;
     const unsigned order = tree->settings.order;
     const size_t n_coeffs = multipole_num_coeffs(order);
     const size_t n_real = (size_t)3 * n_coeffs * n_nodes;
@@ -243,23 +240,42 @@ size_t cvl_cl_fmm_eval_work_size(const cvl_cl_fmm_eval_t *eval, const fmm_tree_t
         size += (size_t)3 * n_nodes * sizeof(float);                /* eval_centers_f32 */
         size += n_real * sizeof(float);                             /* local_coeffs_f32 */
         size += n_real * sizeof(float);                             /* mp_coeffs_f32 */
+
+        /* FP32 staging conversion scratch (3 floats per element):
+         *   src_pos + src_val → 2 × 3·n_sources floats
+         *   targets + results → 2 × 3·n_targets floats, sized here for
+         *   the documented n_targets == n_sources usage.  run() re-validates
+         *   with the actual target count and grows the requirement when
+         *   n_targets exceeds n_sources. */
+        size += (size_t)3 * n_sources * sizeof(float);
+        size += (size_t)3 * n_sources * sizeof(float);
+        size += (size_t)3 * n_sources * sizeof(float);
+        size += (size_t)3 * n_sources * sizeof(float);
     }
     return size;
 }
 
-cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *queue, const cvl_cl_ctx_t *ctx,
-                                    const fmm_tree_t *tree, const real3_t *sources_coords,
+cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, const fmm_tree_t *tree, const real3_t *sources_coords,
                                     const real3_t *sources_values, unsigned n_targets, const real3_t *targets,
                                     real3_t *results, void *work, size_t work_size)
 {
-    if (!eval || !eval->initialized || !queue || !ctx || !tree || !sources_coords || !sources_values || !targets ||
-        !results || !work)
-        return CVL_CL_ERR_INVALID_PARAM;
-    if (tree->n_nodes == 0 || tree->n_sources == 0)
-        return CVL_CL_ERR_INVALID_PARAM;
+    /* ---- Validate (asserts = contract; error returns = runtime checks) ---- */
+    assert(eval);
+    assert(eval->compute);
+    assert(tree);
+    assert(sources_coords);
+    assert(sources_values);
+    assert(targets);
+    assert(results);
+    assert(work);
+
+    assert(tree->n_nodes > 0 && tree->n_sources > 0);
     if (n_targets == 0)
         return CVL_CL_SUCCESS;
 
+    /* Queue + context come from the borrowed compute backend. */
+    const cl_command_queue queue = eval->compute->queue;
+    const cl_context ctx = eval->compute->ctx;
     cvl_cl_status_t status = CVL_CL_SUCCESS;
 
     /* Cached tree dimensions. */
@@ -277,9 +293,23 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     const size_t real_bytes = is_f32 ? sizeof(float) : sizeof(real_t);
     const size_t n_real = (size_t)3 * n_coeffs * n_nodes;
 
-    /* Verify work buffer is large enough. */
-    if (work_size < cvl_cl_fmm_eval_work_size(eval, tree))
-        return CVL_CL_ERR_INVALID_PARAM;
+    /* Verify work buffer is large enough.  cvl_cl_fmm_eval_work_size()
+     * sizes the FP32 staging scratch for n_targets == n_sources (the
+     * documented usage); grow the requirement here when more targets
+     * are evaluated. */
+    {
+        size_t required = cvl_cl_fmm_eval_work_size(eval, tree);
+        if (is_f32 && n_targets > n_sources)
+            required += (size_t)6 * (n_targets - n_sources) * sizeof(float);
+        if (work_size < required)
+            return CVL_CL_ERR_BUFFER_SIZE;
+    }
+
+    /* Dependency stream for uploads, the kernel launch, and the results
+     * read-back.  Finished by the results read-back; destroyed on all
+     * paths. */
+    cvl_cl_chain_t chain;
+    cvl_cl_chain_init(&chain, queue);
 
     /* ---- 1. Partition work buffer ---- */
     uint8_t *bp = (uint8_t *)work;
@@ -299,6 +329,12 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     float *local_coeffs_f32 = NULL;
     float *mp_coeffs_f32 = NULL;
 
+    /* FP32 staging conversion scratch (NULL in FP64 mode). */
+    float *scratch_src_pos = NULL;
+    float *scratch_src_val = NULL;
+    float *scratch_targets = NULL;
+    float *scratch_results = NULL;
+
     if (is_f32)
     {
         flat_nodes_f32 = (fmm_eval_flat_node_f32_t *)bp;
@@ -309,6 +345,15 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
         bp += n_real * sizeof(float);
         mp_coeffs_f32 = (float *)bp;
         bp += n_real * sizeof(float);
+
+        scratch_src_pos = (float *)bp;
+        bp += (size_t)3 * n_sources * sizeof(float);
+        scratch_src_val = (float *)bp;
+        bp += (size_t)3 * n_sources * sizeof(float);
+        scratch_targets = (float *)bp;
+        bp += (size_t)3 * n_targets * sizeof(float);
+        scratch_results = (float *)bp;
+        bp += (size_t)3 * n_targets * sizeof(float);
     }
 
     /* ---- 2. Flatten the tree on the host ---- */
@@ -366,32 +411,27 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
 
     /* Staging buffers for source/target/result real3_t arrays. */
     {
-        const bool unified = cvl_cl_compute_unified_memory(eval->compute);
         if (!eval->buf_src_pos.device.mem)
         {
-            status =
-                cvl_cl_staging_buffer_init(&eval->buf_src_pos, eval->precision, unified, n_sources, eval->allocator);
+            status = cvl_cl_staging_buffer_init(&eval->buf_src_pos, eval->precision);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
         if (!eval->buf_src_val.device.mem)
         {
-            status =
-                cvl_cl_staging_buffer_init(&eval->buf_src_val, eval->precision, unified, n_sources, eval->allocator);
+            status = cvl_cl_staging_buffer_init(&eval->buf_src_val, eval->precision);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
         if (!eval->buf_targets.device.mem)
         {
-            status =
-                cvl_cl_staging_buffer_init(&eval->buf_targets, eval->precision, unified, n_targets, eval->allocator);
+            status = cvl_cl_staging_buffer_init(&eval->buf_targets, eval->precision);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
         if (!eval->buf_results.device.mem)
         {
-            status =
-                cvl_cl_staging_buffer_init(&eval->buf_results, eval->precision, unified, n_targets, eval->allocator);
+            status = cvl_cl_staging_buffer_init(&eval->buf_results, eval->precision);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
@@ -410,7 +450,7 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
             goto cleanup_host;
     }
 
-    /* ---- 3. Upload tree + source data + targets ---- */
+    /* ---- 3. Upload tree + source data + targets (chained) ---- */
     {
         /* Flat tree (raw buffers) - use the precision-matched layout. */
         const void *upload_nodes = is_f32 ? (const void *)flat_nodes_f32 : (const void *)flat_nodes;
@@ -418,112 +458,110 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
         const void *upload_local = is_f32 ? (const void *)local_coeffs_f32 : (const void *)tree->local_coeffs;
         const void *upload_mp = is_f32 ? (const void *)mp_coeffs_f32 : (const void *)tree->multipole_coeffs;
 
-        status = cvl_cl_write_buffer(queue, &eval->buf_nodes, 0, nodes_bytes, upload_nodes, 0, NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_write_buffer(queue, &eval->buf_eval_centers, 0, centers_bytes, upload_centers, 0, NULL, NULL);
+        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nodes, 0, nodes_bytes, upload_nodes, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
         status =
-            cvl_cl_write_buffer(queue, &eval->buf_particle_order, 0, order_bytes, tree->particle_order, 0, NULL, NULL);
+            cvl_cl_chain_write_buffer(&chain, &eval->buf_eval_centers, 0, centers_bytes, upload_centers, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        status = cvl_cl_write_buffer(queue, &eval->buf_local_coeffs, 0, local_bytes, upload_local, 0, NULL, NULL);
+        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_particle_order, 0, order_bytes, tree->particle_order, 0,
+                                           NULL, NULL);
+        if (status != CVL_CL_SUCCESS)
+            goto cleanup_host;
+        status =
+            cvl_cl_chain_write_buffer(&chain, &eval->buf_local_coeffs, 0, local_bytes, upload_local, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
 
         /* Explicit child indices for descent. */
-        status = cvl_cl_write_buffer(queue, &eval->buf_child_indices, 0, child_idx_bytes, child_indices, 0, NULL, NULL);
+        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_child_indices, 0, child_idx_bytes, child_indices, 0, NULL,
+                                           NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
 
         /* Multipole coefficients (for fallback when target is outside bbox). */
-        status = cvl_cl_write_buffer(queue, &eval->buf_mp_coeffs, 0, mp_bytes, upload_mp, 0, NULL, NULL);
+        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_mp_coeffs, 0, mp_bytes, upload_mp, 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
 
         /* Near-field interaction lists (CSR). */
         if (tree->nflist_offsets && tree->nflist_indices && tree->leaf_indices)
         {
-            status = cvl_cl_write_buffer(queue, &eval->buf_nflist_offsets, 0, nflist_off_bytes, tree->nflist_offsets, 0,
-                                         NULL, NULL);
+            status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_offsets, 0, nflist_off_bytes,
+                                               tree->nflist_offsets, 0, NULL, NULL);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
             if (nflist_idx_bytes > 0)
             {
-                status = cvl_cl_write_buffer(queue, &eval->buf_nflist_indices, 0, nflist_idx_bytes,
-                                             tree->nflist_indices, 0, NULL, NULL);
+                status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_indices, 0, nflist_idx_bytes,
+                                                   tree->nflist_indices, 0, NULL, NULL);
                 if (status != CVL_CL_SUCCESS)
                     goto cleanup_host;
             }
-            status = cvl_cl_write_buffer(queue, &eval->buf_leaf_indices, 0, leaf_idx_bytes, tree->leaf_indices, 0, NULL,
-                                         NULL);
+            status = cvl_cl_chain_write_buffer(&chain, &eval->buf_leaf_indices, 0, leaf_idx_bytes, tree->leaf_indices,
+                                               0, NULL, NULL);
             if (status != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
 
-        /* Sources + targets (staging buffers, async). */
-        cvl_cl_future_t f[3];
-        unsigned nf = 0;
-        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_pos, queue, sources_coords, n_sources, 0, &f[nf++]);
+        /* Sources + targets (staging buffers, async through the chain -
+         * the kernel launch below waits on all of them). */
+        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_pos, &chain, sources_coords, scratch_src_pos,
+                                                   n_sources, 0, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_val, queue, sources_values, n_sources, 0, &f[nf++]);
+        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_val, &chain, sources_values, scratch_src_val,
+                                                   n_sources, 0, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        status = cvl_cl_staging_buffer_write_async(&eval->buf_targets, queue, targets, n_targets, 0, &f[nf++]);
+        status =
+            cvl_cl_staging_buffer_write_async(&eval->buf_targets, &chain, targets, scratch_targets, n_targets, 0, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
-        for (unsigned i = 0; i < nf; ++i)
-        {
-            status = cvl_cl_future_wait(&f[i]);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-        }
     }
 
     /* ---- 4. Launch the fmm_l2p_eval kernel ---- */
     {
-        cvl_cl_kernel_t *k = cvl_cl_compute_kernel(eval->compute, "fmm_l2p_eval");
+        cl_kernel k = cvl_cl_compute_kernel(eval->compute, CVL_CL_PACK_FMM_EVAL, CVL_CL_FMM_EVAL_L2P);
         if (!k)
         {
             status = CVL_CL_ERR_NOT_FOUND;
             goto cleanup_host;
         }
 
-        status = cvl_cl_kernel_set_args(
-            k, (cvl_cl_karg_t[]){
-                   {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = eval->buf_nodes.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = eval->buf_eval_centers.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = eval->buf_particle_order.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = eval->buf_local_coeffs.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = eval->buf_src_pos.device.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = eval->buf_src_val.device.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = eval->buf_targets.device.mem},
-                   {.type = CVL_CL_KARG_SCALAR_UINT, .index = 7, .scalar_uint = n_targets},
-                   {.type = CVL_CL_KARG_SCALAR_UINT, .index = 8, .scalar_uint = n_nodes},
-                   {.type = CVL_CL_KARG_SCALAR_UINT, .index = 9, .scalar_uint = max_depth},
-                   {.type = CVL_CL_KARG_SCALAR_UINT, .index = 10, .scalar_uint = order},
-                   {.type = CVL_CL_KARG_SCALAR_UINT, .index = 11, .scalar_uint = (unsigned)n_coeffs},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 12, .mem = eval->buf_nflist_offsets.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 13, .mem = eval->buf_nflist_indices.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 14, .mem = eval->buf_leaf_indices.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 15, .mem = eval->buf_child_indices.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 16, .mem = eval->buf_mp_coeffs.mem},
-                   {.type = CVL_CL_KARG_BUFFER, .index = 17, .mem = eval->buf_results.device.mem},
-                   {},
-               });
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-
         const size_t global = n_targets;
-        status = cvl_cl_ndrange(queue, k, 1, &global, NULL, NULL, 0, NULL, NULL);
+        status =
+            cvl_cl_chain_ndrange(&chain, k, 1, &global, NULL,
+                                 (cvl_cl_karg_t[]){
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = eval->buf_nodes.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = eval->buf_eval_centers.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = eval->buf_particle_order.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = eval->buf_local_coeffs.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = eval->buf_src_pos.device.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = eval->buf_src_val.device.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 6, .mem = eval->buf_targets.device.mem},
+                                     {.type = CVL_CL_KARG_SCALAR_UINT, .index = 7, .scalar_uint = n_targets},
+                                     {.type = CVL_CL_KARG_SCALAR_UINT, .index = 8, .scalar_uint = n_nodes},
+                                     {.type = CVL_CL_KARG_SCALAR_UINT, .index = 9, .scalar_uint = max_depth},
+                                     {.type = CVL_CL_KARG_SCALAR_UINT, .index = 10, .scalar_uint = order},
+                                     {.type = CVL_CL_KARG_SCALAR_UINT, .index = 11, .scalar_uint = (unsigned)n_coeffs},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 12, .mem = eval->buf_nflist_offsets.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 13, .mem = eval->buf_nflist_indices.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 14, .mem = eval->buf_leaf_indices.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 15, .mem = eval->buf_child_indices.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 16, .mem = eval->buf_mp_coeffs.mem},
+                                     {.type = CVL_CL_KARG_BUFFER, .index = 17, .mem = eval->buf_results.device.mem},
+                                     {},
+                                 },
+                                 0, NULL, NULL);
         if (status != CVL_CL_SUCCESS)
             goto cleanup_host;
     }
 
-    /* ---- 5. Read results back ---- */
-    status = cvl_cl_staging_buffer_read_and_wait(&eval->buf_results, queue, results, n_targets, 0);
+    /* ---- 5. Read results back (through the chain; blocks until the
+     *         kernel + all uploads are done) ---- */
+    status = cvl_cl_staging_buffer_read_and_wait(&eval->buf_results, &chain, results, scratch_results, n_targets, 0);
     if (status != CVL_CL_SUCCESS)
         goto cleanup_host;
 
@@ -535,6 +573,7 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *que
     eval->max_depth = max_depth;
 
 cleanup_host:
+    cvl_cl_chain_destroy(&chain);
     /* Work buffer is caller-owned - nothing to free here. */
     return status;
 }

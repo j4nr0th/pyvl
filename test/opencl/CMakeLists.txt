@@ -68,26 +68,25 @@ add_cvl_cl_test(test_cvl_cl_bh_eval test_cvl_cl_bh_eval.c)
 add_cvl_cl_test(test_cvl_cl_gpu_build test_cvl_cl_gpu_build.c)
 target_include_directories(test_cvl_cl_gpu_build PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
 target_include_directories(test_cvl_cl_gpu_build PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
-target_compile_definitions(test_cvl_cl_gpu_build PRIVATE
-    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
 
 # Test 13: GPU FMM evaluation (L2P) end-to-end — compare with CPU fmm_tree_eval
 add_cvl_cl_test(test_cvl_cl_fmm_eval test_cvl_cl_fmm_eval.c)
 target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
 target_include_directories(test_cvl_cl_fmm_eval PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
-target_compile_definitions(test_cvl_cl_fmm_eval PRIVATE
-    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
 
 # Test 14: Intel NEO CPU workaround radix kernels + radix policy API
 add_cvl_cl_test(test_cvl_cl_radix_workaround test_cvl_cl_radix_workaround.c)
 target_include_directories(test_cvl_cl_radix_workaround PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
 target_include_directories(test_cvl_cl_radix_workaround PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
-target_compile_definitions(test_cvl_cl_radix_workaround PRIVATE
-    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
 
 # Test 14: Benchmark — performance + accuracy comparison
 add_cvl_cl_test(test_cvl_cl_benchmark test_cvl_cl_benchmark.c)
 target_include_directories(test_cvl_cl_benchmark PRIVATE "${CMAKE_SOURCE_DIR}/src/core")
 target_include_directories(test_cvl_cl_benchmark PRIVATE "${CMAKE_SOURCE_DIR}/src/core/opencl")
-target_compile_definitions(test_cvl_cl_benchmark PRIVATE
-    CVL_CL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core/opencl")
+
+# Test 15: Chain dependency chaining (write -> ndrange -> read, compaction,
+# extra wait events)
+add_cvl_cl_test(test_cvl_cl_chain test_cvl_cl_chain.c)
+
+# Test 16: Compute backend pack selection + kernel registry
+add_cvl_cl_test(test_cvl_cl_compute test_cvl_cl_compute.c)

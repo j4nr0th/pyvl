@@ -10,11 +10,11 @@
  *
  * Usage:
  *   cvl_cl_gpu_tree_build_t builder;
- *   cvl_cl_gpu_tree_build_init(&builder, &comp, max_depth, critical_count, order, NULL);
+ *   cvl_cl_gpu_tree_build_init(&builder, &comp, max_depth, critical_count, order);
  *
- *   cvl_cl_gpu_tree_build_run(&builder, &queue, &ctx, &staging_pos, n_sources);
+ *   cvl_cl_gpu_tree_build_run(&builder, &staging_pos, n_sources, work, work_size);
  *
- *   // builder.nodes, builder.particle_order, builder.depth_offsets are ready
+ *   // builder.buf_nodes, builder.buf_particle_order, builder.buf_depth_offsets are ready
  *   // builder.n_total, builder.n_internal etc. are populated
  *
  *   cvl_cl_gpu_tree_build_destroy(&builder);
@@ -116,9 +116,6 @@ typedef struct
     unsigned n_multipole_leaves;
     unsigned n_particle_leaves;
     unsigned n_sources;
-
-    /* Valid flag. */
-    bool initialized;
 } cvl_cl_gpu_tree_build_t;
 
 /**
@@ -184,6 +181,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
  * @brief Run the full GPU tree build pipeline.
  *
  * Source coordinates must already be uploaded to @p staging_pos.
+ * The queue and context are taken from the borrowed compute backend.
  * The pipeline is:
  *   1. Read back coords → compute root bounding box
  *   2. Launch kernel_morton
@@ -191,24 +189,20 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_init(cvl_cl_gpu_tree_build_t *builder, cvl
  *   4. Launch kernel_boundary
  *   5. Read bd_hist → compute depth_counts / depth_offsets / n_total
  *   6. Allocate output buffers (nodes, particle_order, depth_offsets)
- *   7. Launch kernel_compact_leaves → read n_leaves
- *   8. Launch kernel_fill_leaves
- *   9. Loop kernel_build_internal from max_depth-1 down to 0
+ *   7. Launch kernel_fill_leaves
+ *   8. Loop kernel_build_internal from max_depth-1 down to 0
  *
  * After success, metadata fields (n_total, n_internal, n_multipole_leaves,
  * n_particle_leaves, n_sources) are populated on the builder.
  *
- * @param builder    Initialised builder.
- * @param queue      Queue for all commands.
- * @param ctx        Context.
- * @param staging_pos Source positions in a staging buffer (must be reserved to n_sources).
- * @param n_sources  Number of particles.
- * @param work       Pre-allocated work buffer (size from cvl_cl_gpu_tree_build_work_size).
- * @param work_size  Size of work buffer in bytes.
+ * @param builder      Initialised builder.
+ * @param staging_pos  Source positions in a staging buffer (must be reserved to n_sources).
+ * @param n_sources    Number of particles.
+ * @param work         Pre-allocated work buffer (size from cvl_cl_gpu_tree_build_work_size).
+ * @param work_size    Size of work buffer in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_cl_queue_t *queue,
-                                          const cvl_cl_ctx_t *ctx, cvl_cl_staging_buffer_t *staging_pos,
+cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_cl_staging_buffer_t *staging_pos,
                                           unsigned n_sources, void *work, size_t work_size);
 
 /**

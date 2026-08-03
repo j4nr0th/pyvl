@@ -2,22 +2,16 @@
 /*
  * OpenCL device discovery and selection.
  *
- * Design follows the cpyutl typed-descriptor pattern: the caller builds
- * a NULL-terminated array of @ref cvl_cl_device_sel_t descriptors using
- * designated initializers, and @ref cvl_cl_device_discover picks the
- * best matching device.
+ * A plain value struct: discovery fills a cvl_cl_device_t with the raw
+ * cl_device_id/cl_platform_id plus a cached snapshot of the device
+ * info (fixed-size strings - no heap allocation).  No destroy is
+ * needed; devices are stack/value objects.
  *
  * Example:
  * @code
  *   cvl_cl_device_t dev;
- *   unsigned count = 0;
- *   cvl_cl_status_t st = cvl_cl_device_discover(
- *       (cvl_cl_device_sel_t[]){
- *           {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
- *           {.type = CVL_CL_DEVICE_SEL_PLATFORM_NAME, .platform_name_substring = "NVIDIA"},
- *           {},
- *       },
- *       1, &count, &dev);
+ *   cvl_cl_status_t st = cvl_cl_device_first_gpu(&dev);
+ *   ...
  * @endcode
  */
 
@@ -41,9 +35,8 @@ typedef struct
 {
     cvl_cl_platform_filter_type_t type;
     union {
-        unsigned platform_index; /**< For CVL_CL_DEVICE_SEL_PLATFORM_INDEX. */
-        const char
-            *platform_name_substring; /**< For CVL_CL_DEVICE_SEL_PLATFORM_NAME (case-sensitive substring match). */
+        unsigned platform_index;             /**< For CVL_CL_PLATFORM_FILTER_INDEX. */
+        const char *platform_name_substring; /**< For CVL_CL_PLATFORM_FILTER_NAME (case-sensitive substring match). */
     };
 } cvl_cl_platform_filter_t;
 
@@ -79,7 +72,7 @@ typedef struct
 } cvl_cl_device_info_t;
 
 /* ------------------------------------------------------------------ */
-/* Device handle (opaque)                                              */
+/* Device handle (value type)                                          */
 /* ------------------------------------------------------------------ */
 
 struct cvl_cl_device_t
@@ -90,39 +83,27 @@ struct cvl_cl_device_t
     cvl_cl_device_info_t info;
 };
 
+typedef struct cvl_cl_device_t cvl_cl_device_t;
+
 /* ------------------------------------------------------------------ */
 /* Discovery                                                          */
 /* ------------------------------------------------------------------ */
 
 /**
- * @brief Discover and select an OpenCL device.
+ * @brief Discover OpenCL devices matching a platform filter and device type.
  *
- * Enumerates all platforms and their devices, applying the given
- * selection criteria in order.  Each criterion narrows the candidate
- * set.  After all criteria are processed, the first remaining device
- * is selected.
+ * Enumerates all platforms (optionally narrowed by @p platform_filter)
+ * and collects devices of the requested @p desired_types into
+ * @p out_devices (up to @p max_devices entries).  @p out_count always
+ * receives the total number of matches, even if it exceeds the array
+ * capacity.
  *
- * TODO: Update the example to reflect the new function signature.
- * Typical usage with a single selection criterion:
- * @code
- *   cvl_cl_device_t dev;
- *   unsigned count = 0;
- *   cvl_cl_device_discover(
- *       (cvl_cl_device_sel_t[]){
- *           {.type = CVL_CL_DEVICE_SEL_TYPE, .device_type = CL_DEVICE_TYPE_GPU},
- *           {},
- *       },
- *       1, &count, &dev);
- *   if (count == 0) ... // no suitable device
- * @endcode
- *
- * @param selectors   NULL-terminated array of selection descriptors.
- * @param max_devices Capacity of @p out_devices (pass 1 for a single device).
- * @param out_count   Filled with the number of matching devices found (may exceed max_devices).
- * @param out_devices Array of @p max_devices device handles.  Each handle
- *                    must be destroyed via @ref cvl_cl_device_destroy.
- * @return CVL_CL_SUCCESS on success, or an error code on failure.
- *         CVL_CL_ERR_DEVICE_NOT_FOUND if selectors matched nothing.
+ * @param platform_filter Platform filter (see cvl_cl_platform_filter_t).
+ * @param max_devices     Capacity of @p out_devices.
+ * @param out_devices     Array of @p max_devices device handles (value types).
+ * @param desired_types   OR-ed cl_device_type bits (e.g. CL_DEVICE_TYPE_GPU).
+ * @param out_count       Filled with the number of matching devices found.
+ * @return CVL_CL_SUCCESS, or CVL_CL_ERR_DEVICE_NOT_FOUND if nothing matched.
  */
 cvl_cl_status_t cvl_cl_device_discover(cvl_cl_platform_filter_t platform_filter, unsigned max_devices,
                                        cvl_cl_device_t out_devices[max_devices], const cl_device_type desired_types,

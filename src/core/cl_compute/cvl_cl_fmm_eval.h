@@ -27,8 +27,10 @@
  *   cvl_cl_fmm_eval_t eval;
  *   cvl_cl_fmm_eval_init(&eval, &comp, CVL_CL_PRECISION_FP64);
  *
- *   cvl_cl_fmm_eval_run(&eval, &queue, &ctx, &tree,
- *                       n_targets, targets, results);
+ *   cvl_cl_fmm_eval_run(&eval, &tree,
+ *                       sources_coords, sources_values,
+ *                       n_targets, targets, results,
+ *                       work, work_size);
  *
  *   cvl_cl_fmm_eval_destroy(&eval);
  * @endcode
@@ -64,7 +66,7 @@
  */
 typedef struct
 {
-    /* Borrowed compute backend (kernel registry + cached caps). */
+    /* Borrowed compute backend (kernel registry). */
     cvl_cl_compute_t *compute;
     cvl_cl_precision_t precision;
 
@@ -79,12 +81,6 @@ typedef struct
     cvl_cl_buffer_t buf_child_indices;  /**< [8 * n_nodes] explicit child indices (-1 = none). */
     cvl_cl_buffer_t buf_mp_coeffs;      /**< [3 * n_coeffs * n_nodes] multipole coefficients (for fallback). */
 
-    /* Allocator for temporary host staging during run (NULL = default). */
-    const allocator_t *allocator;
-
-    /* Cached work-buffer size for run (computed lazily on first run). */
-    size_t work_size;
-
     /* Staging buffers for source/target/result real3_t arrays. */
     cvl_cl_staging_buffer_t buf_src_pos; /**< [n_sources] source positions. */
     cvl_cl_staging_buffer_t buf_src_val; /**< [n_sources] source strengths. */
@@ -97,9 +93,6 @@ typedef struct
     unsigned n_coeffs;  /**< Coefficients per component per node. */
     unsigned order;     /**< Local expansion order. */
     unsigned max_depth; /**< Maximum tree depth. */
-
-    /* Valid flag. */
-    bool initialized;
 } cvl_cl_fmm_eval_t;
 
 /* ------------------------------------------------------------------ */
@@ -116,11 +109,9 @@ typedef struct
  * @param eval       Uninitialised evaluator.
  * @param compute    Compute backend (borrowed; must have "fmm_l2p_eval").
  * @param precision  FP32 or FP64 (should match the compute backend).
- * @param allocator  Allocator for temporary host staging (NULL = default).
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision,
-                                     const allocator_t *allocator);
+cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *compute, cvl_cl_precision_t precision);
 
 /**
  * @brief Compute the work-buffer size needed for cvl_cl_fmm_eval_run.
@@ -128,6 +119,11 @@ cvl_cl_status_t cvl_cl_fmm_eval_init(cvl_cl_fmm_eval_t *eval, cvl_cl_compute_t *
  * The required size depends on the tree dimensions and the evaluator's
  * precision mode.  Call this once, allocate the buffer, and pass it to
  * cvl_cl_fmm_eval_run.
+ *
+ * NOTE: the FP32 staging scratch is sized assuming n_targets ==
+ * n_sources (the signature only knows the tree).  run() re-validates
+ * against the actual n_targets and returns CVL_CL_ERR_BUFFER_SIZE if
+ * n_targets exceeds n_sources.
  *
  * @param eval      Initialised evaluator (provides precision mode).
  * @param tree      CPU-built FMM tree (provides n_nodes, order).
@@ -148,8 +144,6 @@ size_t cvl_cl_fmm_eval_work_size(const cvl_cl_fmm_eval_t *eval, const fmm_tree_t
  * inside the source bounding box (FMM mode diverges outside).
  *
  * @param eval      Initialised evaluator.
- * @param queue     Command queue (borrowed).
- * @param ctx       Context (borrowed).
  * @param tree      CPU-built FMM tree with local expansions populated.
  * @param sources_coords  Source positions [tree->n_sources] (must match build).
  * @param sources_values  Source strengths [tree->n_sources] (must match build).
@@ -160,8 +154,7 @@ size_t cvl_cl_fmm_eval_work_size(const cvl_cl_fmm_eval_t *eval, const fmm_tree_t
  * @param work_size Size of work buffer in bytes.
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, cvl_cl_queue_t *queue, const cvl_cl_ctx_t *ctx,
-                                    const fmm_tree_t *tree, const real3_t *sources_coords,
+cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, const fmm_tree_t *tree, const real3_t *sources_coords,
                                     const real3_t *sources_values, unsigned n_targets, const real3_t *targets,
                                     real3_t *results, void *work, size_t work_size);
 void cvl_cl_fmm_eval_destroy(cvl_cl_fmm_eval_t *eval);

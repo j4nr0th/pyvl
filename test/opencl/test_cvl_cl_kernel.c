@@ -2,6 +2,7 @@
 
 #include "../test_common.h"
 #include "cvl_cl.h"
+#include "cvl_cl_test_common.h"
 
 /*
  * SAXPY kernel: out[i] = a * x[i] + y[i]
@@ -19,12 +20,11 @@ int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
-    cvl_cl_program_t program = {0};
-    cvl_cl_kernel_t kernel = {0};
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
+    cl_program program = NULL;
+    cl_kernel kernel = NULL;
     cvl_cl_buffer_t buf = {0};
-    unsigned count = 0;
 
     /* ---- Discover device ---- */
     status = cvl_cl_device_first_gpu(&device);
@@ -42,28 +42,22 @@ int main(void)
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
 
     /* ---- Queue ---- */
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     /* ---- Program (saxpy) ---- */
-    CVL_CL_CHECK(cvl_cl_program_create(&ctx,
+    CVL_CL_CHECK(cvl_cl_program_create(ctx, device.id,
                                        &(cvl_cl_program_desc_t){
-                                           .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
                                            .source_string = SAXPY_KERNEL_SOURCE,
                                        },
-                                       device.id, &program, NULL),
+                                       NULL, 0, &program),
                  cleanup);
 
     /* ---- Kernel creation ---- */
-    CVL_CL_CHECK(cvl_cl_kernel_create(&program, "saxpy", &kernel), cleanup);
-    TEST_ASSERT(cvl_cl_kernel_kernel(&kernel) != NULL, "cl_kernel handle is NULL after creation");
-    TEST_ASSERT(cvl_cl_kernel_program(&kernel) == &program, "cvl_cl_kernel_program does not match");
-
-    /* ---- preferred_wg_multiple should be populated (> 0) ---- */
-    TEST_ASSERT(cvl_cl_kernel_preferred_wg_multiple(&kernel) > 0, "preferred_wg_multiple should be > 0, got %zu",
-                cvl_cl_kernel_preferred_wg_multiple(&kernel));
+    CVL_CL_CHECK(cvl_cl_kernel_create(program, "saxpy", &kernel), cleanup);
+    TEST_ASSERT(kernel != NULL, "cl_kernel handle is NULL after creation");
 
     /* ---- Create a small buffer so we have a valid cl_mem to pass ---- */
-    CVL_CL_CHECK(cvl_cl_buffer_create(&ctx,
+    CVL_CL_CHECK(cvl_cl_buffer_create(ctx,
                                       &(cvl_cl_buffer_desc_t){
                                           .access = CVL_CL_BUF_READ_WRITE,
                                           .size_bytes = 256,
@@ -72,7 +66,7 @@ int main(void)
                  cleanup);
 
     /* ---- Set kernel arguments via typed descriptor array ---- */
-    CVL_CL_CHECK(cvl_cl_kernel_set_args(&kernel,
+    CVL_CL_CHECK(cvl_cl_kernel_set_args(kernel,
                                         (cvl_cl_karg_t[]){
                                             {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf.mem},
                                             {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf.mem},

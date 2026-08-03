@@ -5,23 +5,22 @@
  * The highlight of this module is @ref cvl_cl_kernel_set_args, which
  * accepts a NULL-terminated array of @ref cvl_cl_karg_t descriptors
  * built with designated initializers - the same pattern used by
- * cpyutl's parse_arguments and cpyutl_output_create.
+ * cpyutl's parse_arguments.
  *
  * Example:
  * @code
  *   cvl_cl_kernel_set_args(kernel,
  *       (cvl_cl_karg_t[]){
- *           {.type = CVL_CL_KARG_BUFFER,  .index = 0, .mem = cvl_cl_buffer_mem(&pos_buf)},
- *           {.type = CVL_CL_KARG_BUFFER,  .index = 1, .mem = cvl_cl_buffer_mem(&val_buf)},
- *           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 2, .scalar_uint = n},
- *           {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 3, .scalar_double = theta},
+ *           {.type = CVL_CL_KARG_BUFFER,       .index = 0, .mem = pos_buf},
+ *           {.type = CVL_CL_KARG_BUFFER,       .index = 1, .mem = val_buf},
+ *           {.type = CVL_CL_KARG_SCALAR_UINT,  .index = 2, .scalar_uint = n},
+ *           {.type = CVL_CL_KARG_SCALAR_DOUBLE,.index = 3, .scalar_double = theta},
  *           {},
  *       });
  * @endcode
  */
 
 #include "cvl_cl_common.h"
-#include "cvl_cl_program.h"
 
 #include <CL/cl.h>
 
@@ -32,7 +31,7 @@
 typedef enum
 {
     CVL_CL_KARG_NONE,          /**< Array terminator. */
-    CVL_CL_KARG_BUFFER,        /**< A cl_mem buffer (via @ref cvl_cl_buffer_t*). */
+    CVL_CL_KARG_BUFFER,        /**< A cl_mem buffer. */
     CVL_CL_KARG_SCALAR_INT,    /**< int scalar. */
     CVL_CL_KARG_SCALAR_UINT,   /**< unsigned int scalar. */
     CVL_CL_KARG_SCALAR_LONG,   /**< long long scalar. */
@@ -59,28 +58,18 @@ typedef struct cvl_cl_karg_t
 } cvl_cl_karg_t;
 
 /* ------------------------------------------------------------------ */
-/* Kernel handle                                                      */
+/* Kernel lifecycle                                                   */
 /* ------------------------------------------------------------------ */
-
-struct cvl_cl_kernel_t
-{
-    cl_kernel kernel;
-    const cvl_cl_program_t *program; /**< Borrowed reference. */
-    size_t preferred_wg_multiple;    /**< Cached from CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE. */
-};
 
 /**
  * @brief Create a kernel object from a program.
  *
- * The kernel name is looked up in the compiled program.  The
- * preferred work-group size multiple is queried and cached.
- *
- * @param program Program (must outlive the kernel).
+ * @param program Program the kernel belongs to (must outlive the kernel).
  * @param name    Kernel function name (null-terminated).
- * @param out     Filled with the new kernel on success.
+ * @param out     Filled with the new cl_kernel on success (NULL on failure).
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_kernel_create(const cvl_cl_program_t *program, const char *name, cvl_cl_kernel_t *out);
+cvl_cl_status_t cvl_cl_kernel_create(cl_program program, const char *name, cl_kernel *out);
 
 /**
  * @brief Set kernel arguments from a typed descriptor array.
@@ -93,33 +82,11 @@ cvl_cl_status_t cvl_cl_kernel_create(const cvl_cl_program_t *program, const char
  * @param kargs  NULL-terminated array of argument descriptors.
  * @return CVL_CL_SUCCESS or CVL_CL_ERR_KERNEL_ARG on failure.
  */
-cvl_cl_status_t cvl_cl_kernel_set_args(cvl_cl_kernel_t *kernel, const cvl_cl_karg_t kargs[]);
+cvl_cl_status_t cvl_cl_kernel_set_args(cl_kernel kernel, const cvl_cl_karg_t kargs[]);
 
 /**
  * @brief Destroy a kernel.
  *
  * @param kernel Kernel to destroy (may be NULL).
  */
-void cvl_cl_kernel_destroy(cvl_cl_kernel_t *kernel);
-
-/* ------------------------------------------------------------------ */
-/* Accessors                                                          */
-/* ------------------------------------------------------------------ */
-
-/** @brief Return the raw cl_kernel. */
-static inline cl_kernel cvl_cl_kernel_kernel(const cvl_cl_kernel_t *kernel)
-{
-    return kernel ? kernel->kernel : NULL;
-}
-
-/** @brief Return the program this kernel belongs to. */
-static inline const cvl_cl_program_t *cvl_cl_kernel_program(const cvl_cl_kernel_t *kernel)
-{
-    return kernel ? kernel->program : NULL;
-}
-
-/** @brief Return the cached preferred work-group size multiple (or 0 if not yet queried). */
-static inline size_t cvl_cl_kernel_preferred_wg_multiple(const cvl_cl_kernel_t *kernel)
-{
-    return kernel ? kernel->preferred_wg_multiple : 0;
-}
+void cvl_cl_kernel_destroy(cl_kernel *kernel);

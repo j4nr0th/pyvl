@@ -1,92 +1,89 @@
 #include "cvl_cl_ctx.h"
-#include "cvl_cl_device.h"
 
-#include <stdlib.h>
+#include <assert.h>
 
-cvl_cl_status_t cvl_cl_ctx_create(const cvl_cl_device_t *device, cvl_cl_ctx_t *out_ctx)
+cvl_cl_status_t cvl_cl_ctx_create(const cvl_cl_device_t *device, cl_context *out_ctx)
 {
-    if (!device || !out_ctx)
-        return CVL_CL_ERR_INVALID_PARAM;
+    /* Internal module: NULL device / out pointer are contract violations. */
+    assert(device != NULL);
+    assert(out_ctx != NULL);
 
-    out_ctx->context = NULL;
-    out_ctx->device = NULL;
+    *out_ctx = NULL;
 
-    cl_int err;
-    cl_device_id dev_id = device->id;
-    cl_context ctx = clCreateContext(NULL, 1, &dev_id, NULL, NULL, &err);
+    /* Single-device context; the platform property pins the device's platform. */
+    const cl_context_properties props[] = {
+        CL_CONTEXT_PLATFORM,
+        (cl_context_properties)device->platform_id,
+        0,
+    };
+
+    cl_int err = 0;
+    cl_context ctx = clCreateContext(props, 1, &device->id, NULL, NULL, &err);
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
 
-    out_ctx->context = ctx;
-    out_ctx->device = device;
+    *out_ctx = ctx;
     return CVL_CL_SUCCESS;
 }
 
-void cvl_cl_ctx_destroy(cvl_cl_ctx_t *ctx)
+void cvl_cl_ctx_destroy(cl_context *ctx)
 {
-    if (!ctx)
-        return;
-    if (ctx->context)
+    assert(ctx != NULL);
+    if (*ctx != NULL)
     {
-        clReleaseContext(ctx->context);
-        ctx->context = NULL;
+        clReleaseContext(*ctx);
+        *ctx = NULL;
     }
-    ctx->device = NULL;
 }
 
-cvl_cl_status_t cvl_cl_queue_create(const cvl_cl_ctx_t *ctx, const cvl_cl_queue_props_t *props, cvl_cl_queue_t *out_q)
+cvl_cl_status_t cvl_cl_queue_create(cl_context ctx, cl_device_id device_id, const cvl_cl_queue_props_t *props,
+                                    cl_command_queue *out_q)
 {
-    if (!ctx || !out_q || !ctx->context)
-        return CVL_CL_ERR_INVALID_PARAM;
+    /* Internal module: NULL ctx / device / out pointer are contract violations. */
+    assert(ctx != NULL);
+    assert(device_id != NULL);
+    assert(out_q != NULL);
 
-    out_q->queue = NULL;
-    out_q->ctx = NULL;
+    *out_q = NULL;
 
-    /* Build properties for clCreateCommandQueueWithProperties (OpenCL 2.0+).
-     * For maximum compatibility, fall back to clCreateCommandQueue (OpenCL 1.2) if
-     * we can't use the properties version. */
-    cl_command_queue_properties qprops = 0;
+    cl_command_queue_properties flags = 0;
     if (props)
     {
+        if (props->out_of_order)
+            flags |= CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE;
         if (props->profiling)
-            qprops |= CL_QUEUE_PROFILING_ENABLE;
+            flags |= CL_QUEUE_PROFILING_ENABLE;
     }
 
-    cl_int err;
+    cl_int err = 0;
 #ifdef CL_VERSION_2_0
-    cl_queue_properties prop_list[3] = {0};
-    unsigned np = 0;
-    if (props && props->out_of_order)
+    /* OpenCL 2.0+: property list; a zeroed list means default in-order, no profiling. */
+    cl_queue_properties qprops[3] = {0};
+    unsigned n = 0;
+    if (flags != 0)
     {
-        prop_list[np++] = CL_QUEUE_PROPERTIES;
-        prop_list[np++] = (cl_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | qprops);
+        qprops[n++] = CL_QUEUE_PROPERTIES;
+        qprops[n++] = (cl_queue_properties)flags;
     }
-    else if (qprops)
-    {
-        prop_list[np++] = CL_QUEUE_PROPERTIES;
-        prop_list[np++] = (cl_queue_properties)qprops;
-    }
-    prop_list[np] = 0;
-    cl_command_queue q = clCreateCommandQueueWithProperties(ctx->context, ctx->device->id, prop_list, &err);
+    qprops[n] = 0;
+    cl_command_queue q = clCreateCommandQueueWithProperties(ctx, device_id, qprops, &err);
 #else
-    cl_command_queue q = clCreateCommandQueue(ctx->context, ctx->device->id, qprops, &err);
+    /* OpenCL 1.2 fallback: old-style flag bitmask. */
+    cl_command_queue q = clCreateCommandQueue(ctx, device_id, flags, &err);
 #endif
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
 
-    out_q->queue = q;
-    out_q->ctx = ctx;
+    *out_q = q;
     return CVL_CL_SUCCESS;
 }
 
-void cvl_cl_queue_destroy(cvl_cl_queue_t *q)
+void cvl_cl_queue_destroy(cl_command_queue *q)
 {
-    if (!q)
-        return;
-    if (q->queue)
+    assert(q != NULL);
+    if (*q != NULL)
     {
-        clReleaseCommandQueue(q->queue);
-        q->queue = NULL;
+        clReleaseCommandQueue(*q);
+        *q = NULL;
     }
-    q->ctx = NULL;
 }

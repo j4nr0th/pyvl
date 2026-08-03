@@ -19,6 +19,7 @@
 
 #include "../test_common.h"
 #include "cvl_cl.h"
+#include "cvl_cl_test_common.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -245,44 +246,43 @@ enum
 /*  for a given precision mode and tolerance.                          */
 /* ------------------------------------------------------------------ */
 
-static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const char *full_source,
-                              cvl_cl_precision_t precision, double tolerance, const char *label)
+static int run_precision_test(const cvl_cl_device_t *device, cl_context ctx, cl_command_queue queue,
+                              const char *full_source, cvl_cl_precision_t precision, double tolerance,
+                              const char *label)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
-    cvl_cl_program_t program = {0};
-    cvl_cl_kernel_t kernel = {0};
+    cl_program program = NULL;
+    cl_kernel kernel = NULL;
     cvl_cl_buffer_t buf_out = {0};
+    char build_log[4096];
     int ret = 1;
 
     printf("  [%s] building program ...\n", label);
 
-    const cvl_cl_device_t *dev = cvl_cl_ctx_device(ctx);
-
+    memset(build_log, 0, sizeof build_log);
     cvl_cl_program_desc_t desc = {
-        .source_type = CVL_CL_PROGRAM_SOURCE_STRING,
         .source_string = full_source,
         .precision = precision,
     };
-    status = cvl_cl_program_create(ctx, &desc, dev->id, &program, NULL);
+    status = cvl_cl_program_create(ctx, device->id, &desc, build_log, sizeof build_log, &program);
     if (status != CVL_CL_SUCCESS)
     {
-        const char *log = cvl_cl_program_build_log(&program);
         fprintf(stderr, "  [%s] Program build FAILED with status %s.\n", label, cvl_cl_status_str(status));
-        if (log)
-            fprintf(stderr, "  Build log:\n%s\n", log);
+        if (build_log[0] != '\0')
+            fprintf(stderr, "  Build log:\n%s\n", build_log);
         goto cleanup;
     }
-    TEST_ASSERT(cvl_cl_program_program(&program) != NULL, "  [%s] Program handle NULL", label);
-    TEST_ASSERT(cvl_cl_program_build_log(&program) == NULL, "  [%s] Build log not NULL", label);
+    TEST_ASSERT(program != NULL, "  [%s] Program handle NULL", label);
+    TEST_ASSERT(build_log[0] == '\0', "  [%s] Build log not empty on success", label);
 
-    CVL_CL_CHECK(cvl_cl_kernel_create(&program, "test_kernel", &kernel), cleanup);
+    CVL_CL_CHECK(cvl_cl_kernel_create(program, "test_kernel", &kernel), cleanup);
 
     const size_t out_bytes = NUM_OUTPUTS * sizeof(double);
     CVL_CL_CHECK(cvl_cl_buffer_create(
                      ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_WRITE_ONLY, .size_bytes = out_bytes}, &buf_out),
                  cleanup);
 
-    CVL_CL_CHECK(cvl_cl_kernel_set_args(&kernel,
+    CVL_CL_CHECK(cvl_cl_kernel_set_args(kernel,
                                         (cvl_cl_karg_t[]){
                                             {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_out.mem},
                                             {},
@@ -292,7 +292,7 @@ static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const ch
     {
         const size_t global_work = 1;
         const size_t local_work = 1;
-        CVL_CL_CHECK(cvl_cl_ndrange(queue, &kernel, 1, &global_work, &local_work, NULL, 0, NULL, NULL), cleanup);
+        CVL_CL_CHECK(cvl_cl_ndrange(queue, kernel, 1, &global_work, &local_work, NULL, 0, NULL, NULL), cleanup);
     }
 
     CVL_CL_CHECK(cvl_cl_flush(queue), cleanup);
@@ -333,9 +333,8 @@ int main(void)
 {
     cvl_cl_status_t status = CVL_CL_SUCCESS;
     cvl_cl_device_t device = {0};
-    cvl_cl_ctx_t ctx = {0};
-    cvl_cl_queue_t queue = {0};
-    unsigned count = 0;
+    cl_context ctx = NULL;
+    cl_command_queue queue = NULL;
     int ret = 1;
 
     char *types_src = NULL, *math_src = NULL, *multipole_src = NULL;
@@ -353,7 +352,7 @@ int main(void)
     }
 
     CVL_CL_CHECK(cvl_cl_ctx_create(&device, &ctx), cleanup);
-    CVL_CL_CHECK(cvl_cl_queue_create(&ctx, NULL, &queue), cleanup);
+    CVL_CL_CHECK(cvl_cl_queue_create(ctx, device.id, NULL, &queue), cleanup);
 
     types_src = read_cl_source("cvl_cl_types.h.cl");
     math_src = read_cl_source("cvl_cl_math.h.cl");
@@ -387,9 +386,9 @@ int main(void)
     }
 
     printf("Precision test suite\n");
-    ret = run_precision_test(&ctx, &queue, full_source, CVL_CL_PRECISION_FP64, 1e-12, "FP64");
+    ret = run_precision_test(&device, ctx, queue, full_source, CVL_CL_PRECISION_FP64, 1e-12, "FP64");
     if (ret == 0)
-        ret = run_precision_test(&ctx, &queue, full_source, CVL_CL_PRECISION_FP32, 1e-5f, "FP32");
+        ret = run_precision_test(&device, ctx, queue, full_source, CVL_CL_PRECISION_FP32, 1e-5f, "FP32");
 
     if (ret == 0)
         printf("All device kernel compile tests passed.\n");

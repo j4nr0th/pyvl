@@ -17,6 +17,7 @@
 #include "../test_common.h"
 #include "cvl_cl_common.h"
 #include "cvl_cl_flat_tree.h"
+#include "cvl_cl_test_common.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -166,7 +167,7 @@ int main(void)
     TEST_ASSERT(flat_work != NULL, "malloc(%zu) for flat tree work buffer failed", flat_work_sz);
 
     cvl_cl_flat_tree_t tree;
-    st = cvl_cl_flat_tree_build(N, coords, sorted_indices, mcodes, &settings, NULL, &tree, flat_work, flat_work_sz);
+    st = cvl_cl_flat_tree_build(N, coords, sorted_indices, mcodes, &settings, &tree, flat_work, flat_work_sz);
     TEST_ASSERT(st == CVL_CL_SUCCESS, "flat_tree_build failed: %s", cvl_cl_status_str(st));
 
     /* Validate total nodes */

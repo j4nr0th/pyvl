@@ -88,6 +88,31 @@ list(
 if (OpenCL_FOUND)
     add_definitions(-DCVL_OPENCL)
 
+    # Generated header embedding the kernel-source packs (see
+    # gen_kernel_sources.py).  Placed in the build dir so the source
+    # tree stays clean; the include path is added to static_cvl and cvl.
+    set(CVL_CL_GEN_HEADER "${CMAKE_CURRENT_BINARY_DIR}/cvl_cl_kernel_sources.h")
+    add_custom_command(
+            OUTPUT "${CVL_CL_GEN_HEADER}"
+            COMMAND "${Python_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/cl_compute/gen_kernel_sources.py"
+            --source-dir "${CMAKE_CURRENT_SOURCE_DIR}/src/core/opencl"
+            --output "${CVL_CL_GEN_HEADER}"
+            DEPENDS
+            src/core/opencl/bh_build.cl.h
+            src/core/opencl/bh_flat_eval.cl.h
+            src/core/opencl/fmm_l2p.cl.h
+            src/core/opencl/direct_sum.cl.h
+            src/core/opencl/cvl_cl_types.h.cl
+            src/core/opencl/cvl_cl_math.h.cl
+            src/core/opencl/cvl_cl_multipole.h.cl
+            src/core/opencl/cvl_cl_multipole_ops.h.cl
+            src/core/opencl/cvl_cl_fmm_ops.h.cl
+            src/core/cl_compute/gen_kernel_sources.py
+            COMMENT "Generating cvl_cl_kernel_sources.h"
+            VERBATIM
+    )
+
     list(
             APPEND CVL_CORE_SOURCE_FILES
             src/core/opencl/cvl_cl_common.c
@@ -97,11 +122,11 @@ if (OpenCL_FOUND)
             src/core/opencl/cvl_cl_kernel.c
             src/core/opencl/cvl_cl_buffer.c
             src/core/opencl/cvl_cl_command.c
+            src/core/opencl/cvl_cl_chain.c
     )
 
     list(
             APPEND CVL_CORE_SOURCE_FILES
-            src/core/cl_compute/cvl_cl_future.c
             src/core/cl_compute/cvl_cl_staging_buffer.c
             src/core/cl_compute/cvl_cl_compute.c
             src/core/cl_compute/cvl_cl_flat_tree.c
@@ -119,16 +144,18 @@ if (OpenCL_FOUND)
             src/core/opencl/cvl_cl_kernel.h
             src/core/opencl/cvl_cl_buffer.h
             src/core/opencl/cvl_cl_command.h
+            src/core/opencl/cvl_cl_chain.h
+            src/core/opencl/cvl_cl_helpers.h
     )
 
     list(
             APPEND CVL_CORE_HEADER_FILES
-            src/core/cl_compute/cvl_cl_future.h
             src/core/cl_compute/cvl_cl_staging_buffer.h
             src/core/cl_compute/cvl_cl_compute.h
             src/core/cl_compute/cvl_cl_flat_tree.h
             src/core/cl_compute/cvl_cl_gpu_tree_build.h
             src/core/cl_compute/cvl_cl_fmm_eval.h
+            "${CVL_CL_GEN_HEADER}"
     )
 endif ()
 
@@ -141,6 +168,9 @@ add_library(static_cvl
 )
 set_property(TARGET static_cvl PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_include_directories(static_cvl PRIVATE src/core/opencl)
+if (OpenCL_FOUND)
+    target_include_directories(static_cvl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+endif ()
 target_link_libraries(static_cvl PUBLIC OpenMP::OpenMP_C)
 if (OpenCL_FOUND)
     target_link_libraries(static_cvl PUBLIC OpenCL::OpenCL)
@@ -159,6 +189,9 @@ if ("${NumPy_INCLUDE_DIRS}" STREQUAL "")
     message(FATAL_ERROR "NumPy_INCLUDE_DIRS was empty.")
 endif ()
 target_include_directories(cvl PRIVATE ${NumPy_INCLUDE_DIRS} ${Python_INCLUDE_DIRS} src/core/opencl)
+if (OpenCL_FOUND)
+    target_include_directories(cvl PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+endif ()
 
 add_subdirectory(cpyutl)
 

@@ -1,6 +1,6 @@
 #include "cvl_cl_device.h"
-#include "cvl_cl_helpers.h"
 
+#include <assert.h>
 #include <ctype.h>
 #include <string.h>
 
@@ -30,16 +30,15 @@ enum
 /**
  * @brief Query all device info fields and cache them in @p info.
  *
- * @param dev        OpenCL device ID.
- * @param info       Output info struct (cleared first).
- * @param allocator  Allocator for string properties (NULL = default).
+ * @param dev   OpenCL device ID.
+ * @param info  Output info struct (cleared first).
  * @return CVL_CL_SUCCESS or error.
  */
 static cvl_cl_status_t query_device_info(cl_device_id dev, cvl_cl_device_info_t *info)
 {
     cl_int err;
 
-    /* Clear the struct first (preserving allocator). */
+    /* Clear the struct first. */
     memset(info, 0, sizeof(*info));
 
     /* String properties - query size, allocate, then query. */
@@ -149,8 +148,10 @@ static cvl_cl_status_t check_platform_for_devices(const unsigned pi, const cl_pl
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
 
-    unsigned found = 0;
-    for (cl_uint d = 0; d < n_devs && found < max_devices; ++d)
+    /* Count every available match; write at most max_devices entries. */
+    unsigned written = 0;
+    unsigned matches = 0;
+    for (cl_uint d = 0; d < n_devs; ++d)
     {
         /* Check if device is available. */
         cl_bool available = CL_FALSE;
@@ -160,7 +161,11 @@ static cvl_cl_status_t check_platform_for_devices(const unsigned pi, const cl_pl
         if (!available)
             continue;
 
-        cvl_cl_device_t *dev = out_devices + found;
+        matches += 1;
+        if (written >= max_devices)
+            continue;
+
+        cvl_cl_device_t *dev = out_devices + written;
         dev->id = dev_ids[d];
         dev->platform_id = plat;
         dev->platform_index = pi;
@@ -169,9 +174,9 @@ static cvl_cl_status_t check_platform_for_devices(const unsigned pi, const cl_pl
         if (status != CVL_CL_SUCCESS)
             return status;
 
-        found += 1;
+        written += 1;
     }
-    *out_count = found;
+    *out_count = matches;
     return CVL_CL_SUCCESS;
 }
 
@@ -209,8 +214,9 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_platform_filter_t platform_f
                                        cvl_cl_device_t out_devices[max_devices],
                                        const cl_device_type desired_device_types, unsigned *out_count)
 {
-    if (!out_count || (!out_devices && max_devices > 0))
-        return CVL_CL_ERR_INVALID_PARAM;
+    /* Internal module: NULL output pointers are contract violations. */
+    assert(out_count != NULL);
+    assert(out_devices != NULL || max_devices == 0);
 
     *out_count = 0;
 
@@ -230,7 +236,7 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_platform_filter_t platform_f
     if (err != CL_SUCCESS)
         return cvl_cl_status_from_cl_int(err);
 
-    /* --- Evaluate selectors to pick platform + device type --- */
+    /* --- Evaluate the platform filter to pick candidate platform(s) --- */
     cl_uint p = n_platforms;
 
     switch (platform_filter.type)
@@ -278,21 +284,22 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_platform_filter_t platform_f
 
     if (p < n_platforms)
     {
-        /* If a platform was selected search it for desired device(s). */
+        /* A single platform was selected: search it for desired device(s). */
         unsigned n_devs = 0;
         const cvl_cl_status_t status =
             check_platform_for_devices(p, platforms[p], desired_device_types, max_devices, out_devices, &n_devs);
         if (status != CVL_CL_SUCCESS)
             return status;
+        *out_count = n_devs;
         if (n_devs == 0)
             return CVL_CL_ERR_DEVICE_NOT_FOUND;
-        *out_count = n_devs;
         return CVL_CL_SUCCESS;
     }
 
-    // We are searching all platforms, so enumerate them and fill the output array.
-
-    cl_uint write_idx = 0;
+    /* No filter: enumerate devices across all platforms, filling the output
+     * array up to max_devices while still reporting the total match count. */
+    unsigned written = 0;
+    unsigned total = 0;
     cvl_cl_status_t status = CVL_CL_SUCCESS;
 
     for (cl_uint p = 0; p < n_platforms; ++p)
@@ -301,18 +308,17 @@ cvl_cl_status_t cvl_cl_device_discover(const cvl_cl_platform_filter_t platform_f
         const cl_platform_id plat = platforms[p];
 
         unsigned n_devs = 0;
-        status = check_platform_for_devices(pi, plat, desired_device_types, max_devices - write_idx,
-                                            out_devices + write_idx, &n_devs);
+        const unsigned capacity = (written < max_devices) ? (max_devices - written) : 0;
+        status = check_platform_for_devices(pi, plat, desired_device_types, capacity, out_devices + written, &n_devs);
         if (status != CVL_CL_SUCCESS)
             return status;
 
-        write_idx += n_devs;
+        total += n_devs;
+        written += (n_devs < capacity) ? n_devs : capacity;
     }
 
-    /* --- Enumerate devices on the selected (or all) platform(s) --- */
-
-    *out_count = write_idx;
-    if (write_idx == 0)
+    *out_count = total;
+    if (total == 0)
         return CVL_CL_ERR_DEVICE_NOT_FOUND;
 
     return CVL_CL_SUCCESS;
