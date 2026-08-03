@@ -60,7 +60,7 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
     const size_t hist_bytes = (size_t)n_wgs * 256u * sizeof(unsigned);
 
     /* ---- Ensure radix histogram buffer is large enough ---- */
-    st = cl_ensure_buffer(&builder->buf_radix_hist, builder->compute->ctx, builder->compute->queue, hist_bytes);
+    st = cl_ensure_buffer_chained(&builder->buf_radix_hist, builder->compute->ctx, chain, hist_bytes);
     if (st != CVL_CL_SUCCESS)
         return st;
 
@@ -102,11 +102,9 @@ static cvl_cl_status_t gpu_radix_sort_orig(cvl_cl_gpu_tree_build_t *builder, cvl
 
         /* Read histogram to host, then wait - the host computes the
          * per-WG prefix next. */
-        st = cvl_cl_chain_read_buffer(chain, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL);
-        if (st != CVL_CL_SUCCESS)
-            return st;
-        st = cvl_cl_chain_finish(chain);
-        if (st != CVL_CL_SUCCESS)
+        if ((st = cvl_cl_chain_read_buffer(chain, &builder->buf_radix_hist, 0, hist_bytes, host_h, 0, NULL, NULL)) !=
+                CVL_CL_SUCCESS ||
+            (st = cvl_cl_chain_finish(chain)) != CVL_CL_SUCCESS)
             return st;
 
         /* Compute the exclusive per-WG prefix per digit, PLUS the digit base. */
@@ -214,14 +212,11 @@ static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl
 
     /* Read the unsorted Morton codes + index permutation (chained - the
      * host sort below needs both, hence the finish). */
-    st = cvl_cl_chain_read_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
-    if (st != CVL_CL_SUCCESS)
-        return st;
-    st = cvl_cl_chain_read_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
-    if (st != CVL_CL_SUCCESS)
-        return st;
-    st = cvl_cl_chain_finish(chain);
-    if (st != CVL_CL_SUCCESS)
+    if ((st = cvl_cl_chain_read_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL)) !=
+            CVL_CL_SUCCESS ||
+        (st = cvl_cl_chain_read_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL)) !=
+            CVL_CL_SUCCESS ||
+        (st = cvl_cl_chain_finish(chain)) != CVL_CL_SUCCESS)
         return st;
 
     /* Interleave into (key, idx) pairs for the radix sort. */
@@ -242,15 +237,14 @@ static cvl_cl_status_t gpu_radix_sort_host(cvl_cl_gpu_tree_build_t *builder, cvl
     }
 
     /* Write the sorted result back (even buffers, as the kernel path does). */
-    st = cvl_cl_chain_write_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL);
-    if (st != CVL_CL_SUCCESS)
+    if ((st = cvl_cl_chain_write_buffer(chain, &builder->buf_morton, 0, key_bytes, keys_staging, 0, NULL, NULL)) !=
+            CVL_CL_SUCCESS ||
+        (st = cvl_cl_chain_write_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL)) !=
+            CVL_CL_SUCCESS ||
+        (st = cvl_cl_chain_finish(chain)) != CVL_CL_SUCCESS)
         return st;
-    st = cvl_cl_chain_write_buffer(chain, &builder->buf_indices, 0, idx_bytes, idx_staging, 0, NULL, NULL);
-    if (st != CVL_CL_SUCCESS)
-        return st;
-    st = cvl_cl_chain_finish(chain);
 
-    return st;
+    return CVL_CL_SUCCESS;
 }
 
 /**
@@ -531,44 +525,13 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         const size_t bd_hist_bytes = (size_t)(max_depth + 2) * sizeof(unsigned);
         const size_t counter_bytes = 2u * sizeof(unsigned); /* n_leaves_out + particle_counter */
 
-        st = cl_ensure_buffer(&builder->buf_morton, ctx, queue, elem_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_morton_tmp, ctx, queue, elem_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_indices, ctx, queue, idx_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_indices_tmp, ctx, queue, idx_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_boundary, ctx, queue, bd_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_bd_hist, ctx, queue, bd_hist_bytes);
-        if (st != CVL_CL_SUCCESS)
-        {
-            status = st;
-            goto cleanup;
-        }
-        st = cl_ensure_buffer(&builder->buf_leaf_counter, ctx, queue, counter_bytes);
-        if (st != CVL_CL_SUCCESS)
+        if ((st = cl_ensure_buffer_chained(&builder->buf_morton, ctx, &chain, elem_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_morton_tmp, ctx, &chain, elem_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_indices, ctx, &chain, idx_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_indices_tmp, ctx, &chain, idx_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_boundary, ctx, &chain, bd_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_bd_hist, ctx, &chain, bd_hist_bytes)) != CVL_CL_SUCCESS ||
+            (st = cl_ensure_buffer_chained(&builder->buf_leaf_counter, ctx, &chain, counter_bytes)) != CVL_CL_SUCCESS)
         {
             status = st;
             goto cleanup;
@@ -582,11 +545,10 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
             for (unsigned i = 0; i < n_sources; ++i)
                 idx_host[i] = i;
 
+            /* Non-blocking write - tracked by the chain.  idx_host lives
+             * in the work buffer until run() returns, so there is no
+             * use-after-free. */
             st = cvl_cl_chain_write_buffer(&chain, &builder->buf_indices, 0, idx_bytes, idx_host, 0, NULL, NULL);
-            /* Non-blocking write - finish before the identity permutation
-             * could be reused (use-after-free safety). */
-            if (st == CVL_CL_SUCCESS)
-                st = cvl_cl_chain_finish(&chain);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -647,7 +609,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
          * (in-order queue). */
         {
             memset(nodes_raw, 0, bd_hist_bytes);
-            st = zero_device_buffer(queue, &builder->buf_bd_hist, nodes_raw, bd_hist_bytes);
+            st = zero_device_buffer_chained(&chain, &builder->buf_bd_hist, nodes_raw, bd_hist_bytes);
         }
         if (st != CVL_CL_SUCCESS)
         {
@@ -690,32 +652,14 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         {
             unsigned *hist_raw = builder->bd_hist;
 
-            /* Wait for the boundary kernel + zero write, then read back
-             * (the host needs both arrays). */
-            st = cvl_cl_chain_finish(&chain);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
-            st = cvl_cl_read_buffer(queue, &builder->buf_bd_hist, 0, bd_hist_bytes, hist_raw, 0, NULL, NULL);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
-            st = cvl_cl_read_buffer(queue, &builder->buf_boundary, 0, (size_t)n_sources * sizeof(int), boundary_host, 0,
-                                    NULL, NULL);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
-            st = cvl_cl_finish(queue);
-            if (st != CVL_CL_SUCCESS)
+            /* Read both arrays through the chain (the reads wait on the
+             * boundary kernel + zero write), then wait for the reads -
+             * the host needs both arrays. */
+            if ((st = cvl_cl_chain_read_buffer(&chain, &builder->buf_bd_hist, 0, bd_hist_bytes, hist_raw, 0, NULL,
+                                               NULL)) != CVL_CL_SUCCESS ||
+                (st = cvl_cl_chain_read_buffer(&chain, &builder->buf_boundary, 0, (size_t)n_sources * sizeof(int),
+                                               boundary_host, 0, NULL, NULL)) != CVL_CL_SUCCESS ||
+                (st = cvl_cl_chain_finish(&chain)) != CVL_CL_SUCCESS)
             {
                 status = st;
                 goto cleanup;
@@ -766,29 +710,14 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
             const size_t order_bytes = (size_t)n_sources * sizeof(unsigned);
             const size_t doff_bytes = (size_t)(max_depth + 2) * sizeof(unsigned);
 
-            st = cl_ensure_buffer(&builder->buf_nodes, ctx, queue, node_bytes);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-            st = cl_ensure_buffer(&builder->buf_particle_order, ctx, queue, order_bytes);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-            st = cl_ensure_buffer(&builder->buf_depth_offsets, ctx, queue, doff_bytes);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
             /* Upload depth_offsets to device (chained). */
-            st = cvl_cl_chain_write_buffer(&chain, &builder->buf_depth_offsets, 0, doff_bytes, builder->depth_offsets,
-                                           0, NULL, NULL);
-            if (st != CVL_CL_SUCCESS)
+            if ((st = cl_ensure_buffer_chained(&builder->buf_nodes, ctx, &chain, node_bytes)) != CVL_CL_SUCCESS ||
+                (st = cl_ensure_buffer_chained(&builder->buf_particle_order, ctx, &chain, order_bytes)) !=
+                    CVL_CL_SUCCESS ||
+                (st = cl_ensure_buffer_chained(&builder->buf_depth_offsets, ctx, &chain, doff_bytes)) !=
+                    CVL_CL_SUCCESS ||
+                (st = cvl_cl_chain_write_buffer(&chain, &builder->buf_depth_offsets, 0, doff_bytes,
+                                                builder->depth_offsets, 0, NULL, NULL)) != CVL_CL_SUCCESS)
             {
                 status = st;
                 goto cleanup;
@@ -796,7 +725,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         }
 
         /* Ensure leaf_starts buffer is at least n_sources entries. */
-        st = cl_ensure_buffer(&builder->buf_leaf_starts, ctx, queue, (size_t)n_sources * sizeof(unsigned));
+        st = cl_ensure_buffer_chained(&builder->buf_leaf_starts, ctx, &chain, (size_t)n_sources * sizeof(unsigned));
         if (st != CVL_CL_SUCCESS)
         {
             status = st;
@@ -840,7 +769,7 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
              * into word 1 (particle_counter) with atomic_add; word 0
              * (n_leaves_out) starts at zero. */
             memset(nodes_raw, 0, counter_bytes);
-            st = zero_device_buffer(queue, &builder->buf_leaf_counter, nodes_raw, counter_bytes);
+            st = zero_device_buffer_chained(&chain, &builder->buf_leaf_counter, nodes_raw, counter_bytes);
             if (st != CVL_CL_SUCCESS)
             {
                 status = st;
@@ -979,26 +908,15 @@ cvl_cl_status_t cvl_cl_gpu_tree_build_run(cvl_cl_gpu_tree_build_t *builder, cvl_
         {
             const unsigned leaf_offset = builder->depth_offsets[max_depth];
 
-            /* Wait for the full build pipeline, then read the nodes back.
-             * nodes_raw was partitioned at function start (sized for
-             * max_n_total) - its first bytes were reused as the zero-fill
-             * scratch, which is safe: those writes completed long ago. */
-            st = cvl_cl_chain_finish(&chain);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-
+            /* Read the nodes back through the chain (waits on the full
+             * build pipeline), then wait for the read.  nodes_raw was
+             * partitioned at function start (sized for max_n_total) - its
+             * first bytes were reused as the zero-fill scratch, which is
+             * safe: those writes completed long ago. */
             const size_t raw_bytes = (size_t)n_total * CVL_CL_GPU_NODE_SIZE;
-            st = cvl_cl_read_buffer(queue, &builder->buf_nodes, 0, raw_bytes, nodes_raw, 0, NULL, NULL);
-            if (st != CVL_CL_SUCCESS)
-            {
-                status = st;
-                goto cleanup;
-            }
-            st = cvl_cl_finish(queue);
-            if (st != CVL_CL_SUCCESS)
+            if ((st = cvl_cl_chain_read_buffer(&chain, &builder->buf_nodes, 0, raw_bytes, nodes_raw, 0, NULL, NULL)) !=
+                    CVL_CL_SUCCESS ||
+                (st = cvl_cl_chain_finish(&chain)) != CVL_CL_SUCCESS)
             {
                 status = st;
                 goto cleanup;

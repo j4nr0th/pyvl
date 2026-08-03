@@ -70,6 +70,21 @@ cvl_cl_status_t cvl_cl_staging_buffer_reserve(cvl_cl_staging_buffer_t *buf, cl_c
                                               size_t n_elements);
 
 /**
+ * @brief Grow the buffer asynchronously through a chain.
+ *
+ * Like @ref cvl_cl_staging_buffer_reserve but the content copy is
+ * ordered and tracked by @p chain (see cvl_cl_chain_grow_buffer).
+ *
+ * @param buf         Staging buffer.
+ * @param ctx         Context.
+ * @param chain       Chain to order and track the growth on.
+ * @param n_elements  Minimum number of real3_t elements.
+ * @return CVL_CL_SUCCESS or error.
+ */
+cvl_cl_status_t cvl_cl_staging_buffer_reserve_chained(cvl_cl_staging_buffer_t *buf, cl_context ctx,
+                                                      cvl_cl_chain_t *chain, size_t n_elements);
+
+/**
  * @brief Enqueue an asynchronous host → device write through a chain.
  *
  * FP64: writes directly from @p host_data.  FP32: converts to

@@ -103,3 +103,25 @@ cvl_cl_status_t cvl_cl_chain_copy_buffer(cvl_cl_chain_t *chain, const cvl_cl_buf
 cvl_cl_status_t cvl_cl_chain_ndrange(cvl_cl_chain_t *chain, cl_kernel kernel, unsigned dims, const size_t global_work[],
                                      const size_t local_work[], const cvl_cl_karg_t kargs[], unsigned n_wait,
                                      const cvl_cl_event_t *wait_events, cvl_cl_event_t *out_event);
+
+/**
+ * @brief Grow a device buffer asynchronously through the chain.
+ *
+ * Allocates a new cl_mem of @p new_capacity bytes and, when the buffer
+ * has content, enqueues a chain-tracked copy of the old contents into
+ * it.  The copy waits on the chain's pending events and is itself
+ * recorded as a pending event, so downstream chained operations
+ * automatically run after the growth completes.  The old cl_mem is
+ * released after the copy is enqueued (the command retains it).
+ *
+ * Buffer creation itself (clCreateBuffer) is a synchronous host-side
+ * API call - only the content copy is asynchronous.
+ *
+ * @param chain         Chain to order and track the copy on.
+ * @param buf           Buffer to grow (must already have a cl_mem).
+ * @param ctx           Context for creating the new cl_mem.
+ * @param new_capacity  Minimum capacity in bytes (> buf->capacity).
+ * @return CVL_CL_SUCCESS or error.
+ */
+cvl_cl_status_t cvl_cl_chain_grow_buffer(cvl_cl_chain_t *chain, cvl_cl_buffer_t *buf, cl_context ctx,
+                                         size_t new_capacity);

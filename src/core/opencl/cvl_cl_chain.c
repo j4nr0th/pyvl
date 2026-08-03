@@ -282,3 +282,49 @@ cvl_cl_status_t cvl_cl_chain_ndrange(cvl_cl_chain_t *chain, cl_kernel kernel, un
     chain_capture_event(chain, raw_out, out_event);
     return CVL_CL_SUCCESS;
 }
+
+cvl_cl_status_t cvl_cl_chain_grow_buffer(cvl_cl_chain_t *chain, cvl_cl_buffer_t *buf, cl_context ctx,
+                                         size_t new_capacity)
+{
+    assert(chain && chain->queue);
+    assert(buf && buf->mem);
+    assert(new_capacity > buf->capacity);
+
+    /* Create the new buffer (synchronous host-side API call). */
+    cl_int err;
+    cl_mem new_mem = clCreateBuffer(ctx, cvl_cl_buffer_access_to_flags(buf->access), new_capacity, NULL, &err);
+    if (err != CL_SUCCESS)
+        return cvl_cl_status_from_cl_int(err);
+
+    if (buf->size > 0)
+    {
+        /* Chain-tracked copy of the old contents into the new buffer.
+         * Waits on the chain's pending events; recorded as pending so
+         * downstream ops wait for the growth to finish. */
+        cl_event raw[CL_MAX_WAIT_EVENTS];
+        unsigned n_raw = 0;
+        cvl_cl_status_t s = chain_build_wait_list(chain, 0, NULL, raw, &n_raw);
+        if (s != CVL_CL_SUCCESS)
+        {
+            clReleaseMemObject(new_mem);
+            return s;
+        }
+
+        cl_event raw_out = NULL;
+        err = clEnqueueCopyBuffer(chain->queue, buf->mem, new_mem, 0, 0, buf->size, n_raw, (n_raw > 0) ? raw : NULL,
+                                  &raw_out);
+        if (err != CL_SUCCESS)
+        {
+            clReleaseMemObject(new_mem);
+            return cvl_cl_status_from_cl_int(err);
+        }
+
+        chain_capture_event(chain, raw_out, NULL);
+    }
+
+    /* Release the old buffer (the copy command retains it until done). */
+    clReleaseMemObject(buf->mem);
+    buf->mem = new_mem;
+    buf->capacity = new_capacity;
+    return CVL_CL_SUCCESS;
+}

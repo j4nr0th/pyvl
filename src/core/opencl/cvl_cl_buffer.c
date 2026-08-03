@@ -3,21 +3,6 @@
 #include <assert.h>
 #include <string.h>
 
-/* Map buffer access to cl_mem_flags. */
-static cl_mem_flags access_to_flags(cvl_cl_buffer_access_t access)
-{
-    switch (access)
-    {
-    case CVL_CL_BUF_READ_ONLY:
-        return CL_MEM_READ_ONLY;
-    case CVL_CL_BUF_WRITE_ONLY:
-        return CL_MEM_WRITE_ONLY;
-    case CVL_CL_BUF_READ_WRITE:
-    default:
-        return CL_MEM_READ_WRITE;
-    }
-}
-
 cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out)
 {
     assert(desc && out);
@@ -33,7 +18,7 @@ cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t 
         return CVL_CL_SUCCESS;
     }
 
-    cl_mem_flags flags = access_to_flags(desc->access);
+    cl_mem_flags flags = cvl_cl_buffer_access_to_flags(desc->access);
     if (desc->host_ptr)
     {
         if (desc->use_host_ptr)
@@ -56,14 +41,17 @@ cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t 
     return CVL_CL_SUCCESS;
 }
 
-cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue, size_t new_capacity)
+cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue, size_t new_capacity,
+                                      cl_event *out_event)
 {
     assert(buf);
+    if (out_event)
+        *out_event = NULL;
 
     if (new_capacity <= buf->capacity)
         return CVL_CL_SUCCESS;
 
-    cl_mem_flags flags = access_to_flags(buf->access);
+    cl_mem_flags flags = cvl_cl_buffer_access_to_flags(buf->access);
     cl_int err;
     cl_mem new_mem = clCreateBuffer(ctx, flags, new_capacity, NULL, &err);
     if (err != CL_SUCCESS)
@@ -75,12 +63,15 @@ cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_c
     if (buf->mem != NULL && buf->size > 0)
     {
         assert(queue != NULL);
-        err = clEnqueueCopyBuffer(queue, buf->mem, new_mem, 0, 0, buf->size, 0, NULL, NULL);
+        cl_event copy_event = NULL;
+        err = clEnqueueCopyBuffer(queue, buf->mem, new_mem, 0, 0, buf->size, 0, NULL, out_event ? &copy_event : NULL);
         if (err != CL_SUCCESS)
         {
             clReleaseMemObject(new_mem);
             return cvl_cl_status_from_cl_int(err);
         }
+        if (out_event)
+            *out_event = copy_event;
     }
 
     /* Release old buffer. */

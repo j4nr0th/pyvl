@@ -53,6 +53,21 @@ struct cvl_cl_buffer_t
     cvl_cl_buffer_access_t access;
 };
 
+/** @brief Map a buffer access mode to its cl_mem_flags bitmask. */
+static inline cl_mem_flags cvl_cl_buffer_access_to_flags(cvl_cl_buffer_access_t access)
+{
+    switch (access)
+    {
+    case CVL_CL_BUF_READ_ONLY:
+        return CL_MEM_READ_ONLY;
+    case CVL_CL_BUF_WRITE_ONLY:
+        return CL_MEM_WRITE_ONLY;
+    case CVL_CL_BUF_READ_WRITE:
+    default:
+        return CL_MEM_READ_WRITE;
+    }
+}
+
 typedef struct cvl_cl_buffer_t cvl_cl_buffer_t;
 
 /**
@@ -73,14 +88,24 @@ cvl_cl_status_t cvl_cl_buffer_create(cl_context ctx, const cvl_cl_buffer_desc_t 
  * the old buffer.  If the buffer is empty (no old contents) the copy
  * is skipped and @p queue may be NULL.
  *
+ * The copy is enqueued non-blocking (async).  If @p out_event is
+ * non-NULL it receives an owned cl_event for the copy (caller must
+ * release it with clReleaseEvent) so the growth can be synchronised
+ * asynchronously; pass NULL to ignore.  The event is only produced
+ * when a copy was actually enqueued (i.e. the buffer had content).
+ *
+ * For dependency-tracked growth that participates in a command chain
+ * use cvl_cl_chain_grow_buffer (cvl_cl_chain.h) instead.
+ *
  * @param buf          Buffer to resize.
  * @param ctx          Context (for creating the new buffer).
  * @param queue        Queue for the copy operation (may be NULL only when growing an empty buffer).
  * @param new_capacity Minimum capacity in bytes.
+ * @param out_event    Optional owned event for the copy (may be NULL).
  * @return CVL_CL_SUCCESS or error.
  */
-cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue,
-                                      size_t new_capacity);
+cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, cl_context ctx, cl_command_queue queue, size_t new_capacity,
+                                      cl_event *out_event);
 
 /**
  * @brief Destroy a buffer.

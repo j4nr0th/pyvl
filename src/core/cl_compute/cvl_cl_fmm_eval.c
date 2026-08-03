@@ -379,76 +379,37 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, const fmm_tree_t *t
     const size_t nflist_idx_bytes = (size_t)tree->nflist_count * sizeof(unsigned);
     const size_t leaf_idx_bytes = (size_t)tree->n_leaves * sizeof(unsigned);
 
-    status = cl_ensure_buffer(&eval->buf_nodes, ctx, queue, nodes_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_eval_centers, ctx, queue, centers_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_particle_order, ctx, queue, order_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_local_coeffs, ctx, queue, local_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_nflist_offsets, ctx, queue, nflist_off_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_nflist_indices, ctx, queue, nflist_idx_bytes > 0 ? nflist_idx_bytes : 4);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_leaf_indices, ctx, queue, leaf_idx_bytes > 0 ? leaf_idx_bytes : 4);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_child_indices, ctx, queue, child_idx_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    status = cl_ensure_buffer(&eval->buf_mp_coeffs, ctx, queue, mp_bytes);
-    if (status != CVL_CL_SUCCESS)
-        goto cleanup_host;
-    if (status != CVL_CL_SUCCESS)
+    if ((status = cl_ensure_buffer_chained(&eval->buf_nodes, ctx, &chain, nodes_bytes)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_eval_centers, ctx, &chain, centers_bytes)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_particle_order, ctx, &chain, order_bytes)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_local_coeffs, ctx, &chain, local_bytes)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_nflist_offsets, ctx, &chain, nflist_off_bytes)) !=
+            CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_nflist_indices, ctx, &chain,
+                                           nflist_idx_bytes > 0 ? nflist_idx_bytes : 4)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_leaf_indices, ctx, &chain,
+                                           leaf_idx_bytes > 0 ? leaf_idx_bytes : 4)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_child_indices, ctx, &chain, child_idx_bytes)) != CVL_CL_SUCCESS ||
+        (status = cl_ensure_buffer_chained(&eval->buf_mp_coeffs, ctx, &chain, mp_bytes)) != CVL_CL_SUCCESS)
         goto cleanup_host;
 
     /* Staging buffers for source/target/result real3_t arrays. */
-    {
-        if (!eval->buf_src_pos.device.mem)
-        {
-            status = cvl_cl_staging_buffer_init(&eval->buf_src_pos, eval->precision);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-        }
-        if (!eval->buf_src_val.device.mem)
-        {
-            status = cvl_cl_staging_buffer_init(&eval->buf_src_val, eval->precision);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-        }
-        if (!eval->buf_targets.device.mem)
-        {
-            status = cvl_cl_staging_buffer_init(&eval->buf_targets, eval->precision);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-        }
-        if (!eval->buf_results.device.mem)
-        {
-            status = cvl_cl_staging_buffer_init(&eval->buf_results, eval->precision);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-        }
-
-        status = cvl_cl_staging_buffer_reserve(&eval->buf_src_pos, ctx, queue, n_sources);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_staging_buffer_reserve(&eval->buf_src_val, ctx, queue, n_sources);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_staging_buffer_reserve(&eval->buf_targets, ctx, queue, n_targets);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_staging_buffer_reserve(&eval->buf_results, ctx, queue, n_targets);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-    }
+    if ((!eval->buf_src_pos.device.mem &&
+         (status = cvl_cl_staging_buffer_init(&eval->buf_src_pos, eval->precision)) != CVL_CL_SUCCESS) ||
+        (!eval->buf_src_val.device.mem &&
+         (status = cvl_cl_staging_buffer_init(&eval->buf_src_val, eval->precision)) != CVL_CL_SUCCESS) ||
+        (!eval->buf_targets.device.mem &&
+         (status = cvl_cl_staging_buffer_init(&eval->buf_targets, eval->precision)) != CVL_CL_SUCCESS) ||
+        (!eval->buf_results.device.mem &&
+         (status = cvl_cl_staging_buffer_init(&eval->buf_results, eval->precision)) != CVL_CL_SUCCESS) ||
+        (status = cvl_cl_staging_buffer_reserve_chained(&eval->buf_src_pos, ctx, &chain, n_sources)) !=
+            CVL_CL_SUCCESS ||
+        (status = cvl_cl_staging_buffer_reserve_chained(&eval->buf_src_val, ctx, &chain, n_sources)) !=
+            CVL_CL_SUCCESS ||
+        (status = cvl_cl_staging_buffer_reserve_chained(&eval->buf_targets, ctx, &chain, n_targets)) !=
+            CVL_CL_SUCCESS ||
+        (status = cvl_cl_staging_buffer_reserve_chained(&eval->buf_results, ctx, &chain, n_targets)) != CVL_CL_SUCCESS)
+        goto cleanup_host;
 
     /* ---- 3. Upload tree + source data + targets (chained) ---- */
     {
@@ -458,66 +419,43 @@ cvl_cl_status_t cvl_cl_fmm_eval_run(cvl_cl_fmm_eval_t *eval, const fmm_tree_t *t
         const void *upload_local = is_f32 ? (const void *)local_coeffs_f32 : (const void *)tree->local_coeffs;
         const void *upload_mp = is_f32 ? (const void *)mp_coeffs_f32 : (const void *)tree->multipole_coeffs;
 
-        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nodes, 0, nodes_bytes, upload_nodes, 0, NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status =
-            cvl_cl_chain_write_buffer(&chain, &eval->buf_eval_centers, 0, centers_bytes, upload_centers, 0, NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_particle_order, 0, order_bytes, tree->particle_order, 0,
-                                           NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status =
-            cvl_cl_chain_write_buffer(&chain, &eval->buf_local_coeffs, 0, local_bytes, upload_local, 0, NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-
-        /* Explicit child indices for descent. */
-        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_child_indices, 0, child_idx_bytes, child_indices, 0, NULL,
-                                           NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-
-        /* Multipole coefficients (for fallback when target is outside bbox). */
-        status = cvl_cl_chain_write_buffer(&chain, &eval->buf_mp_coeffs, 0, mp_bytes, upload_mp, 0, NULL, NULL);
-        if (status != CVL_CL_SUCCESS)
+        /* Explicit child indices for descent and multipole coefficients for
+         * fallback when target is outside the bounding box. */
+        if ((status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nodes, 0, nodes_bytes, upload_nodes, 0, NULL,
+                                                NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_eval_centers, 0, centers_bytes, upload_centers, 0,
+                                                NULL, NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_particle_order, 0, order_bytes, tree->particle_order,
+                                                0, NULL, NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_local_coeffs, 0, local_bytes, upload_local, 0, NULL,
+                                                NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_child_indices, 0, child_idx_bytes, child_indices, 0,
+                                                NULL, NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_mp_coeffs, 0, mp_bytes, upload_mp, 0, NULL, NULL)) !=
+                CVL_CL_SUCCESS)
             goto cleanup_host;
 
         /* Near-field interaction lists (CSR). */
         if (tree->nflist_offsets && tree->nflist_indices && tree->leaf_indices)
         {
-            status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_offsets, 0, nflist_off_bytes,
-                                               tree->nflist_offsets, 0, NULL, NULL);
-            if (status != CVL_CL_SUCCESS)
-                goto cleanup_host;
-            if (nflist_idx_bytes > 0)
-            {
-                status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_indices, 0, nflist_idx_bytes,
-                                                   tree->nflist_indices, 0, NULL, NULL);
-                if (status != CVL_CL_SUCCESS)
-                    goto cleanup_host;
-            }
-            status = cvl_cl_chain_write_buffer(&chain, &eval->buf_leaf_indices, 0, leaf_idx_bytes, tree->leaf_indices,
-                                               0, NULL, NULL);
-            if (status != CVL_CL_SUCCESS)
+            if ((status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_offsets, 0, nflist_off_bytes,
+                                                    tree->nflist_offsets, 0, NULL, NULL)) != CVL_CL_SUCCESS ||
+                (nflist_idx_bytes > 0 &&
+                 (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_nflist_indices, 0, nflist_idx_bytes,
+                                                     tree->nflist_indices, 0, NULL, NULL)) != CVL_CL_SUCCESS) ||
+                (status = cvl_cl_chain_write_buffer(&chain, &eval->buf_leaf_indices, 0, leaf_idx_bytes,
+                                                    tree->leaf_indices, 0, NULL, NULL)) != CVL_CL_SUCCESS)
                 goto cleanup_host;
         }
 
         /* Sources + targets (staging buffers, async through the chain -
          * the kernel launch below waits on all of them). */
-        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_pos, &chain, sources_coords, scratch_src_pos,
-                                                   n_sources, 0, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status = cvl_cl_staging_buffer_write_async(&eval->buf_src_val, &chain, sources_values, scratch_src_val,
-                                                   n_sources, 0, NULL);
-        if (status != CVL_CL_SUCCESS)
-            goto cleanup_host;
-        status =
-            cvl_cl_staging_buffer_write_async(&eval->buf_targets, &chain, targets, scratch_targets, n_targets, 0, NULL);
-        if (status != CVL_CL_SUCCESS)
+        if ((status = cvl_cl_staging_buffer_write_async(&eval->buf_src_pos, &chain, sources_coords, scratch_src_pos,
+                                                        n_sources, 0, NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_staging_buffer_write_async(&eval->buf_src_val, &chain, sources_values, scratch_src_val,
+                                                        n_sources, 0, NULL)) != CVL_CL_SUCCESS ||
+            (status = cvl_cl_staging_buffer_write_async(&eval->buf_targets, &chain, targets, scratch_targets, n_targets,
+                                                        0, NULL)) != CVL_CL_SUCCESS)
             goto cleanup_host;
     }
 

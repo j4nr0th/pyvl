@@ -1,5 +1,6 @@
 #include "cvl_cl_staging_buffer.h"
-#include "../common.h" /* real3_t / real_t - cvl_cl_staging_buffer.h uses real3_t */
+#include "../common.h"              /* real3_t / real_t - cvl_cl_staging_buffer.h uses real3_t */
+#include "../opencl/cvl_cl_chain.h" /* cvl_cl_chain_grow_buffer */
 
 #include <assert.h>
 #include <string.h>
@@ -24,7 +25,41 @@ cvl_cl_status_t cvl_cl_staging_buffer_reserve(cvl_cl_staging_buffer_t *buf, cl_c
 
     /* Grow device buffer. */
     const size_t needed_bytes = n_elements * buf->element_size_bytes;
-    cvl_cl_status_t st = cvl_cl_buffer_reserve(&buf->device, ctx, queue, needed_bytes);
+    cvl_cl_status_t st = cvl_cl_buffer_reserve(&buf->device, ctx, queue, needed_bytes, NULL);
+    if (st != CVL_CL_SUCCESS)
+        return st;
+
+    buf->capacity_elements = n_elements;
+    return CVL_CL_SUCCESS;
+}
+
+cvl_cl_status_t cvl_cl_staging_buffer_reserve_chained(cvl_cl_staging_buffer_t *buf, cl_context ctx,
+                                                      cvl_cl_chain_t *chain, size_t n_elements)
+{
+    assert(buf && ctx && chain);
+
+    if (n_elements <= buf->capacity_elements)
+        return CVL_CL_SUCCESS;
+
+    const size_t needed_bytes = n_elements * buf->element_size_bytes;
+    cvl_cl_status_t st;
+
+    if (!buf->device.mem)
+    {
+        /* First allocation - synchronous host-side create, no device work. */
+        const cvl_cl_buffer_desc_t desc = {
+            .access = CVL_CL_BUF_READ_WRITE,
+            .size_bytes = needed_bytes,
+            .host_ptr = NULL,
+            .use_host_ptr = false,
+        };
+        st = cvl_cl_buffer_create(ctx, &desc, &buf->device);
+    }
+    else
+    {
+        /* Grow asynchronously through the chain (ordered + tracked copy). */
+        st = cvl_cl_chain_grow_buffer(chain, &buf->device, ctx, needed_bytes);
+    }
     if (st != CVL_CL_SUCCESS)
         return st;
 
@@ -107,13 +142,10 @@ cvl_cl_status_t cvl_cl_staging_buffer_read_and_wait(cvl_cl_staging_buffer_t *buf
 {
     assert(buf && chain && host_data);
 
-    cvl_cl_status_t st =
-        cvl_cl_staging_buffer_read_async(buf, chain, host_data, scratch_f32, n_elements, src_offset_el, NULL);
-    if (st != CVL_CL_SUCCESS)
-        return st;
-
-    st = cvl_cl_chain_finish(chain);
-    if (st != CVL_CL_SUCCESS)
+    cvl_cl_status_t st;
+    if ((st = cvl_cl_staging_buffer_read_async(buf, chain, host_data, scratch_f32, n_elements, src_offset_el, NULL)) !=
+            CVL_CL_SUCCESS ||
+        (st = cvl_cl_chain_finish(chain)) != CVL_CL_SUCCESS)
         return st;
 
     return cvl_cl_staging_buffer_read_finish(buf, host_data, scratch_f32, n_elements);

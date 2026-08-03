@@ -50,7 +50,7 @@ int main(void)
     /* ================================================================ */
     /*  Test 2: Reserve - grow to 4096 bytes                           */
     /* ================================================================ */
-    CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, ctx, queue, 4096), cleanup);
+    CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, ctx, queue, 4096, NULL), cleanup);
 
     TEST_ASSERT(buf.capacity >= 4096, "After reserve(4096), capacity (%zu) should be >= 4096", buf.capacity);
     /*
@@ -58,6 +58,21 @@ int main(void)
      * capacity, not logical size).
      */
     TEST_ASSERT(buf.size == 1024, "Buffer size changed after reserve; expected 1024, got %zu", buf.size);
+
+    /* ================================================================ */
+    /*  Test 2b: Reserve with an output event (async copy tracking)     */
+    /* ================================================================ */
+    {
+        cl_event ev = NULL;
+        CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, ctx, queue, 16384, &ev), cleanup);
+        TEST_ASSERT(ev != NULL, "reserve with out_event must return an event when copying content");
+        TEST_ASSERT(buf.capacity >= 16384, "After reserve(16384), capacity (%zu) should be >= 16384", buf.capacity);
+
+        /* Wait for the async content copy to complete. */
+        CVL_CL_CHECK(cvl_cl_wait_for_events(1, &ev), cleanup);
+        clReleaseEvent(ev);
+        printf("reserve async event OK\n");
+    }
 
     /* ================================================================ */
     /*  Test 3: Zero-size buffer creation                               */

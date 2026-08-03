@@ -221,6 +221,57 @@ int main(void)
         printf("chain extra wait event OK (y=%.2f after kernel then raw write)\n", y1_out);
     }
 
+    /* ----------------------------------------------------------------- */
+    /* 6. Asynchronous buffer growth: grow a buffer through the chain    */
+    /*    and verify old contents are preserved                          */
+    /* ----------------------------------------------------------------- */
+    {
+        enum
+        {
+            INIT_CAP = 8,   /* initial capacity in bytes. */
+            GROWN_CAP = 32, /* grown capacity in bytes. */
+        };
+        uint8_t out[12];
+        cvl_cl_buffer_t buf_grow = {0};
+
+        /* Create with 8 bytes of initial data. */
+        const uint8_t seed[INIT_CAP] = {0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA};
+        CVL_CL_CHECK(cvl_cl_buffer_create(ctx,
+                                          &(cvl_cl_buffer_desc_t){
+                                              .access = CVL_CL_BUF_READ_WRITE,
+                                              .size_bytes = INIT_CAP,
+                                              .host_ptr = seed,
+                                              .use_host_ptr = false,
+                                          },
+                                          &buf_grow),
+                     cleanup);
+
+        /* Re-init the chain on the main queue. */
+        cvl_cl_chain_init(&chain, queue);
+
+        /* Grow to 32 bytes through the chain (the 8 content bytes are
+         * copied asynchronously, tracked as a pending event). */
+        CVL_CL_CHECK(cvl_cl_chain_grow_buffer(&chain, &buf_grow, ctx, GROWN_CAP), cleanup);
+        TEST_ASSERT(buf_grow.capacity >= GROWN_CAP, "grow did not update capacity: %zu", buf_grow.capacity);
+
+        /* Append 4 more bytes at offset 8 — waits on the growth copy. */
+        const uint8_t more[4] = {0xBB, 0xBB, 0xBB, 0xBB};
+        CVL_CL_CHECK(cvl_cl_chain_write_buffer(&chain, &buf_grow, INIT_CAP, sizeof more, more, 0, NULL, NULL), cleanup);
+
+        /* Read the whole 12 bytes back through the chain. */
+        CVL_CL_CHECK(cvl_cl_chain_read_buffer(&chain, &buf_grow, 0, sizeof out, out, 0, NULL, NULL), cleanup);
+        CVL_CL_CHECK(cvl_cl_chain_finish(&chain), cleanup);
+
+        /* First 8 bytes = copied old content, next 4 = the append. */
+        for (unsigned i = 0; i < INIT_CAP; ++i)
+            TEST_ASSERT(out[i] == seed[i], "grow lost byte %u (got 0x%02x)", i, out[i]);
+        for (unsigned i = 0; i < 4; ++i)
+            TEST_ASSERT(out[INIT_CAP + i] == more[i], "append byte %u wrong (got 0x%02x)", i, out[INIT_CAP + i]);
+        printf("chain grow_buffer: contents preserved across async growth (cap %d -> %d)\n", INIT_CAP, GROWN_CAP);
+
+        cvl_cl_buffer_destroy(&buf_grow);
+    }
+
     printf("All chain tests passed.\n");
     ret = 0;
 
