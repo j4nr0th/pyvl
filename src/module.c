@@ -5,6 +5,7 @@
 #include "geoidobject.h"
 #include "meshobject.h"
 #include "multipoleobject.h"
+#include "opencltreeobject.h"
 #include "referenceframeobject.h"
 #include "transformationplaneobject.h"
 
@@ -58,6 +59,12 @@ static int cvl_module_add_types(PyObject *mod)
         {&pyvl_multipole_typespec, &state->multipole_type},
         {&pyvl_bh_tree_typespec, &state->bh_tree_type},
         {&pyvl_fmm_tree_typespec, &state->fmm_tree_type},
+#ifdef CVL_OPENCL
+        {&pyvl_cl_backend_typespec, &state->cl_backend_type},
+        {&pyvl_cl_tree_typespec, &state->cl_tree_type},
+        {&pyvl_cl_tree_build_typespec, &state->cl_tree_build_type},
+        {&pyvl_cl_tree_eval_typespec, &state->cl_tree_eval_type},
+#endif
         {0},
     };
     for (unsigned i = 0; types_to_add[i].spec != NULL; ++i)

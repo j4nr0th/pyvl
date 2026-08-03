@@ -160,6 +160,15 @@ if (OpenCL_FOUND)
             src/core/cl_compute/cvl_cl_tree.h
             "${CVL_CL_GEN_HEADER}"
     )
+
+    list(
+            APPEND CVL_MODULE_SOURCE_FILES
+            src/opencltreeobject.c
+    )
+    list(
+            APPEND CVL_MODULE_HEADER_FILES
+            src/opencltreeobject.h
+    )
 endif ()
 
 add_library(static_cvl

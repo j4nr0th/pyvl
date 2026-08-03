@@ -248,8 +248,9 @@ cvl_cl_status_t cvl_cl_tree_build_finish(cvl_cl_tree_build_job_t *job, void *wor
         }
         const real_t root_extent =
             fmax(fmax(bbox_max.x - bbox_min.x, bbox_max.y - bbox_min.y), bbox_max.z - bbox_min.z);
-        const real3_t root_center = {(bbox_min.x + bbox_max.x) * (real_t)0.5, (bbox_min.y + bbox_max.y) * (real_t)0.5,
-                                     (bbox_min.z + bbox_max.z) * (real_t)0.5};
+        const real3_t root_center = {.x = (bbox_min.x + bbox_max.x) * (real_t)0.5,
+                                     .y = (bbox_min.y + bbox_max.y) * (real_t)0.5,
+                                     .z = (bbox_min.z + bbox_max.z) * (real_t)0.5};
         const real_t root_hs = root_extent * (real_t)0.5 + (real_t)1e-12;
 
         for (unsigned i = 0; i < n_sources; ++i)
@@ -301,7 +302,6 @@ cvl_cl_status_t cvl_cl_tree_build_finish(cvl_cl_tree_build_job_t *job, void *wor
 
         /* Ensure device buffers (grow-only). */
         const cl_context ctx = tree->compute->ctx;
-        const cl_command_queue queue = tree->compute->queue;
         cvl_cl_chain_t *ch = &job->chain;
 
         if ((status = cl_ensure_buffer_chained(&tree->buf_nodes, ctx, ch, nodes_bytes)) != CVL_CL_SUCCESS ||

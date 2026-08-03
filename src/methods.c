@@ -1,4 +1,54 @@
 #include "methods.h"
+#ifdef CVL_OPENCL
+#include "opencltreeobject.h"
+
+PyDoc_STRVAR(pyvl_create_backend_doc,
+             "create_backend(device='gpu', precision='fp64', order=4, critical_particle_count=4, max_depth=20)\n"
+             "Create an OpenCL compute backend.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "device : str, default 'gpu'\n"
+             "    ``'gpu'``, ``'cpu'``, or ``'any'``.\n"
+             "precision : str, default 'fp64'\n"
+             "    ``'fp64'`` or ``'fp32'``.\n"
+             "order : int, default 4\n"
+             "    Multipole expansion order.\n"
+             "critical_particle_count : int, default 4\n"
+             "    Subdivision threshold.\n"
+             "max_depth : int, default 20\n"
+             "    Maximum octree depth.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "CLBackend\n"
+             "    Backend owning device resources.\n"
+             "\n"
+             "Examples\n"
+             "--------\n"
+             ">>> import numpy as np\n"
+             ">>> from pyvl.cvl import create_backend\n"
+             ">>> backend = create_backend('gpu')\n"
+             ">>> backend.device_name\n"
+             "'NVIDIA ...'\n");
+
+CVL_INTERNAL PyObject *pyvl_create_backend(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    /* Delegate to CLBackend with the parsed args/kwargs. */
+    if (!PyModule_Check(self))
+    {
+        PyErr_SetString(PyExc_RuntimeError, "create_backend must be called as a module function.");
+        return NULL;
+    }
+    const module_state_t *state = PyModule_GetState(self);
+    if (!state || !state->cl_backend_type)
+    {
+        PyErr_SetString(PyExc_RuntimeError, "CLBackend type not registered.");
+        return NULL;
+    }
+    return PyObject_Call((PyObject *)state->cl_backend_type, args, kwargs);
+}
+#endif
 
 #include <numpy/ndarrayobject.h>
 // Must be below the NUMPY include
@@ -1013,5 +1063,13 @@ PyMethodDef cvl_methods[] = {
         .ml_flags = METH_FASTCALL | METH_KEYWORDS,
         .ml_doc = line_normal_induction_docstring,
     },
+#ifdef CVL_OPENCL
+    {
+        .ml_name = "create_backend",
+        .ml_meth = (void *)pyvl_create_backend,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
+        .ml_doc = pyvl_create_backend_doc,
+    },
+#endif
     {0}, // Sentinel
 };
