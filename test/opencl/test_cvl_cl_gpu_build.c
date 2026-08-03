@@ -482,24 +482,24 @@ int main(void)
         cvl_cl_kernel_t *k = cvl_cl_compute_kernel(&comp, "bh_flat_eval");
         TEST_ASSERT(k != NULL, "kernel 'bh_flat_eval' not found in compute backend");
 
-        CVL_CL_CHECK(cvl_cl_kernel_set_args(
-                         k,
-                         (cvl_cl_karg_t[]){
-                             {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_nodes)},
-                             {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = cvl_cl_buffer_mem(&buf_order)},
-                             {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = cvl_cl_buffer_mem(&buf_depth)},
-                             {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = cvl_cl_buffer_mem(&buf_src_pos.device)},
-                             {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = cvl_cl_buffer_mem(&buf_src_val.device)},
-                             {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = N_TARGETS},
-                             {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = 0}, /* order = 0 */
-                             {.type = CVL_CL_KARG_SCALAR_DOUBLE,
-                              .index = 7,
-                              .scalar_double = 1e-15}, /* tiny theta → full descent */
-                             {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = cvl_cl_buffer_mem(&buf_coeffs)},
-                             {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = cvl_cl_buffer_mem(&buf_results.device)},
-                             {},
-                         }),
-                     cleanup);
+        CVL_CL_CHECK(
+            cvl_cl_kernel_set_args(k,
+                                   (cvl_cl_karg_t[]){
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_nodes.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf_order.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = buf_depth.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = buf_src_pos.device.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = buf_src_val.device.mem},
+                                       {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = N_TARGETS},
+                                       {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = 0}, /* order = 0 */
+                                       {.type = CVL_CL_KARG_SCALAR_DOUBLE,
+                                        .index = 7,
+                                        .scalar_double = 1e-15}, /* tiny theta → full descent */
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = buf_coeffs.mem},
+                                       {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_results.device.mem},
+                                       {},
+                                   }),
+            cleanup);
 
         const size_t global = N_TARGETS;
         CVL_CL_CHECK(cvl_cl_ndrange(&queue, k, 1, &global, NULL, NULL, 0, NULL, NULL), cleanup);

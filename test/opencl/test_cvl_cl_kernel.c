@@ -74,9 +74,9 @@ int main(void)
     /* ---- Set kernel arguments via typed descriptor array ---- */
     CVL_CL_CHECK(cvl_cl_kernel_set_args(&kernel,
                                         (cvl_cl_karg_t[]){
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf)},
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = cvl_cl_buffer_mem(&buf)},
-                                            {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = cvl_cl_buffer_mem(&buf)},
+                                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf.mem},
+                                            {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf.mem},
+                                            {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = buf.mem},
                                             {.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 3, .scalar_double = 2.0},
                                             {},
                                         }),

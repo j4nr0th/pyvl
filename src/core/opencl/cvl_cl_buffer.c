@@ -20,9 +20,6 @@ static cl_mem_flags access_to_flags(cvl_cl_buffer_access_t access)
 
 cvl_cl_status_t cvl_cl_buffer_create(const cvl_cl_ctx_t *ctx, const cvl_cl_buffer_desc_t *desc, cvl_cl_buffer_t *out)
 {
-    if (!ctx || !desc || !out || !ctx->context)
-        return CVL_CL_ERR_INVALID_PARAM;
-
     out->mem = NULL;
     out->capacity = 0;
     out->size = 0;

@@ -87,31 +87,3 @@ cvl_cl_status_t cvl_cl_buffer_reserve(cvl_cl_buffer_t *buf, const cvl_cl_ctx_t *
  * @param buf Buffer to destroy (may be NULL).
  */
 void cvl_cl_buffer_destroy(cvl_cl_buffer_t *buf);
-
-/* ------------------------------------------------------------------ */
-/* Accessors                                                          */
-/* ------------------------------------------------------------------ */
-
-/** @brief Return the raw cl_mem handle. */
-static inline cl_mem cvl_cl_buffer_mem(const cvl_cl_buffer_t *buf)
-{
-    return buf ? buf->mem : NULL;
-}
-
-/** @brief Return the allocated capacity in bytes. */
-static inline size_t cvl_cl_buffer_capacity(const cvl_cl_buffer_t *buf)
-{
-    return buf ? buf->capacity : 0;
-}
-
-/** @brief Return the logical size in bytes. */
-static inline size_t cvl_cl_buffer_size(const cvl_cl_buffer_t *buf)
-{
-    return buf ? buf->size : 0;
-}
-
-/** @brief Return the access mode. */
-static inline cvl_cl_buffer_access_t cvl_cl_buffer_access(const cvl_cl_buffer_t *buf)
-{
-    return buf ? buf->access : CVL_CL_BUF_READ_WRITE;
-}

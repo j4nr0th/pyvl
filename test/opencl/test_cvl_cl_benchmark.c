@@ -1103,17 +1103,16 @@ int main(void)
             TEST_ASSERT(k != NULL, "kernel 'direct_sum' not found");
 
             CVL_CL_CHECK(
-                cvl_cl_kernel_set_args(
-                    k,
-                    (cvl_cl_karg_t[]){
-                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_targets.device)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = cvl_cl_buffer_mem(&buf_src_pos.device)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = cvl_cl_buffer_mem(&buf_src_val.device)},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = N_SOURCES},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = N_TARGETS},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = cvl_cl_buffer_mem(&buf_results.device)},
-                        {},
-                    }),
+                cvl_cl_kernel_set_args(k,
+                                       (cvl_cl_karg_t[]){
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_targets.device.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf_src_pos.device.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = buf_src_val.device.mem},
+                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 3, .scalar_uint = N_SOURCES},
+                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 4, .scalar_uint = N_TARGETS},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 5, .mem = buf_results.device.mem},
+                                           {},
+                                       }),
                 cleanup);
 
             const size_t global = N_TARGETS;
@@ -1162,21 +1161,20 @@ int main(void)
                     : (cvl_cl_karg_t){.type = CVL_CL_KARG_SCALAR_DOUBLE, .index = 7, .scalar_double = BH_THETA};
 
             CVL_CL_CHECK(
-                cvl_cl_kernel_set_args(
-                    k,
-                    (cvl_cl_karg_t[]){
-                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_bh_nodes)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = cvl_cl_buffer_mem(&buf_bh_order)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = cvl_cl_buffer_mem(&buf_bh_depth)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = cvl_cl_buffer_mem(&buf_src_pos.device)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = cvl_cl_buffer_mem(&buf_src_val.device)},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = N_TARGETS},
-                        {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = BH_ORDER},
-                        theta_arg,
-                        {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = cvl_cl_buffer_mem(&buf_bh_coeffs)},
-                        {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = cvl_cl_buffer_mem(&buf_results.device)},
-                        {},
-                    }),
+                cvl_cl_kernel_set_args(k,
+                                       (cvl_cl_karg_t[]){
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_bh_nodes.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf_bh_order.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = buf_bh_depth.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 3, .mem = buf_src_pos.device.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 4, .mem = buf_src_val.device.mem},
+                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 5, .scalar_uint = N_TARGETS},
+                                           {.type = CVL_CL_KARG_SCALAR_UINT, .index = 6, .scalar_uint = BH_ORDER},
+                                           theta_arg,
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 8, .mem = buf_bh_coeffs.mem},
+                                           {.type = CVL_CL_KARG_BUFFER, .index = 9, .mem = buf_results.device.mem},
+                                           {},
+                                       }),
                 cleanup);
 
             const size_t global = N_TARGETS;

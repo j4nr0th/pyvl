@@ -282,13 +282,12 @@ static int run_precision_test(cvl_cl_ctx_t *ctx, cvl_cl_queue_t *queue, const ch
                      ctx, &(cvl_cl_buffer_desc_t){.access = CVL_CL_BUF_WRITE_ONLY, .size_bytes = out_bytes}, &buf_out),
                  cleanup);
 
-    CVL_CL_CHECK(
-        cvl_cl_kernel_set_args(&kernel,
-                               (cvl_cl_karg_t[]){
-                                   {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_out)},
-                                   {},
-                               }),
-        cleanup);
+    CVL_CL_CHECK(cvl_cl_kernel_set_args(&kernel,
+                                        (cvl_cl_karg_t[]){
+                                            {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_out.mem},
+                                            {},
+                                        }),
+                 cleanup);
 
     {
         const size_t global_work = 1;

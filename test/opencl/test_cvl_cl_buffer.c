@@ -42,25 +42,22 @@ int main(void)
                                       &buf),
                  cleanup);
 
-    TEST_ASSERT(cvl_cl_buffer_size(&buf) == 1024, "Buffer size should be 1024, got %zu", cvl_cl_buffer_size(&buf));
-    TEST_ASSERT(cvl_cl_buffer_capacity(&buf) >= 1024, "Buffer capacity (%zu) should be >= 1024",
-                cvl_cl_buffer_capacity(&buf));
-    TEST_ASSERT(cvl_cl_buffer_mem(&buf) != NULL, "cl_mem handle is NULL after creation");
-    TEST_ASSERT(cvl_cl_buffer_access(&buf) == CVL_CL_BUF_READ_WRITE, "Buffer access mode should be READ_WRITE");
+    TEST_ASSERT(buf.size == 1024, "Buffer size should be 1024, got %zu", buf.size);
+    TEST_ASSERT(buf.capacity >= 1024, "Buffer capacity (%zu) should be >= 1024", buf.capacity);
+    TEST_ASSERT(buf.mem != NULL, "cl_mem handle is NULL after creation");
+    TEST_ASSERT(buf.access == CVL_CL_BUF_READ_WRITE, "Buffer access mode should be READ_WRITE");
 
     /* ================================================================ */
     /*  Test 2: Reserve - grow to 4096 bytes                           */
     /* ================================================================ */
     CVL_CL_CHECK(cvl_cl_buffer_reserve(&buf, &ctx, &queue, 4096), cleanup);
 
-    TEST_ASSERT(cvl_cl_buffer_capacity(&buf) >= 4096, "After reserve(4096), capacity (%zu) should be >= 4096",
-                cvl_cl_buffer_capacity(&buf));
+    TEST_ASSERT(buf.capacity >= 4096, "After reserve(4096), capacity (%zu) should be >= 4096", buf.capacity);
     /*
      * Size must remain unchanged after reserve (reserve only changes
      * capacity, not logical size).
      */
-    TEST_ASSERT(cvl_cl_buffer_size(&buf) == 1024, "Buffer size changed after reserve; expected 1024, got %zu",
-                cvl_cl_buffer_size(&buf));
+    TEST_ASSERT(buf.size == 1024, "Buffer size changed after reserve; expected 1024, got %zu", buf.size);
 
     /* ================================================================ */
     /*  Test 3: Zero-size buffer creation                               */
@@ -73,16 +70,14 @@ int main(void)
                                       &zero_buf),
                  cleanup);
 
-    TEST_ASSERT(cvl_cl_buffer_size(&zero_buf) == 0, "Zero-size buffer logical size should be 0, got %zu",
-                cvl_cl_buffer_size(&zero_buf));
-    TEST_ASSERT(cvl_cl_buffer_capacity(&zero_buf) == 0, "Zero-size buffer capacity should be 0, got %zu",
-                cvl_cl_buffer_capacity(&zero_buf));
+    TEST_ASSERT(zero_buf.size == 0, "Zero-size buffer logical size should be 0, got %zu", zero_buf.size);
+    TEST_ASSERT(zero_buf.capacity == 0, "Zero-size buffer capacity should be 0, got %zu", zero_buf.capacity);
     /*
      * The wrapper deliberately returns mem=NULL for zero-size buffers
      * (no underlying cl_mem is created). The handle is still valid for
      * destroy and query operations.
      */
-    TEST_ASSERT(cvl_cl_buffer_mem(&zero_buf) == NULL, "Zero-size buffer cl_mem handle should be NULL");
+    TEST_ASSERT(zero_buf.mem == NULL, "Zero-size buffer cl_mem handle should be NULL");
 
     /* ---- All tests passed ---- */
     status = CVL_CL_SUCCESS;

@@ -110,9 +110,9 @@ int main(void)
                                     &global_work,       /* global work size */
                                     &local_work,        /* local work size (explicit) */
                                     (cvl_cl_karg_t[]){
-                                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = cvl_cl_buffer_mem(&buf_a)},
-                                        {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = cvl_cl_buffer_mem(&buf_b)},
-                                        {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = cvl_cl_buffer_mem(&buf_c)},
+                                        {.type = CVL_CL_KARG_BUFFER, .index = 0, .mem = buf_a.mem},
+                                        {.type = CVL_CL_KARG_BUFFER, .index = 1, .mem = buf_b.mem},
+                                        {.type = CVL_CL_KARG_BUFFER, .index = 2, .mem = buf_c.mem},
                                         {},
                                     },
                                     0, NULL, NULL),
