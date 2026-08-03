@@ -2359,3 +2359,228 @@ class FMMTree:
             Minimum number of sources.
         """
         ...
+
+def create_backend(
+    device: Literal["gpu", "cpu", "any"] = "gpu",
+    precision: Literal["fp64", "fp32"] = "fp64",
+    order: int = 4,
+    critical_particle_count: int = 4,
+    max_depth: int = 20,
+) -> CLBackend:
+    """Create an OpenCL compute backend.
+
+    The backend compiles the OpenCL kernels once and owns the device
+    context, queue, and buffers.  Trees created from it reuse device
+    buffers across rebuilds.
+
+    Parameters
+    ----------
+    device : str, default 'gpu'
+        ``'gpu'``, ``'cpu'``, or ``'any'``.
+    precision : str, default 'fp64'
+        ``'fp64'`` or ``'fp32'``.
+    order : int, default 4
+        Multipole expansion order.
+    critical_particle_count : int, default 4
+        Subdivision threshold.
+    max_depth : int, default 20
+        Maximum octree depth.
+
+    Returns
+    -------
+    CLBackend
+        Backend owning device resources.
+    """
+    ...
+
+@final
+class CLBackend:
+    """OpenCL compute backend that owns device resources and creates trees."""
+
+    def __new__(
+        cls,
+        device: Literal["gpu", "cpu", "any"] = "gpu",
+        precision: Literal["fp64", "fp32"] = "fp64",
+        order: int = 4,
+        critical_particle_count: int = 4,
+        max_depth: int = 20,
+    ) -> Self: ...
+    @property
+    def device_name(self) -> str:
+        """OpenCL device name."""
+        ...
+
+    @property
+    def vendor(self) -> str:
+        """OpenCL device vendor."""
+        ...
+
+    @property
+    def device_type(self) -> Literal["gpu", "cpu", "unknown"]:
+        """Device type: 'gpu', 'cpu', or 'unknown'."""
+        ...
+
+    @property
+    def precision(self) -> Literal["fp64", "fp32"]:
+        """Computation precision: 'fp64' or 'fp32'."""
+        ...
+
+    @property
+    def closed(self) -> bool:
+        """Whether the backend has been closed."""
+        ...
+
+    def build_tree(
+        self,
+        coords: npt.ArrayLike,
+        values: npt.ArrayLike,
+    ) -> CLTreeBuild:
+        """Enqueue a tree build and return a :class:`CLTreeBuild` future.
+
+        Parameters
+        ----------
+        coords : (..., 3) array_like
+            Source positions.
+        values : (..., 3) array_like
+            Source strengths.
+
+        Returns
+        -------
+        CLTreeBuild
+            Future whose ``.result()`` returns a populated :class:`CLTree`.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release all device resources owned by the backend."""
+        ...
+
+@final
+class CLTree:
+    """OpenCL-backed octree for far-field induction."""
+
+    @property
+    def n_sources(self) -> int:
+        """Number of source particles."""
+        ...
+
+    @property
+    def n_nodes(self) -> int:
+        """Total number of octree nodes."""
+        ...
+
+    @property
+    def n_internal(self) -> int:
+        """Number of internal (non-leaf) nodes."""
+        ...
+
+    @property
+    def n_multipole_leaves(self) -> int:
+        """Number of multipole-bearing leaves."""
+        ...
+
+    @property
+    def n_particle_leaves(self) -> int:
+        """Number of uncompressed particle leaves."""
+        ...
+
+    @property
+    def n_leaves(self) -> int:
+        """Number of leaves."""
+        ...
+
+    @property
+    def max_depth(self) -> int:
+        """Maximum depth actually reached."""
+        ...
+
+    @property
+    def order(self) -> int:
+        """Multipole expansion order."""
+        ...
+
+    @property
+    def built(self) -> bool:
+        """Whether the tree has been built."""
+        ...
+
+    def eval(
+        self,
+        targets: npt.ArrayLike,
+        /,
+        *,
+        mode: Literal["tree_code", "direct"] = "tree_code",
+        theta: float = 0.0,
+    ) -> CLTreeEval:
+        """Enqueue an evaluation and return a :class:`CLTreeEval` future.
+
+        Parameters
+        ----------
+        targets : (..., 3) array_like
+            Points at which to evaluate.
+        mode : str, default 'tree_code'
+            ``'tree_code'`` -- multipole tree-code (MAC-driven).
+            ``'direct'`` -- exact O(N) direct sum per target.
+        theta : float, default 0.0
+            MAC opening angle (``<= 0`` uses the neighbour criterion).
+
+        Returns
+        -------
+        CLTreeEval
+            Future whose ``.result()`` returns the (..., 3) ndarray.
+        """
+        ...
+
+    def eval_sources(
+        self,
+        /,
+        *,
+        mode: Literal["tree_code", "direct"] = "tree_code",
+        theta: float = 0.0,
+    ) -> CLTreeEval:
+        """Enqueue an evaluation at the source positions.
+
+        Equivalent to ``eval(sources_coords)``.
+
+        Returns
+        -------
+        CLTreeEval
+            Future whose ``.result()`` returns the (..., 3) ndarray.
+        """
+        ...
+
+    def rebuild(self, coords: npt.ArrayLike, values: npt.ArrayLike) -> CLTreeBuild:
+        """Enqueue a rebuild of this tree and return a :class:`CLTreeBuild` future.
+
+        The tree's device buffers are reused (grow-only) across rebuilds.
+
+        Returns
+        -------
+        CLTreeBuild
+            Future; ``.result()`` returns the rebuilt :class:`CLTree`.
+        """
+        ...
+
+@final
+class CLTreeBuild:
+    """Future returned by :meth:`CLBackend.build_tree`."""
+
+    def done(self) -> bool:
+        """Return True if the build has finished."""
+        ...
+
+    def result(self) -> CLTree:
+        """Block until the build completes and return the :class:`CLTree`."""
+        ...
+
+@final
+class CLTreeEval:
+    """Future returned by :meth:`CLTree.eval`."""
+
+    def done(self) -> bool:
+        """Return True if the evaluation has finished."""
+        ...
+
+    def result(self) -> npt.NDArray[np.double]:
+        """Block until the evaluation completes and return the (..., 3) ndarray."""
+        ...

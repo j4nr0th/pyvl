@@ -12,12 +12,17 @@ from pyvl import postprocess as postprocess
 # C types
 from pyvl.cvl import INVALID_ID as INVALID_ID
 from pyvl.cvl import BarnesHutTree as BarnesHutTree
+from pyvl.cvl import CLBackend as CLBackend
+from pyvl.cvl import CLTree as CLTree
+from pyvl.cvl import CLTreeBuild as CLTreeBuild
+from pyvl.cvl import CLTreeEval as CLTreeEval
 from pyvl.cvl import FMMTree as FMMTree
 from pyvl.cvl import GeoID as GeoID
 from pyvl.cvl import Mesh as Mesh
 from pyvl.cvl import Multipole as Multipole
 from pyvl.cvl import ReferenceFrame as ReferenceFrame
 from pyvl.cvl import TransformationPlane as TransformationPlane
+from pyvl.cvl import create_backend as create_backend
 
 # File IO
 from pyvl.fio.io_common import HirearchicalMap as HirearchicalMap
